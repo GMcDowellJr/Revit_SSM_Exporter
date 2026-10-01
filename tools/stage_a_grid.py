@@ -69,6 +69,15 @@ TOOL_VERSION = "1.0.0"
 MIN_PX_PER_CELL = 2.0
 COARSE_UNCERTAINTY_CELLS = 0.25
 
+# Greg, 2026-10-01 (run 20261001T084840_1d0b0c1): 31 views found no ticks,
+# gridded on the nominal crop mapping, and came back a different size on the
+# axis Revit did NOT fit to (MOHAVE 11999340: 639 px against the frame's 729).
+# dim_check passed them because it measures the fit axis only. REPORT AND FLAG,
+# never refuse: more than this many pixels of difference on the non-fit axis is
+# flagged ``frame_mismatch``; a frame that cannot be compared is flagged
+# ``frame_unmeasured`` and is never read as a match.
+FRAME_MISMATCH_TOLERANCE_PX = 1
+
 MODEL_CHANNELS = ("host", "dwg", "link", "host_ink", "dwg_ink", "link_ink",
                   "tick", "white", "black", "residual", "total")
 ANNO_CHANNELS = ("element", "element_ink", "white", "black", "residual", "total")
@@ -214,6 +223,63 @@ def choose_mapping(sidecar, rgb, crop_uv):
     return dict(fit["mapping"]), record
 
 
+# --- the frame check ---------------------------------------------------------
+
+def frame_check(frame):
+    """PURE. The non-fit axis: the size the frame predicts against the size
+    the export came back. ``state`` is "value" only when every input is
+    present and readable; otherwise "unavailable" with a reason.
+
+    The prediction is ``crop_px`` on that axis, which describes the image
+    only when the capture was sized on crop A (``sizing_frame == "crop_a"``).
+    A frame-B capture's image is frame B's, so its crop_px predicts nothing
+    about the image size and the check is unavailable for it, not passed.
+    """
+    fit = frame.get("fit_direction")
+    record = {"fit_direction": fit, "predicted_px": None, "actual_px": None,
+              "delta_px": None}
+
+    def _unavailable(reason):
+        record.update(state="unavailable", reason=reason)
+        return record
+
+    fit_norm = str(fit).strip().lower() if fit is not None else None
+    if fit_norm not in ("horizontal", "vertical"):
+        return _unavailable("the frame records no usable fit_direction ({0!r})".format(fit))
+    if frame.get("sizing_frame") != "crop_a":
+        return _unavailable("the frame is not crop-A sized (sizing_frame {0!r}), so "
+                            "crop_px does not predict the image".format(
+                                frame.get("sizing_frame")))
+    # Horizontal fit sets the width; the height is derived, and vice versa.
+    axis, index, actual_key = (("height", 1, "actual_h") if fit_norm == "horizontal"
+                               else ("width", 0, "actual_w"))
+    record["axis"] = axis
+    crop_px = frame.get("crop_px")
+    if not isinstance(crop_px, (list, tuple)) or len(crop_px) != 2:
+        return _unavailable("the frame records no crop_px ({0!r})".format(crop_px))
+    predicted, actual = crop_px[index], frame.get(actual_key)
+    for name, value in (("crop_px[{0}]".format(index), predicted), (actual_key, actual)):
+        # A pixel count is a finite whole number. NaN, an infinity (json
+        # reads "Infinity") and a fraction are unmeasured, never converted:
+        # int() raises on an infinity and would silently truncate 729.6.
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(value) or value != int(value):
+            return _unavailable("the frame's {0} is not a whole pixel count "
+                                "({1!r})".format(name, value))
+    record.update(predicted_px=int(predicted), actual_px=int(actual),
+                  delta_px=int(actual) - int(predicted), state="value")
+    return record
+
+
+def frame_check_flag(check):
+    """The flag a frame_check earns, or None."""
+    if check.get("state") != "value":
+        return "frame_unmeasured"
+    if abs(check["delta_px"]) > FRAME_MISMATCH_TOLERANCE_PX:
+        return "frame_mismatch"
+    return None
+
+
 # --- the grid ----------------------------------------------------------------
 
 def cells_of_columns(spec, model_cols):
@@ -318,6 +384,10 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
         flags.append("capped")
     if lattice is None:
         flags.append("no_registered_annotation")
+    spec["frame_check"] = frame_check(frame)
+    frame_flag = frame_check_flag(spec["frame_check"])
+    if frame_flag is not None:
+        flags.append(frame_flag)
     spec["flags"] = flags
     return spec
 

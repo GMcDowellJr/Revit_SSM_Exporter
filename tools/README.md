@@ -82,6 +82,24 @@ python tools/stage_a_cycle.py advance campaign/campaign.json campaign/campaign_s
 
 ---
 
+### `analyze_capture_state_probe.py` - Capture-state probe analysis
+
+Measures the TIFFs `tests/dynamo/probe_capture_state.py` exported. Per image:
+size, distinct colours, the non-white fraction of a 2 % border band, the grey
+count and the top 10 colours. Per step against the S0 of the same question and
+view: the changed pixels, or `size_differs` (never resized). For Q3, a per-view
+table of written box, read-back box, exported px, implied px and the non-fit
+axis difference. Writes `probe_capture_state_analysis.json` last, carrying
+the probe JSON's sha256. Refuses (exit 2) on a missing, ambiguous or
+unreadable probe JSON, or on a TIFF that is missing or unreadable. See
+`tests/dynamo/PROBE_CAPTURE_STATE.md`.
+
+```bash
+python tools/analyze_capture_state_probe.py path/to/capture_state_<timestamp>
+```
+
+---
+
 ### `analyze_stage_a_probe.py` - External Stage A Probe Analysis
 
 Analyzes extraction-only Stage A Dynamo probe outputs using standalone Python,
@@ -212,7 +230,10 @@ What was NOT gridded is a row like any other:
 
 `registration_state` is `registered`, `refused` (its refusals), `absent` or
 `unusable`; a gridded row that is not `registered` is counted as model-only
-and keeps the grid's `no_registered_annotation` flag. View name, type, scale
+and keeps the grid's `no_registered_annotation` flag. `frame_predicted_px`,
+`frame_actual_px` and `frame_delta_px` are the grid's non-fit-axis frame
+check (blank when unmeasured); `frame_mismatch` and `frame_unmeasured`
+arrive through `flags` and are counted in `flag_counts`. View name, type, scale
 and on-sheet come from the run's `views_core_*.csv` on (`RunId`, `ViewId`), with
 `views_core_state` saying how the join went. A view with more than one
 views_core row is reported, not hidden: `duplicate_rows` when the rows agree
