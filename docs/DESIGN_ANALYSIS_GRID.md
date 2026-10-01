@@ -1,6 +1,7 @@
 # Design note: the analysis grid (analysis layer, item 2)
 
-Status: **decided and implemented** in `tools/stage_a_grid.py`, 2026-09-30.
+Status: **decided and implemented** in `tools/stage_a_grid.py`: the grid
+(item 2) on 2026-09-30, occupancy (item 3) on 2026-10-01.
 The decisions below were reviewed by Greg the same day. Evidence: runs
 `pipeline_0930_1249` (74320d7) and `pipeline_0930_1453` (99c7c44, main after
 PR #222). Their 16 captures are byte-identical.
@@ -96,7 +97,8 @@ The model channels use the decoder's S1 precedence, so their image totals
 equal its `pixel_stats` exactly. Per-element counts per cell are not produced
 yet.
 
-**G-8. Checking the result.** No geometry-path run of these views exists.
+**G-8. Checking the result.** No geometry-path run of these views existed
+when this was written; one has since been made (see item 3 below).
 Each view gets a `<view>.grid.png` in vop_raster's colours, for checking by
 eye as the geometry version was checked:
 - green: model only;
@@ -104,9 +106,10 @@ eye as the geometry version was checked:
 - orange: overlap;
 - grey outline: crop A.
 
-The picture's rule, any pixel, is **provisional**; item 3 decides what
-"occupied" means. Comparison with a geometry run (aggregating onto its grid,
-including sheet-capped views) is deferred until one exists.
+The picture draws the occupancy classes defined in item 3 (ink). The
+geometry comparison below maps each geometry cell's centre into this grid. A
+reusable comparison tool (aggregating onto a geometry grid, including
+sheet-capped views) is not built yet.
 
 **G-9. One module, one record, written last.** `tools/stage_a_grid.py`
 (NumPy and Pillow; the decoder's and registration tool's own functions, not
@@ -181,9 +184,75 @@ Three mutations of production each turn the suite red:
 - annotation offset sign flipped;
 - link channel dropped.
 
+## Item 3: what "occupied" means (decided 2026-10-01)
+
+Greg's decisions, after comparing against a geometry-path run of the same
+eight views (`geometry`, run 20260930T142940_bbc6c66):
+
+- **Occupancy is ink, not filled area.** The point is ink as a proxy for work;
+  filled area would count building mass. An element pixel is **ink** when a
+  4-neighbour has a different colour: its own outline, or a line a pixel from
+  white. The image border is not an edge, because the drawing continues past
+  it. A cell is occupied by a layer with at least `OCCUPANCY_MIN_INK_PX = 1` of
+  that layer's ink pixels. It is then one of empty / model only / annotation
+  only / overlap.
+- **The same rule applies to annotation.** On 1453 it gives the same occupied
+  cells as all element pixels on 7 of 8 views. Section is the exception, where
+  filled Detail Items drop from 1,895 to 1,770 cells.
+- **Annotation includes datums (Grids, Levels), view markers (section,
+  elevation and callout heads) and revision clouds.** The geometry path left
+  these out of its annotation layer, a known gap in the previous tooling. The
+  capture paints them, so they count.
+- **Lines and edges are better than bounding boxes.** The geometry path's
+  TINY/LINEAR proxies fill element bounding boxes. Where they mark cells the
+  colour capture's ink does not, the difference is accepted as an improvement,
+  not treated as a miss.
+
+Outputs: `<view>.grid.npz` gains the ink channels (`model_host_ink`,
+`model_dwg_ink`, `model_link_ink`, `anno_element_ink`) and `occupancy` (uint8,
+codes in the record). `<view>.grid.json` gains `occupancy`: cell counts by
+class over all cells, inside crop A and outside it, plus the rule. The PNG now
+draws these classes.
+
+### Results on pipeline_0930_1453, and the geometry comparison
+
+"Ours" counts all cells of the union grid. The geometry path's grid is crop A,
+annotation-expanded on Plan_CropActive, and sheet-capped on Plan_CropInActive.
+The agreement columns compare the two on the geometry grid's cells, with each
+geometry cell mapped by its centre.
+
+| View | Ours: empty / model / anno / overlap | Geometry: empty / model / anno / overlap | Model agreement | Anno agreement |
+|---|---|---|---|---|
+| Elevation_CropActive | 18946 / 9866 / 0 / 0 | 4234 / 14534 / 0 / 0 | 0.757 | 1.000 |
+| ModelCallout_CropActive | 1063 / 128 / 212 / 47 | 224 / 442 / 30 / 24 | 0.615 | 0.701 |
+| Plan_CropActive | 22114 / 5755 / 7914 / 1936 | 16708 / 7613 / 5244 / 2583 | 0.881 | 0.681 |
+| Plan_CropInActive | 2475078 / 12559 / 7968 / 1850 | 110462 / 130 / 0 / 0 | (window only) | (window only) |
+| Plan_DWG | 10030 / 5127 / 5341 / 2035 | 12099 / 10257 / 0 / 3 | 0.851 | 0.671 |
+| Plan_RVTLink | 14040 / 8403 / 0 / 3 | 11534 / 10822 / 0 / 3 | 0.855 | 1.000 |
+| RCP_CropActive | 26544 / 7019 / 3309 / 1101 | 8569 / 16704 / 13 / 658 | 0.944 | 0.865 |
+| Section_CropActive | 7869 / 975 / 1228 / 542 | 3879 / 3311 / 67 / 567 | 0.741 | 0.832 |
+
+What the disagreements are, checked view by view:
+
+- **Model, cells only the geometry path marks.** About 90 % are its
+  light-grey projection cells: bounding-box proxies. Unshifted, our grid covers
+  97–99 % of the geometry model cells on Plan_CropActive and RCP (fill); the
+  grids are registered.
+- **Annotation, cells only ours marks.** These are Grids, Levels, view markers
+  and Revision Clouds (pixels by category, RCP / Plan_CropActive / Section), as
+  decided above. On Plan_DWG they are the view-owned DWG linework, which the
+  geometry path no longer draws at all (G1).
+- **Annotation the geometry path marks.** Our capture covers 89–100 % of it
+  to within one cell (exact-cell 41–76 %): the geometry path spreads its
+  annotation into neighbouring cells. On Plan_CropActive its grid is also
+  offset 0.92 cell in u and 0.27 in v against ours (annotation-expanded
+  origin).
+- **Plan_CropInActive.** The geometry path covered only a 384 × 288-cell
+  sheet window and found 130 model cells. The colour grid covers the whole
+  view, with 24,502 model cells outside that window.
+
 ## Out of scope here
 
-- Thresholds and what "occupied" means: item 3.
 - Attributing black and residual pixels: item 4.
 - Link-model element identity: item 6, needs a capture change.
 - Change detection: item 7.
