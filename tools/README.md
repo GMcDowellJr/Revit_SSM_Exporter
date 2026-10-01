@@ -180,12 +180,29 @@ python tools/stage_a_grid.py <run>
 python tools/stage_a_grid_rollup.py <run>
 ```
 
-The denominator is the model sidecars (`stage_a_grid.model_sidecars`, the
-grid's own selector), one row each; grid JSONs are never counted. What was
-NOT gridded is a row like any other:
+**The denominator is what the run requested:** one row per unique view id in
+`run_meta.json`'s `views_requested`, matched to its `views` outcome and to its
+model sidecar by view id, plus one row per model sidecar the run did not
+request. A view that left no Stage A sidecar (a drafting view or legend that
+went the geometry path, a 3D view rejected by capability gating) is a row,
+never an absence. Model sidecars are found with `stage_a_grid.model_sidecars`
+(the grid's own selector); grid JSONs are never counted.
+
+**A run is refused**, with no rows and its reason under `refused_runs`, when
+`run_meta.json` is absent or unreadable, is not `finalized: true`, carries no
+`run_id`, requests no views, or when the view-id sets of `views_requested` and
+`views` differ. Duplicate ids in `views_requested` give one row and are listed
+under `duplicate_requested_ids`. The summary records the count invariant (the
+row-status counts sum to `requested_count` plus the orphan sidecars); if it
+fails, the tool exits 2.
+
+What was NOT gridded is a row like any other:
 
 | `row_status` | meaning |
 |---|---|
+| `no_stage_a_capture` | requested, but no model sidecar has its view id; carries run_meta's `capture_status` and failure reason |
+| `orphan_sidecar` | a model sidecar whose view id the run did not request (or cannot be read) |
+| `sidecar_ambiguous` | more than one model sidecar claims the view id; not guessed between |
 | `not_this_run` | the sidecar cannot be tied to the run: `run_meta.json` (finalized) does not record this view's capture as `success`, so the sidecar may be a previous run's |
 | `gridded` | `<view>.grid.json` with status `value`, still matching the files on disk |
 | `grid_refused` | the grid's own refusal, with its reason |
@@ -197,8 +214,13 @@ NOT gridded is a row like any other:
 `unusable`; a gridded row that is not `registered` is counted as model-only
 and keeps the grid's `no_registered_annotation` flag. View name, type, scale
 and on-sheet come from the run's `views_core_*.csv` on (`RunId`, `ViewId`), with
-`views_core_state` saying whether that join had exactly one file and one row.
-An empty cell means "not applicable for this row", never zero.
+`views_core_state` saying how the join went. A view with more than one
+views_core row is reported, not hidden: `duplicate_rows` when the rows agree
+on ViewType, `conflicting` when they do not; each field is filled only where
+every row agrees. The summary counts these views, counts rows by run_meta
+capture status, and crosstabs ViewType by `row_status`, which is where
+drafting views and legends show up. An empty cell means "not applicable for
+this row", never zero.
 
 **It reports states, not a verdict:** no ok/pass/clean field, and every count
 in the summary sits beside its denominator.
@@ -211,8 +233,9 @@ python tools/stage_a_grid_rollup.py run_a run_b/color_id_buffer --out rollup/
 
 **Output:** `grid_rollup.csv`, then `grid_rollup.summary.json` (written last,
 naming the CSV's sha256), in `<run>/analysis_grid/` for one run; `--out` is
-required for more than one. Exit 0 every row `gridded` and `registered`, 1 any
-other row, 2 a run with no model sidecars or bad arguments.
+required for more than one. Exit 0 when no run is refused and every row is
+`gridded` and `registered`; 1 for any other row or a refused run; 2 when every
+run is refused, the count invariant fails, or on bad arguments.
 
 ---
 
