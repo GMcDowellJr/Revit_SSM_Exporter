@@ -26,11 +26,14 @@ definition, used by every analysis-layer product:
     export is analysed and flagged ``capped``.
 
 Outputs, per view, in ``--out`` (default ``<run>/analysis_grid/``):
-``<view>.grid.npz`` (per-cell pixel counts by channel; row 0 is the LOWEST j),
-then ``<view>.grid.json`` naming the npz's hash -- the record is written last
-(CLAUDE.md, defect class 4) -- and ``<view>.grid.png``, an occupancy picture in
-vop_raster's colours for checking by eye. The PNG's rule (any pixel) is
-PROVISIONAL: what "occupied" means is item 3.
+``<view>.grid.npz`` (per-cell pixel counts by channel, ink counts, and the
+``occupancy`` class per cell; row 0 is the LOWEST j), then ``<view>.grid.json``
+naming the npz's hash -- the record is written last (CLAUDE.md, defect class
+4) -- and ``<view>.grid.png``, the occupancy in vop_raster's colours.
+
+OCCUPANCY (item 3): a cell is model and/or annotation by INK -- element pixels
+with a differently coloured neighbour -- not by filled area. See
+OCCUPANCY_MIN_INK_PX.
 
     python tools/stage_a_grid.py <run dir | color_id_buffer dir> [--out DIR]
 """
@@ -66,8 +69,19 @@ TOOL_VERSION = "1.0.0"
 MIN_PX_PER_CELL = 2.0
 COARSE_UNCERTAINTY_CELLS = 0.25
 
-MODEL_CHANNELS = ("host", "dwg", "link", "tick", "white", "black", "residual", "total")
-ANNO_CHANNELS = ("element", "white", "black", "residual", "total")
+MODEL_CHANNELS = ("host", "dwg", "link", "host_ink", "dwg_ink", "link_ink",
+                  "tick", "white", "black", "residual", "total")
+ANNO_CHANNELS = ("element", "element_ink", "white", "black", "residual", "total")
+
+# Item 3 (Greg, 2026-10-01): occupancy is INK -- "ink as a proxy for work";
+# filled area would count building mass. An element pixel is ink when a
+# 4-neighbour has a different colour (its own outline, or a line one pixel
+# from white); the image border is not an edge, since the drawing continues
+# past it. A cell is occupied by a layer when it holds at least this many of
+# that layer's ink pixels. Annotation includes datums, view markers and
+# revision clouds (the geometry path's known gap).
+OCCUPANCY_MIN_INK_PX = 1
+OCCUPANCY_CODES = {"empty": 0, "model_only": 1, "anno_only": 2, "overlap": 3}
 
 # vop_raster's colours (vop_interwoven/png_export.py), so the two pictures
 # read the same way.
@@ -312,6 +326,17 @@ def _colour_set(colour_map):
                                for c in colour_map.values())), dtype=np.int64)
 
 
+def ink_mask(packed):
+    """PURE. Pixels with a 4-neighbour of a different packed colour. The
+    image border is not an edge."""
+    edge = np.zeros(packed.shape, dtype=bool)
+    edge[:, :-1] |= packed[:, :-1] != packed[:, 1:]
+    edge[:, 1:] |= packed[:, 1:] != packed[:, :-1]
+    edge[:-1] |= packed[:-1] != packed[1:]
+    edge[1:] |= packed[1:] != packed[:-1]
+    return edge
+
+
 def model_channel_masks(sidecar, rgb):
     """Per-pixel channel masks for the model image, in the decoder's S1
     precedence (element, tick, white, black, link, residual), so their image
@@ -332,7 +357,10 @@ def model_channel_masks(sidecar, rgb):
     black = rest & (packed == 0)
     rest = rest & ~white & ~black
     link = rest & np.isin(packed, _colour_set(sidecar.get("link_category_color_map") or {}))
-    return {"host": element & ~dwg, "dwg": dwg, "link": link, "tick": tick,
+    edge = ink_mask(packed)
+    return {"host": element & ~dwg, "dwg": dwg, "link": link,
+            "host_ink": element & ~dwg & edge, "dwg_ink": dwg & edge,
+            "link_ink": link & edge, "tick": tick,
             "white": white, "black": black, "residual": rest & ~link,
             "total": np.ones(packed.shape, dtype=bool)}
 
@@ -348,7 +376,8 @@ def anno_channel_masks(anno_sidecar, rgb, excluded_ids):
     rest = ~element
     white = rest & (packed == 0xFFFFFF)
     black = rest & (packed == 0)
-    return {"element": element, "white": white, "black": black,
+    return {"element": element, "element_ink": element & ink_mask(packed),
+            "white": white, "black": black,
             "residual": rest & ~white & ~black,
             "total": np.ones(packed.shape, dtype=bool)}
 
@@ -368,6 +397,30 @@ def count_cells(spec, masks, col_offset=0, row_offset=0):
     return dict((k, v.reshape(spec["cells_h"], spec["cells_w"])) for k, v in counts.items())
 
 
+def occupancy(arrays):
+    """PURE. Per-cell class (OCCUPANCY_CODES) from the ink counts: model ink
+    is host + DWG + link ink, annotation ink the registered canvas's."""
+    model = (arrays["model_host_ink"] + arrays["model_dwg_ink"]
+             + arrays["model_link_ink"]) >= OCCUPANCY_MIN_INK_PX
+    anno = (arrays["anno_element_ink"] >= OCCUPANCY_MIN_INK_PX
+            if "anno_element_ink" in arrays else np.zeros_like(model))
+    out = np.zeros(model.shape, dtype=np.uint8)
+    out[model & ~anno] = OCCUPANCY_CODES["model_only"]
+    out[anno & ~model] = OCCUPANCY_CODES["anno_only"]
+    out[model & anno] = OCCUPANCY_CODES["overlap"]
+    return out
+
+
+def occupancy_summary(occ, inside):
+    """Cell counts by class, over the whole grid and inside crop A."""
+    def _counts(mask):
+        return dict((name, int(((occ == code) & mask).sum()))
+                    for name, code in OCCUPANCY_CODES.items())
+    return {"all_cells": _counts(np.ones(occ.shape, dtype=bool)),
+            "inside_crop_a": _counts(inside),
+            "outside_crop_a": _counts(~inside)}
+
+
 def inside_crop_a(spec):
     mask = np.zeros((spec["cells_h"], spec["cells_w"]), dtype=bool)
     ci, cj = spec["crop_a_cells"]["i_range"], spec["crop_a_cells"]["j_range"]
@@ -379,14 +432,13 @@ def inside_crop_a(spec):
 # --- the picture ---------------------------------------------------------------
 
 def render_png(spec, arrays, path, px_per_cell=4):
-    """Occupancy in vop_raster's colours, j flipped so north is up; crop A's
-    outline in grey. The rule -- any pixel -- is provisional (item 3)."""
-    model = (arrays["model_host"] + arrays["model_dwg"] + arrays["model_link"]) > 0
-    anno = arrays["anno_element"] > 0 if "anno_element" in arrays else np.zeros_like(model)
-    img = np.full(model.shape + (3,), 255, dtype=np.uint8)
-    img[model & ~anno] = PNG_MODEL
-    img[anno & ~model] = PNG_ANNO
-    img[model & anno] = PNG_OVERLAP
+    """The occupancy classes in vop_raster's colours, j flipped so north is
+    up; crop A's outline in grey."""
+    occ = arrays["occupancy"]
+    img = np.full(occ.shape + (3,), 255, dtype=np.uint8)
+    img[occ == OCCUPANCY_CODES["model_only"]] = PNG_MODEL
+    img[occ == OCCUPANCY_CODES["anno_only"]] = PNG_ANNO
+    img[occ == OCCUPANCY_CODES["overlap"]] = PNG_OVERLAP
     img = img[::-1]
     img = np.repeat(np.repeat(img, px_per_cell, axis=0), px_per_cell, axis=1)
     inside = inside_crop_a(spec)[::-1]
@@ -419,7 +471,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
               "run_id": (run_meta or {}).get("run_id"),
               "model_sidecar": str(model_sidecar_path),
               "model_sidecar_sha256": sha256_file(model_sidecar_path),
-              "png_rule": "any pixel -- PROVISIONAL, item 3 decides"}
+              "png_rule": "the occupancy classes (ink, item 3)"}
     json_path = out_dir / (stem + ".grid.json")
     try:
         sidecar = _load_json(model_sidecar_path)
@@ -462,6 +514,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 "record": str(reg_path), "record_sha256": sha256_file(reg_path),
                 "tiff_sha256": registered.get("registered_tiff_sha256")}
         arrays["inside_crop_a"] = inside_crop_a(spec)
+        arrays["occupancy"] = occupancy(arrays)
         npz_path = out_dir / (stem + ".grid.npz")
         np.savez_compressed(npz_path, **arrays)
         png_path = out_dir / (stem + ".grid.png")
@@ -469,7 +522,13 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         record.update({
             "status": "value", "grid": spec,
             "image_totals": dict((k, int(v.sum())) for k, v in arrays.items()
-                                 if k != "inside_crop_a"),
+                                 if k not in ("inside_crop_a", "occupancy")),
+            "occupancy": dict(occupancy_summary(arrays["occupancy"],
+                                                arrays["inside_crop_a"]),
+                              codes=OCCUPANCY_CODES,
+                              rule="ink: an element pixel with a 4-neighbour of a "
+                                   "different colour; occupied at >= {0} ink px per "
+                                   "layer".format(OCCUPANCY_MIN_INK_PX)),
             "npz": npz_path.name, "npz_sha256": sha256_file(npz_path),
             "png": png_path.name,
             "layout": "arrays are (cells_h, cells_w); row 0 is j_range[0] (the "

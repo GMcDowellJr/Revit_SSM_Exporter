@@ -253,3 +253,68 @@ def test_link_category_pixels_are_the_link_channel(tmp_path):
     assert rec["image_totals"]["model_link"] == doc["pixel_stats"]["link_category_px_total"]
     cells = _cells_with(_arrays(tmp_path)["model_link"], rec["grid"])
     assert cells == set((i, j) for i in (26, 27) for j in (20,))
+
+
+# --- item 3: occupancy is ink ---------------------------------------------------
+
+def test_a_filled_element_occupies_its_outline_cells_not_its_interior(tmp_path):
+    """Greg (2026-10-01): ink as a proxy for work; filled area would count
+    building mass. The fixture's model element fills u 8..12, v 6..9: cells
+    i 9..12, j 8..10. Its interior cells (10, 9) and (11, 9) hold fill and no
+    ink, so they are empty; the ring around them is model."""
+    _rec, rec, _m = _view(tmp_path)
+    arr = _arrays(tmp_path)
+    spec = rec["grid"]
+    fill = _cells_with(arr["model_host"], spec)
+    ink = _cells_with(arr["model_host_ink"], spec)
+    ring = set((i, j) for i in range(9, 13) for j in range(8, 11)) - {(10, 9), (11, 9)}
+    assert fill == ring | {(10, 9), (11, 9)}
+    assert ink == ring
+    model_cells = _cells_with(arr["occupancy"] == grid.OCCUPANCY_CODES["model_only"], spec)
+    assert ring <= model_cells and not ({(10, 9), (11, 9)} & model_cells)
+
+
+def test_the_image_border_is_not_an_edge():
+    flat = np.full((6, 8), 7, dtype=np.int64)
+    assert not grid.ink_mask(flat).any()
+    flat[:, :3] = 9          # a fill touching the left border
+    edge = grid.ink_mask(flat)
+    assert edge[:, 2].all() and edge[:, 3].all()
+    assert not edge[:, 0].any() and not edge[:, 1].any()
+
+
+def test_occupancy_classes_follow_the_ink_counts():
+    z = np.zeros((1, 4), dtype=np.int64)
+    arrays = {"model_host_ink": np.array([[0, 2, 0, 1]]), "model_dwg_ink": z,
+              "model_link_ink": np.array([[0, 0, 0, 1]]),
+              "anno_element_ink": np.array([[0, 0, 3, 5]])}
+    assert grid.occupancy(arrays).tolist() == [[0, 1, 2, 3]]
+    # Filled pixels alone never occupy a cell: only *_ink is read.
+    arrays["model_host"] = np.array([[9, 9, 9, 9]])
+    assert grid.occupancy(arrays).tolist() == [[0, 1, 2, 3]]
+    no_anno = dict((k, v) for k, v in arrays.items() if not k.startswith("anno"))
+    assert grid.occupancy(no_anno).tolist() == [[0, 1, 0, 1]]
+
+
+def test_the_FILE_carries_occupancy_consistent_with_its_ink_arrays(tmp_path):
+    _rec, rec, _m = _view(tmp_path)
+    arr = _arrays(tmp_path)
+    assert (arr["occupancy"] == grid.occupancy(arr)).all()
+    summary = rec["occupancy"]
+    cells = rec["grid"]["cells_w"] * rec["grid"]["cells_h"]
+    assert sum(summary["all_cells"].values()) == cells
+    for name, code in grid.OCCUPANCY_CODES.items():
+        assert summary["all_cells"][name] == int((arr["occupancy"] == code).sum())
+        assert summary["all_cells"][name] == (summary["inside_crop_a"][name]
+                                              + summary["outside_crop_a"][name])
+    assert summary["all_cells"]["model_only"] > 0 and summary["all_cells"]["anno_only"] > 0
+
+
+def test_annotation_ink_over_model_ink_is_overlap(tmp_path):
+    """An annotation rectangle whose outline crosses the model element's: the
+    shared cells are overlap; the control is that there is none without it."""
+    _r, base, _m = _view(tmp_path / "a")
+    assert base["occupancy"]["all_cells"]["overlap"] == 0
+    _r, rec, _m = _view(tmp_path / "b", extra_anno={
+        78: ((140, 8, 16), (8.3, 6.3, 11.7, 8.7))})
+    assert rec["occupancy"]["all_cells"]["overlap"] > 0
