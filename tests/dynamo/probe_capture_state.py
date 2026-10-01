@@ -350,7 +350,15 @@ def xyz_list(p):
 
 
 def enum_text(v):
-    return None if v is None else str(v)
+    """An enum value by NAME. Under Python.NET 3 ``str()`` of a Revit enum
+    gives its number -- round 1 recorded DisplayStyle as "7" and commit
+    statuses as "3" -- so the .NET ToString() is used when the value has
+    one. Comparisons never rely on this being a name: they compare against
+    the same conversion of the target member (flat_colors_target())."""
+    if v is None:
+        return None
+    to_string = getattr(v, "ToString", None)
+    return str(to_string()) if callable(to_string) else str(v)
 
 
 def colour_list(c):
@@ -685,7 +693,7 @@ def close_open_transaction(tx):
         rec["still_open"] = False
         return rec
     try:
-        rec["rollback_status"] = str(tx.RollBack())
+        rec["rollback_status"] = enum_text(tx.RollBack())
     except Exception as ex:
         rec["rollback_status"] = "raised: {0}: {1}".format(type(ex).__name__, ex)
     rec["has_ended_after"] = read(lambda: bool(tx.HasEnded()))
@@ -751,7 +759,7 @@ def tx_write(doc, name, fn, attempted, read_back, matches=None):
                 rec.update(rec_raised(ex))
                 _settle(tx, rec)
             else:
-                rec["commit_status"] = str(status)
+                rec["commit_status"] = enum_text(status)
                 if status != TransactionStatus.Committed:
                     rec.update({"state": "raised", "value": jsonable(value),
                                 "error": "Transaction.Commit returned {0}".format(status)})
@@ -887,7 +895,7 @@ def nested_group(ctx, name, body):
     finally:
         try:
             status = group.RollBack()
-            rec["rollback_status"] = str(status)
+            rec["rollback_status"] = enum_text(status)
             rec["rolled_back"] = status == TransactionStatus.RolledBack
         except Exception as ex:
             rec["rollback_status"] = "raised: {0}".format(ex)
@@ -1338,7 +1346,12 @@ def template_record(doc, view):
     return out
 
 
-FLAT = "FlatColors"
+def display_style_text(name):
+    """``DisplayStyle.<name>`` through enum_text -- the SAME conversion every
+    read-back goes through, so a comparison holds whether the host renders
+    the enum as a name or as a number."""
+    from Autodesk.Revit.DB import DisplayStyle
+    return enum_text(getattr(DisplayStyle, name))
 
 
 def flat_colors_attempt(ctx, view, label):
@@ -1357,16 +1370,18 @@ def flat_colors_attempt(ctx, view, label):
     step, so the FlatColors write is a real test when that switch works.
     ``took_effect`` is True / False, or None when inconclusive."""
     from Autodesk.Revit.DB import DisplayStyle
-    rec = {"display_style_before": read_attr(view, "DisplayStyle", enum_text)}
+    flat, hidden_line = display_style_text("FlatColors"), display_style_text("HLR")
+    rec = {"display_style_before": read_attr(view, "DisplayStyle", enum_text),
+           "flat_colors_as_recorded": flat}
     before = value_of(rec["display_style_before"])
-    if before == FLAT:
+    if before == flat:
         rec["pre_switch_to_hidden_line"] = tx_write(
             ctx.doc, label + " pre-switch to Hidden Line",
             lambda: setattr(view, "DisplayStyle", DisplayStyle.HLR) or True,
-            "HLR", lambda: enum_text(view.DisplayStyle))
+            hidden_line, lambda: enum_text(view.DisplayStyle))
         rec["display_style_after_pre_switch"] = read_attr(view, "DisplayStyle", enum_text)
         before = value_of(rec["display_style_after_pre_switch"])
-        if before == FLAT or before is None:
+        if before == flat or before is None:
             rec.update(outcome="already_target", took_effect=None,
                        outcome_reason="the view was already FlatColors and the switch "
                                       "to Hidden Line did not take effect (write {0}, "
@@ -1379,12 +1394,12 @@ def flat_colors_attempt(ctx, view, label):
         view.DisplayStyle = DisplayStyle.FlatColors
         return True
     rec["set_flat_colors"] = tx_write(ctx.doc, label + " flat colors", _set_flat,
-                                      FLAT, lambda: enum_text(view.DisplayStyle))
+                                      flat, lambda: enum_text(view.DisplayStyle))
     rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
     after = value_of(rec["display_style_after"])
     if rec["set_flat_colors"]["state"] != "value":
         outcome = "raised"
-    elif after == FLAT and before != FLAT:
+    elif after == flat and before != flat:
         outcome = "took_effect"
     else:
         outcome = "no_effect"
@@ -1739,9 +1754,10 @@ def run_q5b_view(ctx, dependent, dep_baseline, primary, primary_baseline, primar
         rec["dependent_display_style_after"] = read_attr(dependent, "DisplayStyle", enum_text)
         before = value_of(rec["dependent_display_style_before"])
         after = value_of(rec["dependent_display_style_after"])
+        flat = display_style_text("FlatColors")
         rec["dependent_followed_primary"] = (
             None if before is None or after is None
-            else bool(after == FLAT and before != FLAT))
+            else bool(after == flat and before != flat))
         out["steps"].append(rec)
 
     run_gated(ctx, [(dependent, dep_baseline), (primary, primary_baseline)], Q5_REQUIRED,
@@ -2161,7 +2177,7 @@ def run_probe(inputs):
         if group is not None and tg["started"]:
             try:
                 status = group.RollBack()
-                tg["rollback_status"] = str(status)
+                tg["rollback_status"] = enum_text(status)
                 tg["rolled_back"] = status == TransactionStatus.RolledBack
             except Exception as ex:
                 tg["rollback_status"] = "raised: {0}".format(ex)
