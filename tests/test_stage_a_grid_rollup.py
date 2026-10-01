@@ -14,6 +14,7 @@ same run, so a tool that marked everything bad would fail the control.
 import csv
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -55,7 +56,7 @@ def _outcome(run, n, status="success", **meta):
 
 
 def _capture(run, n, register=True, gridded=True, model_faults=None,
-             filled_region_ids=(), drop_anno_marks=False):
+             filled_region_ids=(), drop_anno_marks=False, anno_faults=None):
     """View ``V_<n>`` in ``run``: the shared pair, renamed and re-pointed,
     then (optionally) registered and gridded by the real tools."""
     stage = run.parent / "stage_{0}_{1}".format(run.name, n)
@@ -71,6 +72,8 @@ def _capture(run, n, register=True, gridded=True, model_faults=None,
         model["capture_integrity"]["capture_faults"] = list(model_faults)
     anno = json.loads(anno_src.read_text())
     anno.update(view_id=n, tiff_path=str(anno_tiff), model_pass_tiff_path=str(model_tiff))
+    if anno_faults:
+        anno["capture_integrity"]["capture_faults"] = list(anno_faults)
     if filled_region_ids:
         anno["annotation_bbox_map"] = dict(
             (str(eid), _bbox_entry(rect, "FilledRegion" if eid in filled_region_ids
@@ -562,3 +565,42 @@ def test_views_core_rows_of_another_run_are_not_joined(tmp_path):
         "Plan One", "value")
     assert (by_stem["V_2"]["view_name"], by_stem["V_2"]["views_core_state"]) == (
         "", "absent")
+
+
+# --- review round 2 (Codex, PR #224) -------------------------------------------------------
+
+def test_a_finalized_run_meta_with_no_run_id_ties_no_sidecar(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _outcome(run, 1, run_id=None)
+    assert _main(run) == 1
+    by_stem, _rows, _s = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "not_this_run"
+    assert "no run_id" in by_stem["V_1"]["reason"]
+
+
+def test_a_refusal_repaired_by_re_registering_is_stale(tmp_path):
+    """The grid read the registration, then refused on the annotation
+    capture's integrity -- writing no registration hash. Repairing that
+    capture and re-registering rewrites the record AFTER the refusal; the
+    refusal is then reported stale, not as current. The control (V_1, refused
+    and not repaired) stays grid_refused."""
+    run = _run(tmp_path)
+    for n in (1, 2):
+        _capture(run, n, anno_faults=["annotation_collection_failed"])
+        g = _grid_json(run, n)
+        assert g["status"] == "refused" and "annotation capture" in g["reason"]
+        assert "registered_annotation" not in g
+    grid_json = run / "analysis_grid" / "V_2.grid.json"
+    past = grid_json.stat().st_mtime - 10
+    os.utime(str(grid_json), (past, past))
+    anno = run / "color_id_buffer" / "V_2_anno.json"
+    doc = json.loads(anno.read_text())
+    doc["capture_integrity"]["capture_faults"] = []
+    anno.write_text(json.dumps(doc))
+    assert reg.register(anno)["status"] == "registered"
+    _main(run)
+    by_stem, _rows, _s = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "grid_refused"
+    assert by_stem["V_2"]["row_status"] == "grid_stale"
+    assert "rewritten after this refusal" in by_stem["V_2"]["reason"]

@@ -190,6 +190,8 @@ def run_capture_statuses(meta):
         return "no readable run_meta.json", {}
     if not meta.get("finalized"):
         return "run_meta.json is not finalized (an interrupted run)", {}
+    if not meta.get("run_id"):
+        return "run_meta.json carries no run_id, so no sidecar can be tied to it", {}
     out = {}
     for v in meta.get("views") or []:
         if not isinstance(v, dict):
@@ -215,7 +217,7 @@ def run_capture_status(statuses, view_id):
 
 # --- one view --------------------------------------------------------------------
 
-def staleness(model_sidecar_path, record, reg_path, run_id=None):
+def staleness(model_sidecar_path, record, reg_path, run_id=None, grid_json=None):
     """Why ``record`` (a parsed grid.json) no longer describes the files on
     disk; empty when every hash it names still matches."""
     reasons = []
@@ -272,6 +274,15 @@ def staleness(model_sidecar_path, record, reg_path, run_id=None):
     elif ra is None and record.get("status") == "value" and reg_now is not None:
         # A "value" grid reads any record present, so it saw none.
         reasons.append("a registration record exists that the grid was made without")
+    elif (ra is None and record.get("status") != "value" and reg_now is not None
+          and grid_json is not None
+          and reg_path.stat().st_mtime_ns > Path(grid_json).stat().st_mtime_ns):
+        # A refusal written after the registration was read but before the
+        # grid recorded its hash names no registration provenance. The only
+        # evidence left is order: a record rewritten after the refusal (a
+        # re-registration) may have repaired what was refused.
+        reasons.append("the registration record was rewritten after this refusal, "
+                       "which records no registration hash to compare")
     return reasons
 
 
@@ -390,7 +401,7 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, statuses=("", {})
     if record is not None:
         if row["view_id"] is None:
             row["view_id"] = record.get("view_id")
-        stale = staleness(model_sidecar_path, record, reg_path, run_id)
+        stale = staleness(model_sidecar_path, record, reg_path, run_id, grid_json)
         if stale:
             row["row_status"] = "grid_stale"
             row["reason"] = "; ".join(stale)
