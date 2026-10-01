@@ -645,10 +645,46 @@ def refusal_text(verdict):
 # WRITES, NESTED GROUPS, EXPORT
 # ======================================================================
 
+class TransactionLeftOpen(Exception):
+    """A transaction could not be closed. ``args`` = (name, write record).
+
+    Every later read, export and write would run inside it, and the enclosing
+    groups might not roll back, so the probe stops writing: nested_group sets
+    ``ctx.halted`` and run_gated refuses everything after."""
+
+
+def close_open_transaction(tx):
+    """Roll ``tx`` back if it has not ended. ``still_open`` is True when it
+    is still open afterwards OR when that cannot be read: an unknown state is
+    not a closed one."""
+    rec = {"has_ended_before": read(lambda: bool(tx.HasEnded())),
+           "rollback_status": None, "has_ended_after": None, "still_open": None}
+    if value_of(rec["has_ended_before"]) is True:
+        rec["still_open"] = False
+        return rec
+    try:
+        rec["rollback_status"] = str(tx.RollBack())
+    except Exception as ex:
+        rec["rollback_status"] = "raised: {0}: {1}".format(type(ex).__name__, ex)
+    rec["has_ended_after"] = read(lambda: bool(tx.HasEnded()))
+    rec["still_open"] = value_of(rec["has_ended_after"]) is not True
+    return rec
+
+
+def _settle(tx, rec, name):
+    """Close ``tx`` after a failed write or commit; halt if it stays open."""
+    rec["transaction_close"] = close_open_transaction(tx)
+    if rec["transaction_close"]["still_open"]:
+        raise TransactionLeftOpen(name, rec)
+    return rec
+
+
 def tx_write(doc, name, fn):
     """``fn()`` inside its own committed Transaction, as a three-valued
-    record. A raise rolls the transaction back and is recorded; so is a
-    commit that does not return Committed."""
+    record. A raise, a raising Commit and a Commit that does not return
+    Committed (Pending, RolledBack, Error) are all recorded as raised, and in
+    each case the transaction is closed before returning -- rolled back if it
+    has not ended. One that cannot be closed raises TransactionLeftOpen."""
     from Autodesk.Revit.DB import Transaction, TransactionStatus
     tx = Transaction(doc, "VOP capture-state probe: " + name)
     try:
@@ -661,19 +697,15 @@ def tx_write(doc, name, fn):
     try:
         value = fn()
     except Exception as ex:
-        rec = rec_raised(ex)
-        try:
-            rec["rollback_status"] = str(tx.RollBack())
-        except Exception as rb_ex:
-            rec["rollback_status"] = "raised: {0}".format(rb_ex)
-        return rec
+        return _settle(tx, rec_raised(ex), name)
     try:
         status = tx.Commit()
     except Exception as ex:
-        return rec_raised(ex)
+        return _settle(tx, rec_raised(ex), name)
     if status != TransactionStatus.Committed:
-        return {"state": "raised", "value": jsonable(value),
-                "error": "Transaction.Commit returned {0}".format(status)}
+        return _settle(tx, {"state": "raised", "value": jsonable(value),
+                            "error": "Transaction.Commit returned {0}".format(status)},
+                       name)
     rec = rec_value(value if isinstance(value, dict) else jsonable(value))
     rec["commit_status"] = str(status)
     return rec
@@ -716,6 +748,12 @@ def nested_group(ctx, name, body):
         return rec
     try:
         body()
+    except TransactionLeftOpen as ex:
+        rec["body_error"] = exception_record(name, ex)
+        rec["body_error"]["write_record"] = ex.args[1] if len(ex.args) > 1 else None
+        ctx.exceptions.append(rec["body_error"])
+        ctx.halted = ("transaction {0!r} could not be closed; the probe stopped "
+                      "writing".format(ex.args[0] if ex.args else name))
     except Exception as ex:
         rec["body_error"] = exception_record(name, ex)
         ctx.exceptions.append(rec["body_error"])
@@ -752,9 +790,23 @@ def run_gated(ctx, view, baseline, required, out, plan, prefix):
     that left this view changed. Verdicts land in
     ``out["restore_checks"][label]``; the start's under ``question_start``."""
     checks = out.setdefault("restore_checks", {})
+
+    def _refuse_halted(steps):
+        for name in steps:
+            out["steps"].append({"step": name, "refused": "probe_halted",
+                                 "refused_reason": ctx.halted})
+
+    if ctx.halted:
+        for _label, steps, _body in plan:
+            _refuse_halted(steps)
+        out["refused"] = "probe halted before this question: {0}".format(ctx.halted)
+        return None
     checks["question_start"] = restore_gate(ctx, view, baseline, required, "question_start")
     blocked = None if checks["question_start"]["restored"] else checks["question_start"]
     for label, steps, body in plan:
+        if ctx.halted:
+            _refuse_halted(steps)
+            continue
         if blocked is not None:
             for name in steps:
                 out["steps"].append({"step": name, "refused": "state_not_restored",
@@ -768,6 +820,8 @@ def run_gated(ctx, view, baseline, required, out, plan, prefix):
             if name not in present:
                 out["steps"].append({"step": name, "refused": "raised",
                                      "exception": group.get("body_error")})
+        if ctx.halted:
+            continue
         checks[label] = restore_gate(ctx, view, baseline, required, label)
         if not checks[label]["restored"]:
             blocked = checks[label]
@@ -838,6 +892,8 @@ class Context(object):
         self.pixel_width = pixel_width
         self.exports = []
         self.exceptions = []
+        # Set when a transaction could not be closed; nothing runs after.
+        self.halted = None
 
 
 def _step(ctx, view, question, step, writes=None, export=True):
@@ -1280,6 +1336,7 @@ def run_probe(inputs):
                 changed.append({"view_id": vid, "field": field, "verdict": entry["verdict"]})
         if cmp_rec["state"] != "value":
             changed.append({"view_id": vid, "field": "*", "verdict": "unverifiable"})
+    report["halted"] = ctx.halted
     report["verify_changed"] = changed
     # Fields Revit would not read before OR after (e.g. a plan view's
     # background): listed so their absence from verify_changed is not read
@@ -1292,6 +1349,8 @@ def run_probe(inputs):
                    "after -- see verify_unreadable_both".format(len(unreadable)))
     else:
         summary = "ALL PROBED VIEWS RESTORED"
+    if ctx.halted:
+        summary = "PROBE HALTED ({0}); {1}".format(ctx.halted, summary)
     report["VERIFY_SUMMARY"] = summary
     report["finished_at"] = time.strftime("%Y%m%dT%H%M%S")
     # Written LAST, once every field above is final (CLAUDE.md, defect class 4).

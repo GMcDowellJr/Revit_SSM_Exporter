@@ -202,8 +202,20 @@ one that throws is `raised`.
    ```
 
 A Revit warning dialog may appear on a commit (a crop write on a split view,
-for example). Dismiss it. A commit that does not return `Committed` is
-recorded as `raised` with the status it did return.
+for example). Dismiss it.
+
+A write that raises, a `Commit` that raises, and a `Commit` that returns
+anything but `Committed` (`Pending`, `RolledBack`, `Error`) are all recorded as
+`raised`. In each case the transaction is closed before the probe continues:
+if `HasEnded()` is false, it is rolled back. The outcome is recorded under
+`transaction_close`.
+
+**If the transaction still cannot be closed, the probe HALTS.** That covers a
+transaction stuck in `Pending` whose rollback raises, and one whose state
+cannot be read. Nothing more is written or exported: every later step and
+question is refused as `probe_halted`. The outer group is still rolled back
+and verified. `halted` in the JSON gives the reason, and `VERIFY_SUMMARY`
+starts with `PROBE HALTED`.
 
 ## Outputs
 
