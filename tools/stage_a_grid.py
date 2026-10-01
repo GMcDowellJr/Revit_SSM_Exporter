@@ -83,6 +83,17 @@ ANNO_CHANNELS = ("element", "element_ink", "white", "black", "residual", "total"
 OCCUPANCY_MIN_INK_PX = 1
 OCCUPANCY_CODES = {"empty": 0, "model_only": 1, "anno_only": 2, "overlap": 3}
 
+# Greg, 2026-10-01. A FILLED REGION counts by area, not ink: it masks the
+# model, and the mask is what is relevant. Identified by the capture's
+# element_class (filled and masking regions share Detail Items with detail
+# components, so category cannot tell them apart).
+FILLED_REGION_CLASSES = ("FilledRegion",)
+# BLACK pixels on the annotation canvas (view-symbol text and the like are
+# drawn in black, not in the element's colour) lie inside an annotation
+# element's bounding box and are assigned to it: the smallest box that
+# contains the pixel centre, padded by this much for the mapping.
+BLACK_BBOX_PAD_PX = 1.0
+
 # vop_raster's colours (vop_interwoven/png_export.py), so the two pictures
 # read the same way.
 PNG_EMPTY = (255, 255, 255)
@@ -365,21 +376,116 @@ def model_channel_masks(sidecar, rgb):
             "total": np.ones(packed.shape, dtype=bool)}
 
 
-def anno_channel_masks(anno_sidecar, rgb, excluded_ids):
-    """Per-pixel channel masks for the REGISTERED annotation canvas. Its ticks
-    were already subtracted (whitened) by the registration tool."""
+def _bbox_corners(entry):
+    """An annotation_bbox_map entry's UV corners, or None."""
+    bb = entry.get("bbox_uv")
+    if isinstance(bb, dict):
+        if bb.get("state") != "value":
+            return None
+        bb = bb.get("value")
+    if not bb:
+        return None
+    if len(bb) == 4 and not isinstance(bb[0], (list, tuple)):
+        u0, v0, u1, v1 = (float(x) for x in bb)
+        return [(u0, v0), (u1, v0), (u1, v1), (u0, v1)]
+    return [(float(c[0]), float(c[1])) for c in bb]
+
+
+def assign_black(black, bbox_map, excluded_ids, spec, canvas_origin,
+                 pad=BLACK_BBOX_PAD_PX):
+    """``(assigned mask, record)``: each black pixel to the smallest
+    annotation bounding box containing its centre (padded by ``pad`` px).
+    Pixels in no box stay unassigned; pixels in several are counted as
+    ambiguous and go to the smallest."""
+    ys, xs = np.nonzero(black)
+    record = {"total": int(len(xs)), "pad_px": pad, "rule": "smallest containing "
+              "annotation bbox"}
+    mask = np.zeros(black.shape, dtype=bool)
+    if not len(xs):
+        record.update(assigned=0, ambiguous=0, unassigned=0, by_element={})
+        return mask, record
+    m = spec["mapping"]
+    px = xs + float(canvas_origin[0]) + 0.5
+    py = ys + float(canvas_origin[1]) + 0.5
+    best_area = np.full(len(xs), np.inf)
+    best_id = np.zeros(len(xs), dtype=np.int64)
+    hits = np.zeros(len(xs), dtype=np.int64)
+    excluded = set(int(e) for e in excluded_ids or ())
+    not_ids = []
+    for key, entry in bbox_map.items():
+        if not str(key).lstrip("-").isdigit():
+            not_ids.append(str(key))     # recorded below, not silently dropped
+            continue
+        eid = int(key)
+        corners = _bbox_corners(entry) if eid not in excluded else None
+        if not corners:
+            continue
+        bx = [m["a_u"] * u + m["b_u"] for u, _v in corners]
+        by = [m["a_v"] * v + m["b_v"] for _u, v in corners]
+        x0, x1, y0, y1 = min(bx), max(bx), min(by), max(by)
+        inside = (px >= x0 - pad) & (px <= x1 + pad) & (py >= y0 - pad) & (py <= y1 + pad)
+        area = (x1 - x0) * (y1 - y0)
+        hits += inside
+        better = inside & (area < best_area)
+        best_area[better] = area
+        best_id[better] = eid
+    assigned = hits > 0
+    mask[ys[assigned], xs[assigned]] = True
+    ids, counts = np.unique(best_id[assigned], return_counts=True)
+    if not_ids:
+        record["skipped_non_id_keys"] = not_ids[:20]
+    record.update(assigned=int(assigned.sum()), ambiguous=int((hits > 1).sum()),
+                  unassigned=int((~assigned).sum()),
+                  by_element=dict((str(int(i)), int(c)) for i, c in zip(ids, counts)))
+    return mask, record
+
+
+def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)):
+    """``(masks, info)`` for the REGISTERED annotation canvas. Its ticks were
+    already subtracted (whitened) by the registration tool.
+
+    ``element`` is every annotation-element pixel, ``element_ink`` its ink,
+    ``filled_region`` the pixels of filled regions (counted by area),
+    ``black_assigned`` the black pixels inside an annotation bbox."""
+    excluded = set(int(e) for e in excluded_ids or ())
     colour_map = dict((k, v) for k, v in (anno_sidecar.get("color_assignment_map") or {}).items()
-                      if int(k) not in set(int(e) for e in excluded_ids or ()))
+                      if int(k) not in excluded)
     packed = _pack(rgb)
-    element = np.isin(packed, _colour_set(colour_map)) if colour_map else \
-        np.zeros(packed.shape, dtype=bool)
+    if colour_map:
+        ids, _stats = dsc.decode_ids(rgb, colour_map)
+    else:
+        ids = np.zeros(packed.shape, dtype=np.int32)
+    element = ids != dsc.BACKGROUND_ELEMENT_ID
+    bbox_map = anno_sidecar.get("annotation_bbox_map") or {}
+    class_recorded = any(isinstance(e, dict) and "element_class" in e
+                         for e in bbox_map.values())
+    fr_ids = sorted(int(k) for k, e in bbox_map.items()
+                    if isinstance(e, dict) and e.get("element_class") in FILLED_REGION_CLASSES
+                    and int(k) not in excluded)
+    filled = element & np.isin(ids, np.array(fr_ids, dtype=np.int64))
     rest = ~element
     white = rest & (packed == 0xFFFFFF)
     black = rest & (packed == 0)
-    return {"element": element, "element_ink": element & ink_mask(packed),
-            "white": white, "black": black,
-            "residual": rest & ~white & ~black,
-            "total": np.ones(packed.shape, dtype=bool)}
+    if spec is not None:
+        black_assigned, black_record = assign_black(black, bbox_map, excluded, spec,
+                                                    canvas_origin)
+    else:
+        black_assigned = np.zeros_like(black)
+        black_record = {"total": int(black.sum()), "assigned": 0,
+                        "reason": "no grid mapping to place the bboxes"}
+    masks = {"element": element, "element_ink": element & ink_mask(packed),
+             "filled_region": filled, "white": white, "black": black,
+             "black_assigned": black_assigned,
+             "residual": rest & ~white & ~black,
+             "total": np.ones(packed.shape, dtype=bool)}
+    info = {"black": black_record,
+            "filled_region": {"element_class_recorded": class_recorded,
+                              "elements": len(fr_ids), "px": int(filled.sum())}}
+    if not class_recorded:
+        info["filled_region"]["reason"] = (
+            "this capture records no element_class, so filled regions cannot be "
+            "told from detail components and are counted by ink")
+    return masks, info
 
 
 def count_cells(spec, masks, col_offset=0, row_offset=0):
@@ -402,8 +508,13 @@ def occupancy(arrays):
     is host + DWG + link ink, annotation ink the registered canvas's."""
     model = (arrays["model_host_ink"] + arrays["model_dwg_ink"]
              + arrays["model_link_ink"]) >= OCCUPANCY_MIN_INK_PX
-    anno = (arrays["anno_element_ink"] >= OCCUPANCY_MIN_INK_PX
-            if "anno_element_ink" in arrays else np.zeros_like(model))
+    if "anno_element_ink" in arrays:
+        # Ink, plus a filled region's whole area, plus the black pixels
+        # assigned to an annotation element.
+        anno = (arrays["anno_element_ink"] + arrays.get("anno_filled_region", 0)
+                + arrays.get("anno_black_assigned", 0)) >= OCCUPANCY_MIN_INK_PX
+    else:
+        anno = np.zeros_like(model)
     out = np.zeros(model.shape, dtype=np.uint8)
     out[model & ~anno] = OCCUPANCY_CODES["model_only"]
     out[anno & ~model] = OCCUPANCY_CODES["anno_only"]
@@ -491,9 +602,12 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             else:
                 lattice = registered["lattice"]
         spec = build_spec(sidecar, rgb, run_config, lattice=lattice)
-        arrays = dict(("model_" + k, v) for k, v in
-                      count_cells(spec, model_channel_masks(sidecar, rgb)).items())
+        model_masks = model_channel_masks(sidecar, rgb)
+        h, w = rgb.shape[:2]
         del rgb
+        arrays = dict(("model_" + k, v) for k, v in count_cells(spec, model_masks).items())
+        model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
+        del model_masks
         if registered is not None:
             anno_tiff = Path(registered["registered_tiff"])
             if not anno_tiff.is_absolute():
@@ -506,10 +620,34 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 _load_json(model_sidecar_path.with_name(stem + "_anno.json"))
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
+            anno_masks, anno_info = anno_channel_masks(
+                anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
+                spec=spec, canvas_origin=(ox, oy))
+            del anno_rgb
             arrays.update(("anno_" + k, v) for k, v in count_cells(
-                spec, anno_channel_masks(anno_sidecar, anno_rgb,
-                                         registered.get("excluded_element_ids")),
-                col_offset=ox, row_offset=oy).items())
+                spec, anno_masks, col_offset=ox, row_offset=oy).items())
+            # NOT BINARY: the two captures share one lattice, so how much of
+            # the model's ink lies under annotation is measured per pixel.
+            # The model image sits in the canvas at (-ox, -oy).
+            cover = (anno_masks["element"] | anno_masks["black_assigned"])[
+                -oy:-oy + h, -ox:-ox + w]
+            filled = anno_masks["filled_region"][-oy:-oy + h, -ox:-ox + w]
+            arrays.update(count_cells(spec, {
+                "model_ink_under_anno": model_ink & cover,
+                "model_ink_under_filled_region": model_ink & filled}))
+            del anno_masks, cover, filled
+            record["black"] = anno_info["black"]
+            record["filled_region"] = anno_info["filled_region"]
+            ink_px = int(model_ink.sum())
+            record["model_ink_under_annotation"] = {
+                "model_ink_px": ink_px,
+                "under_annotation_px": int(arrays["model_ink_under_anno"].sum()),
+                "under_filled_region_px": int(arrays["model_ink_under_filled_region"].sum()),
+                "fraction_under_annotation": (
+                    int(arrays["model_ink_under_anno"].sum()) / float(ink_px)
+                    if ink_px else None),
+                "per_cell": "model_ink_under_anno / (model_host_ink + model_dwg_ink "
+                            "+ model_link_ink) in the npz"}
             record["registered_annotation"] = {
                 "record": str(reg_path), "record_sha256": sha256_file(reg_path),
                 "tiff_sha256": registered.get("registered_tiff_sha256")}

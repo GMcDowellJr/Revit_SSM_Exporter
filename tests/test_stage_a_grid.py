@@ -318,3 +318,116 @@ def test_annotation_ink_over_model_ink_is_overlap(tmp_path):
     _r, rec, _m = _view(tmp_path / "b", extra_anno={
         78: ((140, 8, 16), (8.3, 6.3, 11.7, 8.7))})
     assert rec["occupancy"]["all_cells"]["overlap"] > 0
+
+
+# --- black pixels, filled regions, and overlap as a measure --------------------
+
+def _bbox_entry(rect, element_class="TextNote"):
+    u0, v0, u1, v1 = rect
+    entry = {"bbox_uv": {"state": "value",
+                         "value": [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]},
+             "category": "Generic Annotations", "membership_basis": "owner_view"}
+    if element_class is not None:
+        entry["element_class"] = element_class
+    return entry
+
+
+def _view_with_annotation(tmp_path, extra=None, classes=None, black=(), record_class=True):
+    """The fixture pair, with an annotation_bbox_map (and classes) in the
+    annotation sidecar and black pixels painted into the annotation TIFF
+    (anno lattice: x = 12u + 30, y = -12v + 330) BEFORE registration."""
+    from PIL import Image
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    elements = dict(ELEMENTS)
+    elements.update(extra or {})
+    anno_path, model_path, _c = _write_pair(tmp_path, extra_anno=extra)
+    side = json.loads(anno_path.read_text())
+    side["annotation_bbox_map"] = dict(
+        (str(eid), _bbox_entry(rect, (classes or {}).get(eid, "TextNote")
+                               if record_class else None))
+        for eid, (_colour, rect) in elements.items())
+    anno_path.write_text(json.dumps(side))
+    tiff = tmp_path / "V_1_anno.tiff"
+    img = np.asarray(Image.open(str(tiff)).convert("RGB")).copy()
+    for u0, v0, u1, v1 in black:
+        img[int(-12 * v1 + 330):int(-12 * v0 + 330), int(12 * u0 + 30):int(12 * u1 + 30)] = 0
+    Image.fromarray(img).save(str(tiff), format="TIFF")
+    reg.register(anno_path)
+    _run_meta(tmp_path)
+    rec = grid.grid_view(model_path, tmp_path / "out")
+    return rec, dict(np.load(str(tmp_path / "out" / rec["npz"])))
+
+
+def test_black_pixels_go_to_the_annotation_bbox_that_contains_them(tmp_path):
+    """Black text inside element 50's bbox (u 10..14, v 10..12) is assigned
+    to 50; a black block in no bbox stays unassigned."""
+    rec, arr = _view_with_annotation(
+        tmp_path, black=[(11.0, 10.5, 12.0, 11.5), (25.0, 5.0, 26.0, 6.0)])
+    black = rec["black"]
+    assert black["total"] == black["assigned"] + black["unassigned"]
+    assert black["assigned"] > 0 and black["unassigned"] > 0
+    assert set(black["by_element"]) == {"50"}
+    assert int(arr["anno_black_assigned"].sum()) == black["assigned"]
+    # The unassigned block is in no annotation cell's occupancy.
+    spec = rec["grid"]
+    stray = (int(25.5 - MODEL_BOUNDS[0]), int(5.5 - MODEL_BOUNDS[1]))
+    occupied = _cells_with(np.isin(arr["occupancy"], (2, 3)), spec)
+    assert stray not in occupied
+
+
+def test_a_filled_region_occupies_its_area_not_only_its_outline(tmp_path):
+    """Greg: a filled region masks the model, and the mask is what counts.
+    A 6 x 6 ft region (u 20..26, v 2..8): cells i 21..26, j 4..9. As a
+    FilledRegion its interior cells are annotation; as anything else only
+    its outline is (the control)."""
+    region = {79: ((150, 8, 16), (20.0, 2.0, 26.0, 8.0))}
+    interior = set((i, j) for i in range(22, 26) for j in range(5, 9))
+    rec, arr = _view_with_annotation(tmp_path / "fr", extra=region,
+                                     classes={79: "FilledRegion"})
+    anno = _cells_with(np.isin(arr["occupancy"], (2, 3)), rec["grid"])
+    assert interior <= anno
+    assert rec["filled_region"]["elements"] == 1 and rec["filled_region"]["px"] > 0
+    rec2, arr2 = _view_with_annotation(tmp_path / "text", extra=region)
+    anno2 = _cells_with(np.isin(arr2["occupancy"], (2, 3)), rec2["grid"])
+    assert not (interior & anno2)
+
+
+def test_model_ink_under_a_filled_region_is_measured_not_binary(tmp_path):
+    """A filled region over the model element (u 8..12, v 6..9) masks its
+    whole outline: every model ink pixel is under it. The control, with no
+    region, has none under annotation."""
+    rec0, arr0 = _view_with_annotation(tmp_path / "none")
+    assert rec0["model_ink_under_annotation"]["under_annotation_px"] == 0
+    mask = {80: ((160, 8, 16), (7.0, 5.0, 13.0, 10.0))}
+    rec, arr = _view_with_annotation(tmp_path / "mask", extra=mask,
+                                     classes={80: "FilledRegion"})
+    over = rec["model_ink_under_annotation"]
+    model_ink = int((arr["model_host_ink"] + arr["model_dwg_ink"]
+                     + arr["model_link_ink"]).sum())
+    assert over["model_ink_px"] == model_ink
+    assert over["under_filled_region_px"] == model_ink
+    assert over["fraction_under_annotation"] == pytest.approx(1.0)
+    per_cell = arr["model_ink_under_filled_region"]
+    assert (per_cell <= arr["model_host_ink"] + arr["model_dwg_ink"]
+            + arr["model_link_ink"]).all()
+
+
+def test_without_element_class_filled_regions_are_not_guessed(tmp_path):
+    rec, _arr = _view_with_annotation(tmp_path, record_class=False)
+    assert rec["filled_region"]["element_class_recorded"] is False
+    assert rec["filled_region"]["elements"] == 0 and "reason" in rec["filled_region"]
+
+
+def test_assign_black_takes_the_smallest_containing_box():
+    spec = {"mapping": {"a_u": 1.0, "b_u": 0.0, "a_v": 1.0, "b_v": 0.0}}
+    black = np.zeros((20, 20), dtype=bool)
+    black[5, 5] = black[15, 15] = black[1, 18] = True
+    # (5, 5) lies in boxes 4, 2 and 1, listed in that order: "first match
+    # wins" gives it to 4, "last match wins" to 1; only "smallest" gives 2.
+    bbox_map = {"4": _bbox_entry((0, 0, 12, 12)), "2": _bbox_entry((3, 3, 8, 8)),
+                "1": _bbox_entry((0, 0, 20, 20)), "3": _bbox_entry((0, 0, 2, 2))}
+    mask, rec = grid.assign_black(black, bbox_map, excluded_ids=[3], spec=spec,
+                                  canvas_origin=(0, 0), pad=0.0)
+    assert rec["by_element"] == {"2": 1, "1": 2}
+    assert rec["ambiguous"] == 1          # (5, 5) is in boxes 1 and 2
+    assert rec["unassigned"] == 0 and mask.sum() == 3
