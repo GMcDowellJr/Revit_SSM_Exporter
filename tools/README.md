@@ -166,6 +166,55 @@ capture (`registration_marks` in its output).
 
 ---
 
+### `stage_a_grid_rollup.py` - Every view's grid result across Stage A runs
+
+Collects what `register_stage_a_annotation.py` and `stage_a_grid.py` already
+wrote into one CSV and one summary JSON, so a project-wide run can be shared
+without its images. **Read-only:** it never registers, never grids, and
+refuses an `--out` inside a capture folder.
+
+**Run order** (per run):
+```bash
+python tools/register_stage_a_annotation.py <run>/color_id_buffer
+python tools/stage_a_grid.py <run>
+python tools/stage_a_grid_rollup.py <run>
+```
+
+The denominator is the model sidecars (`stage_a_grid.model_sidecars`, the
+grid's own selector), one row each; grid JSONs are never counted. What was
+NOT gridded is a row like any other:
+
+| `row_status` | meaning |
+|---|---|
+| `gridded` | `<view>.grid.json` with status `value`, still matching the files on disk |
+| `grid_refused` | the grid's own refusal, with its reason |
+| `not_gridded` | no `<view>.grid.json` in `<run>/analysis_grid/` |
+| `grid_stale` | a hash the grid recorded (model sidecar, model TIFF, registration record) no longer matches, or a registration appeared or became usable after the grid was made |
+| `unreadable` | the grid JSON cannot be parsed; the exception |
+
+`registration_state` is `registered`, `refused` (its refusals), `absent` or
+`unusable`; a gridded row that is not `registered` is counted as model-only
+and keeps the grid's `no_registered_annotation` flag. View name, type, scale
+and on-sheet come from the run's `views_core_*.csv` on `ViewId`, with
+`views_core_state` saying whether that join had exactly one file and one row.
+An empty cell means "not applicable for this row", never zero.
+
+**It reports states, not a verdict:** no ok/pass/clean field, and every count
+in the summary sits beside its denominator.
+
+**Usage:**
+```bash
+python tools/stage_a_grid_rollup.py path/to/run
+python tools/stage_a_grid_rollup.py run_a run_b/color_id_buffer --out rollup/
+```
+
+**Output:** `grid_rollup.csv`, then `grid_rollup.summary.json` (written last,
+naming the CSV's sha256), in `<run>/analysis_grid/` for one run; `--out` is
+required for more than one. Exit 0 every row `gridded` and `registered`, 1 any
+other row, 2 a run with no model sidecars or bad arguments.
+
+---
+
 ### `compare_golden.py` - Golden Baseline Comparison
 
 Compares current exporter outputs against golden baseline to detect regressions.
