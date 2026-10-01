@@ -671,63 +671,168 @@ def close_open_transaction(tx):
     return rec
 
 
-def _settle(tx, rec, name):
-    """Close ``tx`` after a failed write or commit; halt if it stays open."""
+def _settle(tx, rec):
+    """Close ``tx`` after a failed write or commit, recording how."""
     rec["transaction_close"] = close_open_transaction(tx)
-    if rec["transaction_close"]["still_open"]:
-        raise TransactionLeftOpen(name, rec)
     return rec
 
 
-def tx_write(doc, name, fn):
-    """``fn()`` inside its own committed Transaction, as a three-valued
-    record. A raise, a raising Commit and a Commit that does not return
-    Committed (Pending, RolledBack, Error) are all recorded as raised, and in
-    each case the transaction is closed before returning -- rolled back if it
-    has not ended. One that cannot be closed raises TransactionLeftOpen."""
+def _equal(attempted, read_back):
+    return attempted == read_back
+
+
+def tx_write(doc, name, fn, attempted, read_back, matches=None):
+    """``fn()`` inside its own Transaction, as ONE record that obeys the
+    probe's write invariant:
+
+      ``attempted``     -- the value the write asked for;
+      ``commit_status`` -- what Commit returned (None if it never ran);
+      ``read_back``     -- a fresh read AFTER the transaction closed, as a
+                           three-valued record (``read_back()`` is required:
+                           a write without a read-back cannot be expressed);
+      ``took_effect``   -- ``matches(attempted, read_back value)``. Computed
+                           from the read-back, NEVER from the commit status: a
+                           write that commits but does not take effect is a
+                           finding (``took_effect: false``), not an error.
+                           None only when the read-back itself is unreadable.
+
+    ``state`` / ``value`` / ``error`` still say whether the call raised. A
+    raise, a raising Commit and a Commit that does not return Committed
+    (Pending, RolledBack, Error) are recorded as raised, and in each case the
+    transaction is closed before the read-back -- rolled back if it has not
+    ended. One that cannot be closed raises TransactionLeftOpen, with the
+    record, after the read-back."""
     from Autodesk.Revit.DB import Transaction, TransactionStatus
+    matches = matches or _equal
+    rec = {"attempted": attempted, "commit_status": None}
     tx = Transaction(doc, "VOP capture-state probe: " + name)
     try:
         started = tx.Start()
     except Exception as ex:
-        return rec_raised(ex)
-    if started != TransactionStatus.Started:
-        return {"state": "raised", "value": None,
-                "error": "Transaction.Start returned {0}".format(started)}
-    try:
-        value = fn()
-    except Exception as ex:
-        return _settle(tx, rec_raised(ex), name)
-    try:
-        status = tx.Commit()
-    except Exception as ex:
-        return _settle(tx, rec_raised(ex), name)
-    if status != TransactionStatus.Committed:
-        return _settle(tx, {"state": "raised", "value": jsonable(value),
-                            "error": "Transaction.Commit returned {0}".format(status)},
-                       name)
-    rec = rec_value(value if isinstance(value, dict) else jsonable(value))
-    rec["commit_status"] = str(status)
+        tx = None
+        rec.update(rec_raised(ex))
+        started = None
+    if tx is not None and started != TransactionStatus.Started:
+        rec.update({"state": "raised", "value": None,
+                    "error": "Transaction.Start returned {0}".format(started)})
+        tx = None
+    if tx is not None:
+        try:
+            value = fn()
+        except Exception as ex:
+            rec.update(rec_raised(ex))
+            _settle(tx, rec)
+        else:
+            try:
+                status = tx.Commit()
+            except Exception as ex:
+                rec.update(rec_raised(ex))
+                _settle(tx, rec)
+            else:
+                rec["commit_status"] = str(status)
+                if status != TransactionStatus.Committed:
+                    rec.update({"state": "raised", "value": jsonable(value),
+                                "error": "Transaction.Commit returned {0}".format(status)})
+                    _settle(tx, rec)
+                else:
+                    rec.update(rec_value(value if isinstance(value, dict) else jsonable(value)))
+    rec["read_back"] = read(read_back)
+    if rec["read_back"]["state"] == "value":
+        rec["took_effect"] = bool(matches(attempted, rec["read_back"]["value"]))
+    else:
+        rec["took_effect"] = None
+    if (rec.get("transaction_close") or {}).get("still_open"):
+        raise TransactionLeftOpen(name, rec)
     return rec
 
 
+def transform_from_record(rec):
+    """A Revit Transform rebuilt from a transform_record."""
+    from Autodesk.Revit.DB import Transform, XYZ
+    t = Transform(Transform.Identity)
+    t.Origin = XYZ(*rec["origin"])
+    t.BasisX = XYZ(*rec["basis_x"])
+    t.BasisY = XYZ(*rec["basis_y"])
+    t.BasisZ = XYZ(*rec["basis_z"])
+    return t
+
+
+def crop_boxes_match(attempted, read_back):
+    """The same box, judged in WORLD coordinates when both carry a transform
+    (a box Revit re-expresses about another origin is still the same box),
+    else by Min/Max."""
+    eq = boxes_equal(attempted, read_back)
+    return eq["world"] if eq["world"] is not None else bool(eq["local"])
+
+
 def write_crop_box(doc, view, box, name):
-    """Write ``box`` (a record) as view.CropBox, its Min/Max taken in the crop
-    transform the view carries AT THE WRITE. The value records that
-    transform, so a read-back is compared with what was really written even
-    when an earlier step (a scope box cleared) moved it."""
+    """Write ``box`` (a record) as view.CropBox and read it back.
+
+    With ``box["transform"]`` the box is written in THAT frame. Round 1 wrote
+    S0's local Min/Max into whatever transform the view carried at the write;
+    on MOHAVE (S0 rotated 180 degrees) clearing the scope box reset the
+    transform to identity, so the same numbers cropped a mirrored, empty
+    region. Without a transform, the view's current one is read first and
+    used, and ``attempted`` records it either way."""
     from Autodesk.Revit.DB import BoundingBoxXYZ, XYZ
+    given = box.get("transform")
+    current = value_of(read(crop_box_record, view)) or {}
+    attempted = {"min": list(box["min"]), "max": list(box["max"]),
+                 "transform": given or current.get("transform"),
+                 "transform_source": "given" if given else "current_at_write"}
 
     def _apply():
-        current = view.CropBox
         new = BoundingBoxXYZ()
-        new.Transform = current.Transform
+        new.Transform = (transform_from_record(given) if given
+                         else view.CropBox.Transform)
         new.Min = XYZ(*box["min"])
         new.Max = XYZ(*box["max"])
         view.CropBox = new
-        return {"min": list(box["min"]), "max": list(box["max"]),
-                "transform": transform_record(current.Transform)}
-    return tx_write(doc, name, _apply)
+        return True
+    return tx_write(doc, name, _apply, attempted,
+                    lambda: crop_box_record(view), crop_boxes_match)
+
+
+def clear_scope_box(doc, view, name):
+    """Set VIEWER_VOLUME_OF_INTEREST_CROP to InvalidElementId; attempted -1,
+    read back from the parameter."""
+    from Autodesk.Revit.DB import BuiltInParameter, ElementId
+
+    def _param():
+        p = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP)
+        if p is None:
+            raise ValueError("VIEWER_VOLUME_OF_INTEREST_CROP is not on this view")
+        return p
+    return tx_write(doc, name, lambda: bool(_param().Set(ElementId.InvalidElementId)),
+                    -1, lambda: element_id_int(_param().AsElementId()))
+
+
+def scope_box_cleared(write):
+    """The clear APPLIED: it committed, Set returned True, and it took effect."""
+    return (write.get("state") == "value" and write.get("value") is True
+            and write.get("took_effect") is True)
+
+
+def detach_template(doc, view, name):
+    """ViewTemplateId = InvalidElementId; attempted -1, read back. Round 1:
+    on a dependent view this commits and reads back unchanged."""
+    from Autodesk.Revit.DB import ElementId
+    return tx_write(doc, name,
+                    lambda: setattr(view, "ViewTemplateId", ElementId.InvalidElementId) or True,
+                    -1, lambda: element_id_int(view.ViewTemplateId))
+
+
+WHITE_RGB = [255, 255, 255]
+WHITE_GRADIENT = {"SkyColor": WHITE_RGB, "HorizonColor": WHITE_RGB, "GroundColor": WHITE_RGB}
+
+
+def write_white_background(doc, view, name, apply):
+    """SetBackground(white x3); took_effect when the three gradient colours
+    read back white."""
+    def _matches(attempted, read):
+        return isinstance(read, dict) and all(read.get(k) == v for k, v in attempted.items())
+    return tx_write(doc, name, apply, dict(WHITE_GRADIENT),
+                    lambda: background_fingerprint(view), _matches)
 
 
 def nested_group(ctx, name, body):
@@ -959,6 +1064,8 @@ def run_q1_q2(ctx, view, baseline):
     def _s2():
         writes = {}
         target = inset_box(box0, Q1_INSET_FT) if box0 is not None else None
+        if target is not None:
+            target["transform"] = box0.get("transform")
         if target is None:
             writes["crop_box"] = rec_unavailable("S0 box unreadable or too small to inset")
         else:
@@ -967,7 +1074,8 @@ def run_q1_q2(ctx, view, baseline):
             # color_id_buffer sets CropBoxActive = True right after the write.
             writes["crop_box_active"] = tx_write(
                 ctx.doc, "Q1 S2 crop active",
-                lambda: setattr(view, "CropBoxActive", True) or True)
+                lambda: setattr(view, "CropBoxActive", True) or True,
+                True, lambda: bool(view.CropBoxActive))
         rec, ids = _step(ctx, view, "q1", "S2", writes)
         out["steps"].append(rec)
         member_ids_by_step["S2"] = ids
@@ -1006,26 +1114,18 @@ def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
     from Autodesk.Revit.DB import BuiltInParameter, ElementId
     writes = {}
     if remove_scope_box:
-        def _clear():
-            p = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP)
-            if p is None:
-                raise ValueError("VIEWER_VOLUME_OF_INTEREST_CROP is not on this view")
-            return bool(p.Set(ElementId.InvalidElementId))
-        writes["scope_box_cleared"] = tx_write(ctx.doc, "Q3 {0} clear scope box".format(step), _clear)
+        writes["scope_box_cleared"] = clear_scope_box(
+            ctx.doc, view, "Q3 {0} clear scope box".format(step))
         # Applied only if the write committed, Set returned True AND the
         # read-back shows no scope box. Otherwise the step would export with
         # the scope box still attached and read as "clearing it did not help".
-        after = read(lambda: element_id_int(view.get_Parameter(
-            BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP).AsElementId()))
-        writes["scope_box_after_clear"] = after
-        if not (writes["scope_box_cleared"]["state"] == "value"
-                and writes["scope_box_cleared"]["value"] is True
-                and value_of(after) == -1):
+        if not scope_box_cleared(writes["scope_box_cleared"]):
             return _discriminator_refusal(
                 step, writes, "discriminator_not_applied",
                 "the scope box was not cleared: write {0} (value {1!r}), read-back "
                 "{2}".format(writes["scope_box_cleared"]["state"],
-                             writes["scope_box_cleared"]["value"], after))
+                             writes["scope_box_cleared"].get("value"),
+                             writes["scope_box_cleared"]["read_back"]))
     if remove_shape:
         manager = value_of(call_method(view, "GetCropRegionShapeManager"))
         shape_set = read_attr(manager, "ShapeSet", bool)
@@ -1038,17 +1138,17 @@ def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
                 "would repeat the step without the removal")
         writes["crop_shape_removed"] = tx_write(
             ctx.doc, "Q3 {0} remove crop shape".format(step),
-            lambda: manager.RemoveCropRegionShape() or True)
-        after = read(lambda: bool(view.GetCropRegionShapeManager().ShapeSet))
-        writes["shape_set_after_removal"] = after
+            lambda: manager.RemoveCropRegionShape() or True,
+            False, lambda: bool(view.GetCropRegionShapeManager().ShapeSet))
         if not (writes["crop_shape_removed"]["state"] == "value"
-                and value_of(after) is False):
+                and writes["crop_shape_removed"]["took_effect"] is True):
             return _discriminator_refusal(
                 step, writes, "discriminator_not_applied",
                 "the crop shape was not removed: write {0}, ShapeSet before {1}, "
-                "after {2}".format(writes["crop_shape_removed"]["state"],
-                                   shape_set, after))
-    target = scaled_box(box0, Q3_SHRINK)
+                "read-back {2}".format(writes["crop_shape_removed"]["state"],
+                                       shape_set, writes["crop_shape_removed"]["read_back"]))
+    # In S0's own frame (round 1 wrote it into whatever frame the view held).
+    target = dict(scaled_box(box0, Q3_SHRINK), transform=box0.get("transform"))
     writes["crop_box"] = write_crop_box(ctx.doc, view, target, "Q3 {0} crop".format(step))
     rec, _ids = _step(ctx, view, "q3", step, writes)
     read_back = value_of(rec["common"]["crop_box"])
@@ -1056,7 +1156,8 @@ def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
     # crop_write_state says why, so nothing downstream compares the export
     # with a box that was never accepted. The box that was attempted is kept
     # under its own name.
-    written = value_of(writes["crop_box"])
+    written = (writes["crop_box"]["attempted"] if writes["crop_box"]["state"] == "value"
+               else None)
     rec["crop_write_state"] = writes["crop_box"]["state"]
     rec["attempted_box"] = target
     rec["written_box"] = written
@@ -1064,6 +1165,7 @@ def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
     rec["read_back_box"] = read_back
     rec["read_back_extent_ft"] = box_extent_ft(read_back) if read_back else None
     rec["read_back_equal"] = boxes_equal(written, read_back)
+    rec["crop_write_took_effect"] = writes["crop_box"]["took_effect"]
     return rec
 
 
@@ -1138,13 +1240,14 @@ def run_q4(ctx, view, baseline):
         writes = {"shadow_intensity_before": read_attr(view, "ShadowIntensity", jsonable),
                   "shadow_intensity_set_0": tx_write(
                       ctx.doc, "Q4 S1 shadow 0",
-                      lambda: setattr(view, "ShadowIntensity", 0) or 0)}
+                      lambda: setattr(view, "ShadowIntensity", 0) or 0,
+                      0, lambda: jsonable(view.ShadowIntensity))}
         writes["shadow_intensity_after"] = read_attr(view, "ShadowIntensity", jsonable)
         rec, _i = _step(ctx, view, "q4", "S1", writes)
         out["steps"].append(rec)
         writes2 = {"background_before": background_record(view),
-                   "set_background_white": tx_write(ctx.doc, "Q4 S2 background",
-                                                    _white_background)}
+                   "set_background_white": write_white_background(
+                       ctx.doc, view, "Q4 S2 background", _white_background)}
         writes2["background_after"] = background_record(view)
         rec2, _i = _step(ctx, view, "q4", "S2", writes2)
         out["steps"].append(rec2)
@@ -1153,8 +1256,8 @@ def run_q4(ctx, view, baseline):
         writes = {"shadow_intensity_at_s3": read_attr(view, "ShadowIntensity", jsonable),
                   "shadow_intensity_s0": shadow0,
                   "background_before": background_record(view),
-                  "set_background_white": tx_write(ctx.doc, "Q4 S3 background",
-                                                   _white_background)}
+                  "set_background_white": write_white_background(
+                      ctx.doc, view, "Q4 S3 background", _white_background)}
         writes["background_after"] = background_record(view)
         rec, _i = _step(ctx, view, "q4", "S3", writes)
         out["steps"].append(rec)
@@ -1215,7 +1318,8 @@ def flat_colors_attempt(ctx, view, label):
     if before == FLAT:
         rec["pre_switch_to_hidden_line"] = tx_write(
             ctx.doc, label + " pre-switch to Hidden Line",
-            lambda: setattr(view, "DisplayStyle", DisplayStyle.HLR) or True)
+            lambda: setattr(view, "DisplayStyle", DisplayStyle.HLR) or True,
+            "HLR", lambda: enum_text(view.DisplayStyle))
         rec["display_style_after_pre_switch"] = read_attr(view, "DisplayStyle", enum_text)
         before = value_of(rec["display_style_after_pre_switch"])
         if before == FLAT or before is None:
@@ -1230,7 +1334,8 @@ def flat_colors_attempt(ctx, view, label):
     def _set_flat():
         view.DisplayStyle = DisplayStyle.FlatColors
         return True
-    rec["set_flat_colors"] = tx_write(ctx.doc, label + " flat colors", _set_flat)
+    rec["set_flat_colors"] = tx_write(ctx.doc, label + " flat colors", _set_flat,
+                                      FLAT, lambda: enum_text(view.DisplayStyle))
     rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
     after = value_of(rec["display_style_after"])
     if rec["set_flat_colors"]["state"] != "value":
@@ -1261,9 +1366,7 @@ def run_q5_view(ctx, view, baseline):
 
     def _s1():
         rec = {"step": "S1",
-               "detach_template": tx_write(
-                   ctx.doc, "Q5 S1 detach",
-                   lambda: setattr(view, "ViewTemplateId", ElementId.InvalidElementId) or True)}
+               "detach_template": detach_template(ctx.doc, view, "Q5 S1 detach")}
         rec["template_id_after_detach"] = read(lambda: element_id_int(view.ViewTemplateId))
         rec.update(flat_colors_attempt(ctx, view, "Q5 S1"))
         out["steps"].append(rec)
