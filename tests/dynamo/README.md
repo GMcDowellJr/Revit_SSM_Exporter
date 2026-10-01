@@ -60,6 +60,17 @@ analyzer's `SUPPORTED_PROBES` map. See
 for the metric definitions, the experiment matrix, the open hypotheses, and the
 UNCONFIRMED Revit API assumptions each probe encodes.
 
+## Stage A capture-state probe (diagnostic, standalone)
+
+`probe_capture_state.py` asks five questions about view state (split
+elevations, scope boxes and crop shapes, shadows and background, display
+style with and without the template) inside one rolled-back TransactionGroup,
+and writes TIFFs plus one JSON. It is standalone, not registered in
+`revit_probe_registry.py`, and `OUT` is the JSON path. Pixels are measured
+offline by `tools/analyze_capture_state_probe.py`. See
+[`PROBE_CAPTURE_STATE.md`](PROBE_CAPTURE_STATE.md) for the questions, the view
+ids, the node inputs and what the outputs mean.
+
 ## Usage
 
 1. **Open Dynamo** in Revit with your test model loaded

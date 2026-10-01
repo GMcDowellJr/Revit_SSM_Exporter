@@ -82,6 +82,24 @@ python tools/stage_a_cycle.py advance campaign/campaign.json campaign/campaign_s
 
 ---
 
+### `analyze_capture_state_probe.py` - Capture-state probe analysis
+
+Measures the TIFFs `tests/dynamo/probe_capture_state.py` exported. Per image:
+size, distinct colours, the non-white fraction of a 2 % border band, the grey
+count and the top 10 colours. Per step against the S0 of the same question and
+view: the changed pixels, or `size_differs` (never resized). For Q3, a per-view
+table of written box, read-back box, exported px, implied px and the non-fit
+axis difference. Writes `probe_capture_state_analysis.json` last, carrying
+the probe JSON's sha256. Refuses (exit 2) on a missing, ambiguous or
+unreadable probe JSON, or on a TIFF that is missing or unreadable. See
+`tests/dynamo/PROBE_CAPTURE_STATE.md`.
+
+```bash
+python tools/analyze_capture_state_probe.py path/to/capture_state_<timestamp>
+```
+
+---
+
 ### `analyze_stage_a_probe.py` - External Stage A Probe Analysis
 
 Analyzes extraction-only Stage A Dynamo probe outputs using standalone Python,
