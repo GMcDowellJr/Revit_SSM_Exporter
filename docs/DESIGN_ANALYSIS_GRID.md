@@ -196,23 +196,76 @@ eight views (`geometry`, run 20260930T142940_bbc6c66):
   it. A cell is occupied by a layer with at least `OCCUPANCY_MIN_INK_PX = 1` of
   that layer's ink pixels. It is then one of empty / model only / annotation
   only / overlap.
-- **The same rule applies to annotation.** On 1453 it gives the same occupied
-  cells as all element pixels on 7 of 8 views. Section is the exception, where
-  filled Detail Items drop from 1,895 to 1,770 cells.
-- **Annotation includes datums (Grids, Levels), view markers (section,
-  elevation and callout heads) and revision clouds.** The geometry path left
-  these out of its annotation layer, a known gap in the previous tooling. The
-  capture paints them, so they count.
+- **The same rule applies to annotation, with one exception: filled regions
+  count by AREA.** A filled region masks the model, and the mask is what is
+  relevant. It is identified by the capture's new `element_class`
+  (`"FilledRegion"`): filled and masking regions share the Detail Items
+  category with detail components, so category cannot tell them apart. A run
+  captured before `element_class` existed (1453 included) records that
+  filled regions could not be identified and counts them by ink.
+- **Annotation is every view-specific element**: dimensions, tags and text,
+  and also datums (Grids, Levels), view markers (section, elevation and
+  callout heads) and revision clouds. The geometry path left the latter out, a
+  known gap in the previous tooling. Checked on 1453: every view-owned member
+  is painted (members = painted colours on all 8 views). The only unpainted
+  ones are the 71 on Plan_DWG and Plan_RVTLink in categories the view itself
+  hides (M1).
+- **Black pixels belong to the annotation that contains them.** View-symbol
+  text and similar are drawn in black, not in the element's colour. Each black
+  pixel on the annotation canvas is assigned to the smallest annotation
+  bounding box containing its centre (padded `BLACK_BBOX_PAD_PX = 1`) and
+  counts toward that layer. Pixels in no box stay unassigned and are
+  reported.
+- **Overlap is measured, not only binary.** The two captures share one
+  lattice, so for every model ink pixel we know whether annotation is drawn
+  over it. Per cell, `model_ink_under_anno` and
+  `model_ink_under_filled_region` count those pixels; divided by the cell's
+  model ink they give the masked fraction. The four-way class (empty / model /
+  annotation / overlap) is kept alongside for parity.
 - **Lines and edges are better than bounding boxes.** The geometry path's
   TINY/LINEAR proxies fill element bounding boxes. Where they mark cells the
   colour capture's ink does not, the difference is accepted as an improvement,
   not treated as a miss.
 
-Outputs: `<view>.grid.npz` gains the ink channels (`model_host_ink`,
-`model_dwg_ink`, `model_link_ink`, `anno_element_ink`) and `occupancy` (uint8,
-codes in the record). `<view>.grid.json` gains `occupancy`: cell counts by
-class over all cells, inside crop A and outside it, plus the rule. The PNG now
-draws these classes.
+Outputs:
+- `<view>.grid.npz` gains the ink channels (`model_host_ink`,
+  `model_dwg_ink`, `model_link_ink`, `anno_element_ink`), `anno_filled_region`,
+  `anno_black_assigned`, `model_ink_under_anno`,
+  `model_ink_under_filled_region` and `occupancy` (uint8, codes in the
+  record). Annotation occupies a cell with ink + filled-region area +
+  assigned black ≥ 1 px.
+- `<view>.grid.json` gains:
+  - `occupancy`: cell counts by class over all cells, inside crop A and
+    outside it, plus the rule;
+  - `black`: total, assigned, ambiguous and unassigned, and pixels by element;
+  - `filled_region`: whether the class was recorded, how many, and their
+    pixels;
+  - `model_ink_under_annotation`: the totals and the fraction.
+- The PNG draws the classes.
+
+On 1453:
+
+| View | Black px: total / assigned / ambiguous / unassigned | Model ink px | Under annotation | Fraction |
+|---|---|---|---|---|
+| Elevation_CropActive | 408 / 0 / 0 / 408 | 776573 | 0 | 0.000 |
+| ModelCallout_CropActive | 0 / 0 / 0 / 0 | 7186 | 114 | 0.016 |
+| Plan_CropActive | 380 / 189 / 185 / 191 | 543545 | 8146 | 0.015 |
+| Plan_CropInActive | 0 / 0 / 0 / 0 | 104326 | 3543 | 0.034 |
+| Plan_DWG | 5795 / 5795 / 0 / 0 | 372897 | 2721 | 0.007 |
+| Plan_RVTLink | 0 / 0 / 0 / 0 | 580744 | 4 | 0.000 |
+| RCP_CropActive | 785 / 212 / 0 / 573 | 465911 | 3096 | 0.007 |
+| Section_CropActive | 0 / 0 / 0 / 0 | 75886 | 16695 | 0.220 |
+
+- **Plan_DWG's 5,795 black pixels are all its view-owned DWG's** (element
+  19296946).
+- **Unassigned black.** Elevation's 408 black pixels lie in no annotation
+  box: its only annotation members are the ticks and one element with no
+  bounding box. So that black comes from something drawn outside the view's
+  annotation membership. RCP (573) and Plan_CropActive (191) also have some.
+  These are reported, not guessed.
+- **Section has 22 % of its model ink under annotation,** where its Detail
+  Items sit over the section cut. With `element_class` recorded, the next run
+  will say which of them are filled regions.
 
 ### Results on pipeline_0930_1453, and the geometry comparison
 
@@ -253,8 +306,10 @@ What the disagreements are, checked view by view:
 
 ## Out of scope here
 
-- Attributing black and residual pixels: item 4.
+- Attributing the residual (anti-aliased text edge) pixels, and black pixels
+  outside every annotation bbox.
 - Link-model element identity: item 6, needs a capture change.
 - Change detection: item 7.
-- Moving `colorid_to_occupancy.py` onto this grid, and comparing with a
-  geometry run once one exists.
+- Moving `colorid_to_occupancy.py` onto this grid.
+- A geometry-comparison tool: not to be built (Greg, 2026-10-01). The
+  comparison above was a one-off.
