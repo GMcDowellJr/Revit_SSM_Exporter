@@ -56,7 +56,7 @@ import traceback
 
 
 PROBE_NAME = "capture_state"
-PROBE_VERSION = "2026-10-02.1"
+PROBE_VERSION = "2026-10-02.2"
 SCHEMA = "vop.probe.capture_state.v1"
 
 DEFAULT_Q1_VIEW = 6112047
@@ -1493,6 +1493,7 @@ def import_production(params):
         try:
             from vop_interwoven.revit import view_basis
             from vop_interwoven import stage_a_registration, stage_a_registered_capture
+            from vop_interwoven import color_id_buffer
             from vop_interwoven.revit.annotation import split_stage_a_pass_membership
             from vop_interwoven.config import Config
         except Exception as ex:
@@ -1501,6 +1502,7 @@ def import_production(params):
         return ({"state": "value", "root": root},
                 {"view_basis": view_basis, "registration": stage_a_registration,
                  "capture": stage_a_registered_capture,
+                 "color_id_buffer": color_id_buffer,
                  "split_membership": split_stage_a_pass_membership, "Config": Config})
     return ({"state": "unavailable",
              "error": "no vop_interwoven package found; set IN[9] repo_root",
@@ -1793,6 +1795,7 @@ def run_q5b_view(ctx, dependent, dep_baseline, primary, primary_baseline, primar
 # ======================================================================
 
 Q6_REQUIRED = ("crop_box", "crop_box_active", "members_sha1")
+Q6_STEPS = ("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10")
 
 
 class _LayoutRaster(object):
@@ -1967,17 +1970,151 @@ def _q6_marked(ctx, view, step, prefix):
     return rec
 
 
+# ---- Q6b (2026-10-02.2): the tick-style fix (A) and the Lines-hidden case (B)
+#
+# A picks the thinnest line style whose own subcategory the view does not
+# hide, else a TEMPORARY weight-1 Lines subcategory. Two things only a Revit
+# run can say: whether that temporary subcategory draws under a template that
+# controls V/G, and whether a style the view draws with the template ATTACHED
+# (when the capture draws the ticks) still draws once the capture DETACHES it
+# (when it exports). B asks what can be done when OST_Lines itself is hidden:
+# unhide it for the capture with every pre-existing line hidden individually,
+# so the view still shows as authored. Production does not do B; this
+# measures whether it would work.
+
+def production_detach(ctx, view, name):
+    """Production's own detach (color_id_buffer._detach_view_template: on the
+    primary for a dependent view), which opens its own Transaction and reads
+    ViewTemplateId back. Recorded as a write: attempted -1, read back here
+    again after it returned."""
+    rec = {"attempted": -1, "production_record": None}
+    out = read(lambda: ctx.production["color_id_buffer"]._detach_view_template(
+        ctx.doc, view, "VOP capture-state probe: " + name))
+    if out["state"] != "value":
+        rec.update(state="raised", error=out["error"], read_back=rec_unavailable(
+            "the detach raised"), took_effect=None)
+        return rec
+    rec["production_record"] = out["value"][0]
+    rec["read_back"] = read(lambda: element_id_int(view.ViewTemplateId))
+    rec["took_effect"] = (value_of(rec["read_back"]) == -1
+                          if rec["read_back"]["state"] == "value" else None)
+    rec.update(state="value", error=None)
+    return rec
+
+
+def unhide_lines_category(ctx, view, name):
+    from Autodesk.Revit.DB import ElementId
+
+    def _hidden():
+        return bool(view.GetCategoryHidden(ElementId(int(lines_category_id()))))
+    return tx_write(ctx.doc, name,
+                    lambda: view.SetCategoryHidden(ElementId(int(lines_category_id())), False),
+                    False, _hidden)
+
+
+def hide_existing_lines(ctx, view, name):
+    """Every OST_Lines element the view collector returns NOW (after the
+    category is unhidden), hidden one by one with production's hide_in_view.
+    attempted = the ids it hid; read back = which of them read hidden."""
+    from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
+    registration = ctx.production["registration"]
+    ids = sorted(element_id_int(e.Id) for e in FilteredElementCollector(ctx.doc, view.Id)
+                 .OfCategory(BuiltInCategory.OST_Lines).WhereElementIsNotElementType())
+    holder = {}
+
+    def _apply():
+        holder["record"] = registration.hide_in_view(ctx.doc, view, ids)
+        return holder["record"]
+
+    def _read_back():
+        hidden, _unreadable = registration.still_hidden(
+            ctx.doc, view, (holder.get("record") or {}).get("hidden") or ids)
+        return sorted(hidden)
+    rec = tx_write(ctx.doc, name, _apply, None, _read_back,
+                   lambda _a, value: value == sorted((holder.get("record") or {}).get("hidden") or []))
+    rec["attempted"] = sorted((holder.get("record") or {}).get("hidden") or [])
+    rec["line_ids_in_view"] = len(ids)
+    rec["hide_record"] = dict((k, v) for k, v in (holder.get("record") or {}).items()
+                              if k != "hidden")
+    return rec
+
+
+def force_temporary_style(ctx, view, marks_record, name):
+    """Retarget every created mark to production's TEMPORARY tick
+    subcategory (_temporary_tick_style), whatever A chose: attempted = its
+    name; read back = the set of style names the marks carry."""
+    from Autodesk.Revit.DB import ElementId
+    registration = ctx.production["registration"]
+    created = [m["id"] for m in (marks_record or {}).get("created") or []]
+    holder = {}
+
+    def _apply():
+        style, rec = registration._temporary_tick_style(ctx.doc, view)
+        holder["record"] = rec
+        if style is None:
+            raise RuntimeError(rec.get("reason"))
+        for mark_id in created:
+            ctx.doc.GetElement(ElementId(int(mark_id))).LineStyle = style
+        return rec.get("name")
+
+    def _read_back():
+        return sorted(set(str(ctx.doc.GetElement(ElementId(int(i))).LineStyle.Name)
+                          for i in created))
+    rec = tx_write(ctx.doc, name, _apply, registration.TEMPORARY_TICK_SUBCATEGORY,
+                   _read_back, lambda a, value: value == [a])
+    rec["temporary_record"] = holder.get("record")
+    return rec
+
+
+def _q6_production_marks(ctx, view, step, prefix, before_export=None):
+    """Production's layout and marks (tick_line_style chooses the style),
+    then ``before_export(marks_record)`` -- a dict of further writes -- and
+    the marked export, with the per-mark rows read AT EXPORT."""
+    built = read(mark_layout, ctx, view)
+    if built["state"] != "value":
+        return {"step": step, "refused": "layout_unavailable",
+                "refused_reason": "the capture's layout raised: {0}".format(built["error"])}
+    basis, layout, layout_record = built["value"]
+    if layout.get("state") != "value":
+        return {"step": step, "refused": "layout_unavailable", "layout": layout_record,
+                "refused_reason": "the capture's layout is unavailable: {0}".format(
+                    layout.get("reason"))}
+    write, marks = create_marks(ctx, view, basis, layout, "{0} marks".format(prefix))
+    writes = {"marks": write}
+    if before_export is not None:
+        writes.update(before_export(marks))
+    ids = value_of(read(member_ids, ctx.doc, view))
+    rec = _q6_export(ctx, view, step, writes)
+    rec["layout"] = layout_record
+    rec["marks_record"] = dict((k, v) for k, v in (marks or {}).items() if k != "created")
+    rec["mark_rows"] = mark_rows(ctx.doc, view, marks, set(ids) if ids is not None else None)
+    rec["view_filters"] = read(view_filter_records, ctx.doc, view)
+    rec["template_vg_control"] = read(template_vg_control, ctx.doc, view)
+    return rec
+
+
 def run_q6_view(ctx, view, baseline):
-    """Two variants, each in its own rolled-back group: marks with the crop
-    as authored (S0 unmarked, S1 marked), and marks after production's crop
-    write (S2 unmarked, S3 marked). Each marked export has an unmarked twin
-    from the same state, so the analyzer can see which pixels the marks
-    changed."""
+    """Variants, each in its own rolled-back group, every marked export with
+    an unmarked twin from the same state (the analyzer's Q6_TWINS):
+
+      no_crop_write    S0 unmarked, S1 marked (production's marks, as authored)
+      crop_write       S2 after production's crop write, S3 marked
+      detached_twin    S6 template detached (production's detach), unmarked
+      production_order S7 marks drawn with the template ATTACHED, then the
+                       template detached -- the capture's own order; twin S6
+      temporary_style  S4 unmarked; S5 marks retargeted to production's
+                       TEMPORARY subcategory, template attached; then
+                       detached, S10; twins S4 and S6
+      lines_unhidden   S8 template detached, OST_Lines unhidden, every line
+                       then in view hidden one by one (B); S9 marked. S8
+                       against S6 is whether the view still shows as
+                       authored; S9 against S8 whether the ticks draw.
+    """
     out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
     if ctx.production is None:
         out["refused"] = _production_refusal(ctx)
         out["steps"] = [{"step": s, "refused": "production_unavailable",
-                         "refused_reason": out["refused"]} for s in ("S0", "S1", "S2", "S3")]
+                         "refused_reason": out["refused"]} for s in Q6_STEPS]
         return out
 
     def _no_crop():
@@ -1989,9 +2126,48 @@ def run_q6_view(ctx, view, baseline):
         out["steps"].append(_q6_export(ctx, view, "S2", {"production_crop": write}))
         out["steps"].append(_q6_marked(ctx, view, "S3", "Q6 S3"))
 
+    def _detached_twin():
+        write = production_detach(ctx, view, "Q6 S6 detach")
+        out["steps"].append(_q6_export(ctx, view, "S6", {"detach": write}))
+
+    def _production_order():
+        out["steps"].append(_q6_production_marks(
+            ctx, view, "S7", "Q6 S7",
+            before_export=lambda _m: {"detach": production_detach(ctx, view, "Q6 S7 detach")}))
+
+    def _temporary_style():
+        out["steps"].append(_q6_export(ctx, view, "S4"))
+        holder = {}
+
+        def _retarget(marks):
+            holder["marks"] = marks
+            return {"temporary_style": force_temporary_style(
+                ctx, view, marks, "Q6 S5 temporary style")}
+        out["steps"].append(_q6_production_marks(ctx, view, "S5", "Q6 S5",
+                                                 before_export=_retarget))
+        write = production_detach(ctx, view, "Q6 S10 detach")
+        ids = value_of(read(member_ids, ctx.doc, view))
+        rec = _q6_export(ctx, view, "S10", {"detach": write})
+        rec["marks_record"] = out["steps"][-1].get("marks_record")
+        rec["mark_rows"] = mark_rows(ctx.doc, view, holder.get("marks"),
+                                     set(ids) if ids is not None else None)
+        out["steps"].append(rec)
+
+    def _lines_unhidden():
+        writes = {"detach": production_detach(ctx, view, "Q6 S8 detach"),
+                  "unhide_lines": unhide_lines_category(ctx, view, "Q6 S8 unhide Lines")}
+        writes["hide_existing_lines"] = hide_existing_lines(ctx, view, "Q6 S8 hide lines")
+        out["steps"].append(_q6_export(ctx, view, "S8", writes))
+        out["steps"].append(_q6_production_marks(ctx, view, "S9", "Q6 S9"))
+
     run_gated(ctx, [(view, baseline)], Q6_REQUIRED, out,
               (("no_crop_write", ("S0", "S1"), _no_crop),
-               ("crop_write", ("S2", "S3"), _crop)), "Q6 {0}".format(out["view_id"]))
+               ("crop_write", ("S2", "S3"), _crop),
+               ("detached_twin", ("S6",), _detached_twin),
+               ("production_order", ("S7",), _production_order),
+               ("temporary_style", ("S4", "S5", "S10"), _temporary_style),
+               ("lines_unhidden", ("S8", "S9"), _lines_unhidden)),
+              "Q6 {0}".format(out["view_id"]))
     return out
 
 

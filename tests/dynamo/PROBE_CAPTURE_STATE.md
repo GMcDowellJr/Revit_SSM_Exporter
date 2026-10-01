@@ -357,6 +357,32 @@ group. Both views are gated together.
 - **Answers it:** a row with `rendered: false` next to the field that
   differs from 9948's. A hidden line-style subcategory, a filter on
   OST_Lines, or the template controlling V/G would each show there.
+  (Round 2's answer: the template hides `<Thin Lines>`; production change A
+  now picks a style whose subcategory the view does not hide. Since A, S1
+  measures A itself: `create_registration_marks` is production's.)
+
+**Q6b (probe `2026-10-02.2`, analyzer `1.2.0`): the tick-style fix and the
+Lines-hidden case.** Same views, four more groups, every write recorded
+with its read-back. **UNVERIFIED in Revit**, like round 2 was.
+- `detached_twin` -- S6: the template detached with PRODUCTION's detach
+  (`color_id_buffer._detach_view_template`, on the primary for a dependent
+  view), unmarked.
+- `production_order` -- S7: production's marks drawn with the template
+  attached, THEN the template detached, as the capture does it; twin S6.
+  Answers: does the style A chose with the template attached still draw
+  once it is detached?
+- `temporary_style` -- S4 unmarked; S5 the marks retargeted to production's
+  temporary weight-1 Lines subcategory (`_temporary_tick_style`), template
+  attached; then detached, S10. Twins S4 and S6. Answers: does a temporary
+  subcategory draw under a template that controls V/G, and after detaching?
+- `lines_unhidden` (B, not in production) -- S8: template detached,
+  OST_Lines unhidden, then every OST_Lines element the view collector
+  returns hidden one by one (`stage_a_registration.hide_in_view`),
+  unmarked; S9 marked. The analyzer's `q6_authored` row is S8 against S6:
+  **0 changed pixels** means the view still shows as authored. S9 against
+  S8 is whether the ticks draw. Only meaningful on a view whose template
+  hides OST_Lines -- none of the three defaults does; add one under
+  `q6_extra_views`. On the others it is a control.
 
 ## How to run
 
@@ -534,5 +560,9 @@ instead, as described above.
   FlatColors; B: did the dependent follow the primary:
 - Q6 — `rendered` per mark, and the field that differs between 5823803 and
   9948; with vs without the crop write:
+- Q6b — S1 `rendered` on 5823803, 11999340, 9948 after A (expected true by
+  `changed_anywhere_px`); S7 (production order); S5/S10 (temporary
+  subcategory, attached / detached); `q6_authored` S8 vs S6 and S9 on a view
+  whose template hides OST_Lines:
 - `commit_without_effect`:
 - Verify — any field changed after the rollback?

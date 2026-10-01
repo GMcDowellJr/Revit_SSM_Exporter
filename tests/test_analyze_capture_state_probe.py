@@ -702,8 +702,64 @@ def test_a_round_1_probe_json_still_analyzes_with_empty_round_2_sections(tmp_pat
     q3 = [{"view_id": 11, "role": "test", "steps": [s1]}]
     _probe(tmp_path, [e1], {"Q3_S1_11.tiff": _flat(200, 100)}, q3=q3)
     rec = _run(tmp_path)
-    assert rec["status"] == "value" and rec["tool_version"] == "1.1.0"
+    assert rec["status"] == "value" and rec["tool_version"] == "1.2.0"
     assert (rec["writes"], rec["commit_without_effect"]) == ([], [])
     assert (rec["q1b"], rec["q3b"], rec["q5b"], rec["q6"]) == ([], [], [], [])
+    assert rec["q6_authored"] == []
     assert rec["q3"][0]["rows"][0]["non_fit_delta_px"] == 0
     assert rec["images"][0]["non_white_pixels"] == 0
+
+
+# --- Q6b (probe 2026-10-02.2): the tick-style fix (A) and Lines unhidden (B) --
+
+def _q6b_case(tmp_path, s8_paint=(), s9_draw=True):
+    """S6 (detached twin), S8 (Lines unhidden, unmarked), S9 (marked)."""
+    w, h = W * 4, H * 6
+    e6, e8, e9 = (_export("Q6_S6", 9948, w=w), _export("Q6_S8", 9948, w=w),
+                  _export("Q6_S9", 9948, w=w))
+    s6_img, s8_img, s9_img = _flat(w, h), _flat(w, h), _flat(w, h)
+    for y, x in s8_paint:
+        s8_img[y, x] = [0, 0, 0]
+        s9_img[y, x] = [0, 0, 0]
+    if s9_draw:
+        s9_img[285, 20:41] = MARK
+    row = {"id": 900001, "key": "left_bottom_h", "orientation": "horizontal",
+           "uv0": [2.0, 1.5], "uv1": [4.0, 1.5], "uv_source": "readback", "painted": True}
+    crop = {"state": "value", "value": [0, 0, 40, 30], "error": None}
+    active = {"state": "value", "value": True, "error": None}
+    steps = [
+        {"step": "S6", "export": e6},
+        {"step": "S8", "export": e8, "writes": {
+            "detach": {"took_effect": True}, "unhide_lines": {"took_effect": True},
+            "hide_existing_lines": {"took_effect": True}}},
+        {"step": "S9", "export": e9, "mark_rows": [row], "marks_record": {"colour": MARK},
+         "crop_uv_at_export": crop, "crop_box_active_at_export": active}]
+    images = {"Q6_S6_9948.tiff": s6_img, "Q6_S8_9948.tiff": s8_img,
+              "Q6_S9_9948.tiff": s9_img}
+    _round2_probe(tmp_path, {"q6": {"views": [{"view_id": 9948, "steps": steps}]}},
+                  exports=[e6, e8, e9], images=images)
+    return _run(tmp_path)
+
+
+def test_q6b_lines_unhidden_ticks_are_judged_against_S8(tmp_path):
+    rec = _q6b_case(tmp_path)
+    rows = [r for r in rec["q6"] if r["step"] == "S9"]
+    assert len(rows) == 1 and rows[0]["variant"] == "lines_unhidden"
+    assert rows[0]["rendered"] is True and rows[0]["changed_anywhere_px"] == 21
+    # Round 2's S1/S3 are still reported (as not recorded); absent Q6b steps
+    # other than these are not.
+    assert sorted(r["step"] for r in rec["q6"]) == ["S1", "S3", "S9"]
+
+
+def test_q6b_a_view_that_still_shows_as_authored_changes_no_pixel(tmp_path):
+    rec = _q6b_case(tmp_path)
+    (row,) = rec["q6_authored"]
+    assert (row["step"], row["twin"], row["changed_px"]) == ("S8", "S6", 0)
+    assert row["writes"] == {"detach": True, "unhide_lines": True,
+                             "hide_existing_lines": True}
+
+
+def test_q6b_lines_that_reappear_are_counted(tmp_path):
+    """Control: unhiding Lines brought 2 px of linework back."""
+    rec = _q6b_case(tmp_path, s8_paint=[(10, 10), (11, 10)])
+    assert rec["q6_authored"][0]["changed_px"] == 2
