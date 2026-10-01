@@ -61,7 +61,10 @@ with S0's (`restore_check`).
 - **S4:** S2 and S3 together.
 
 Each Q3 step records:
-- `written_box`, in the crop transform the view carried at the write
+- `written_box`, in the crop transform the view carried at the write. If
+  Revit rejected the write, `written_box` is null, `crop_write_state` says
+  `raised`, the box that was tried is kept as `attempted_box`, and the
+  analyzer's row reads `write_failed` with no implied size
 - `read_back_box`
 - `read_back_equal`: `local` compares Min/Max; `world` compares the corners
   through each box's own transform. Tolerance 1e-6 ft.

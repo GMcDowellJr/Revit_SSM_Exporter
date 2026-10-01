@@ -828,9 +828,15 @@ def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
     writes["crop_box"] = write_crop_box(ctx.doc, view, target, "Q3 {0} crop".format(step))
     rec, _ids = _step(ctx, view, "q3", step, writes)
     read_back = value_of(rec["common"]["crop_box"])
-    written = value_of(writes["crop_box"]) or dict(target, transform=None)
+    # A write Revit rejected is NOT a written box: written_box stays None and
+    # crop_write_state says why, so nothing downstream compares the export
+    # with a box that was never accepted. The box that was attempted is kept
+    # under its own name.
+    written = value_of(writes["crop_box"])
+    rec["crop_write_state"] = writes["crop_box"]["state"]
+    rec["attempted_box"] = target
     rec["written_box"] = written
-    rec["written_extent_ft"] = box_extent_ft(target)
+    rec["written_extent_ft"] = box_extent_ft(written) if written else None
     rec["read_back_box"] = read_back
     rec["read_back_extent_ft"] = box_extent_ft(read_back) if read_back else None
     rec["read_back_equal"] = boxes_equal(written, read_back)

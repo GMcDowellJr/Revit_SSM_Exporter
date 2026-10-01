@@ -249,6 +249,33 @@ def test_q3_implied_is_from_the_WRITTEN_box_when_the_read_back_differs(tmp_path)
     assert (row["non_fit_delta_px"], row["non_fit_mismatch"]) == (50, True)
 
 
+def test_q3_a_rejected_crop_write_implies_nothing(tmp_path):
+    """Codex, PR #225: a CropBox write Revit rejected leaves written_box
+    None and crop_write_state "raised". The row must not compute an implied
+    size from the attempted box or from the read-back, so a rejection is
+    never read as Revit overriding an accepted write. The S1 beside it,
+    whose write succeeded, is the control."""
+    e1, e2 = _export("Q3_S1", 11, w=200), _export("Q3_S2", 11, w=200)
+    ok = _q3_step("S1", e1, written=_box(20, 10), read_back=_box(20, 10))
+    ok["crop_write_state"] = "value"
+    rejected = _q3_step("S2", e2, read_back=_box(20, 15))
+    rejected.update(crop_write_state="raised", written_box=None,
+                    attempted_box=_box(20, 10), read_back_box=_box(20, 15))
+    q3 = [{"view_id": 11, "role": "test", "steps": [ok, rejected]}]
+    _probe(tmp_path, [e1, e2], {"Q3_S1_11.tiff": _flat(200, 150),
+                                "Q3_S2_11.tiff": _flat(200, 150)}, q3=q3)
+    good, bad = _run(tmp_path)["q3"][0]["rows"]
+    assert (good["box_source"], good["non_fit_delta_px"], good["non_fit_mismatch"]) == (
+        "written", 50, True)
+    assert bad["box_source"] == "write_failed"
+    assert bad["crop_write_state"] == "raised"
+    assert bad["written_extent_ft"] is None
+    assert bad["read_back_extent_ft"] == [20.0, 15.0]
+    assert bad["exported_px"] == [200, 150]
+    assert (bad["implied_px"], bad["non_fit_delta_px"], bad["non_fit_mismatch"]) == (
+        None, None, None)
+
+
 def test_q3_two_pixels_off_is_a_mismatch(tmp_path):
     e1 = _export("Q3_S1", 11, w=200)
     q3 = [{"view_id": 11, "role": "test",

@@ -173,8 +173,16 @@ def q3_rows(report, measured_by_file):
             common = step.get("common") or {}
             written = step.get("written_box")
             read_back = step.get("read_back_box") or _value(common.get("crop_box"))
-            box_source = "written" if written else "s0_read"
-            box = written if written else read_back
+            write_state = step.get("crop_write_state")
+            if write_state is not None and write_state != "value":
+                # The crop write was rejected: no box was written, so there
+                # is nothing to imply from. Never the attempted box, never
+                # the read-back.
+                box_source, box = "write_failed", None
+            elif written:
+                box_source, box = "written", written
+            else:
+                box_source, box = "s0_read", read_back
             fit = export.get("fit_direction") or "horizontal"
             implied = implied_px(_extent(box), export.get("requested_pixel_size"), fit)
             exported = measured_by_file.get(export.get("file"))
@@ -183,6 +191,7 @@ def q3_rows(report, measured_by_file):
                    "written_extent_ft": _extent(written),
                    "read_back_extent_ft": _extent(read_back),
                    "read_back_equal": step.get("read_back_equal"),
+                   "crop_write_state": write_state,
                    "exported_px": exported, "implied_px": implied,
                    "fit_direction": fit, "non_fit_axis": axis,
                    "non_fit_delta_px": None, "non_fit_mismatch": None,
@@ -333,11 +342,11 @@ def print_tables(record):
         print("Q3 view {0} ({1}){2}".format(view["view_id"], view["role"],
                                             "  REFUSED: {0}".format(view["refused"])
                                             if view.get("refused") else ""))
-        print("  {0:<4} {1:<8} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7}".format(
+        print("  {0:<4} {1:<12} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7}".format(
             "step", "box", "written ft", "read-back ft", "exported", "implied",
             "non-fit", "mismatch"))
         for row in view["rows"]:
-            print("  {0:<4} {1:<8} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7}".format(
+            print("  {0:<4} {1:<12} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7}".format(
                 row["step"], row["box_source"], _fmt(row["written_extent_ft"]),
                 _fmt(row["read_back_extent_ft"]), _fmt(row["exported_px"]),
                 _fmt(row["implied_px"]), _fmt(row["non_fit_delta_px"]),
