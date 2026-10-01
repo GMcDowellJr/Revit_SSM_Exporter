@@ -68,6 +68,18 @@ sidecars and TIFFs) still hashes to the file on disk. A stale registration,
 from a view recaptured without re-registering, refuses the view rather than
 pairing today's model with yesterday's lattice.
 
+A capture is used only if its own `capture_integrity` shows no fault that
+invalidates the pixels it exported. Faults about the project after the capture
+(a restore, a rollback, a membership read-back) are recorded in the grid record
+and do not refuse. Every other fault refuses the view, and so does a fault the
+grid does not recognise or a sidecar with no integrity record. An annotation
+capture whose `annotation_bbox_status` is not `value` is refused too: its empty
+map means bbox collection failed, not that the view has no boxes. Annotation
+bboxes are placed on the registered pixels with the registration's own model
+mapping, because that mapping put the pixels there; the grid's chosen mapping
+is for model pixels. All 8 views of 1453 pass every check, with no change in
+their counts.
+
 **G-4. Pixel→UV: whichever of the two mappings lands closer to the measured
 ticks.** The model capture carries its crop, so a nominal mapping exists (the
 decoder's, with its aspect-clamp pad). The ticks give a second, measured

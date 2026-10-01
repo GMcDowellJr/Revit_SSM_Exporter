@@ -55,7 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
-from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
+from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -572,6 +572,42 @@ def render_png(spec, arrays, path, px_per_cell=4):
 
 # --- one view ------------------------------------------------------------------
 
+# Faults about the PROJECT after the capture (a restore, a rollback, a
+# read-back), not about the pixels it exported. Every other fault -- and any
+# fault this list does not name, including one added later -- refuses the
+# view: an unknown fault is not assumed harmless.
+RESTORE_ONLY_FAULTS = frozenset((
+    "model_view_state_not_restored", "annotation_view_state_not_restored",
+    "view_state_not_restored", "annotation_overrides_not_restored",
+    "annotation_overrides_unverified", "rollback_raised", "rollback_failed",
+    "registration_marks_left_in_project", "detail_lines_left_hidden",
+    "detail_lines_unverified", "element_overrides_left_behind",
+    "element_overrides_unverified", "view_membership_changed",
+    "view_membership_unverified",
+))
+
+
+def check_capture_integrity(sidecar, which):
+    """The capture's restore-only faults, once none of its faults invalidates
+    the pixels it exported. A sidecar with no readable integrity record is
+    refused: absent is never read as clean."""
+    integrity = capture_integrity(sidecar)
+    if not isinstance(integrity, dict):
+        raise GridRefusal("the {0} sidecar records no capture_integrity, so the "
+                          "capture cannot be shown clean".format(which))
+    faults = integrity.get("capture_faults")
+    if not isinstance(faults, list):
+        raise GridRefusal("the {0} capture's fault list is unavailable ({1})".format(
+            which, faults))
+    names = [f.get("fault") if isinstance(f, dict) else str(f) for f in faults]
+    invalidating = [n for n in names if n not in RESTORE_ONLY_FAULTS]
+    if invalidating:
+        raise GridRefusal("the {0} capture records fault(s) that invalidate its "
+                          "pixels: {1}".format(which, ", ".join(
+                              str(n) for n in invalidating)))
+    return names
+
+
 def _resolve_recorded(recorded, base_dir, what):
     """A path a record wrote: as recorded (absolute, or relative to the
     working directory it was written from), else relative to the record's
@@ -637,6 +673,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
     try:
         sidecar = _load_json(model_sidecar_path)
         record["view_id"] = sidecar.get("view_id")
+        record["capture_faults"] = {"model": check_capture_integrity(sidecar, "model")}
         tiff = dsc._resolve_tiff_path(model_sidecar_path, sidecar)
         record["model_tiff_sha256"] = sha256_file(tiff)
         rgb = dsc._load_rgb_array(tiff)
@@ -668,11 +705,26 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 raise GridRefusal("the registered annotation TIFF does not match "
                                   "the hash its record names")
             anno_sidecar = _load_json(anno_sidecar_path)
+            record["capture_faults"]["annotation"] = check_capture_integrity(
+                anno_sidecar, "annotation")
+            bbox_status = anno_sidecar.get("annotation_bbox_status")
+            if not isinstance(bbox_status, dict) or bbox_status.get("status") != "value":
+                raise GridRefusal(
+                    "the annotation bbox map is unavailable ({0}): black pixels and "
+                    "filled regions cannot be attributed".format(
+                        (bbox_status or {}).get("reason") or bbox_status))
+            # The registered pixels were PLACED by the registration's model
+            # mapping, whichever mapping the grid chose for model pixels, so
+            # bboxes are projected onto them with that same mapping.
+            placement = (registered.get("model_fit") or {}).get("mapping")
+            if not placement:
+                raise GridRefusal("the registration record carries no model_fit "
+                                  "mapping to place the annotation bboxes")
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
             anno_masks, anno_info = anno_channel_masks(
                 anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
-                spec=spec, canvas_origin=(ox, oy))
+                spec=dict(spec, mapping=placement), canvas_origin=(ox, oy))
             del anno_rgb
             arrays.update(("anno_" + k, v) for k, v in count_cells(
                 spec, anno_masks, col_offset=ox, row_offset=oy).items())

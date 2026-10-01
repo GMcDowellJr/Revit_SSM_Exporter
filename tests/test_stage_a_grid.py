@@ -22,10 +22,29 @@ from tools import register_stage_a_annotation as reg
 from tools import stage_a_grid as grid
 
 from tests.test_register_stage_a_annotation import (
-    ELEMENTS, MODEL_BOUNDS, MODEL_ELEMENT, _write_pair)
+    ELEMENTS, MODEL_BOUNDS, MODEL_ELEMENT)
+from tests.test_register_stage_a_annotation import _write_pair as _write_bare_pair
 
 CELL_IN = 0.125      # 1/8" at 1:96 is exactly 1 ft
 CELL_FT = 1.0
+
+
+def _write_pair(tmp_path, **kw):
+    """The registration fixture, plus the two records every current capture
+    writes and the grid requires: a clean capture_integrity on both passes and
+    a "value" annotation_bbox_status. (The shared fixture stays in the older
+    shape, which the sidecar re-encoder's tests rely on.)"""
+    anno_path, model_path, colours = _write_bare_pair(tmp_path, **kw)
+    for path in (model_path, anno_path):
+        side = json.loads(path.read_text())
+        side["capture_integrity"] = {"status": "value", "capture_faults": [],
+                                     "rolled_back": True, "restore_failures": 0,
+                                     "marks_still_in_project": 0,
+                                     "paint_failures": 0}
+        if path == anno_path:
+            side["annotation_bbox_status"] = {"status": "value"}
+        path.write_text(json.dumps(side))
+    return anno_path, model_path, colours
 
 
 def _run_meta(folder, cell=CELL_IN):
@@ -559,3 +578,74 @@ def test_a_stale_registration_is_refused_not_consumed(tmp_path):
         assert on_disk["status"] == "refused", victim
         assert "stale" in on_disk["reason"], (victim, on_disk["reason"])
         assert rec == on_disk
+
+
+def _faulted_view(tmp_path, model_faults=(), anno_faults=(), drop_integrity=False,
+                  bbox_status=None):
+    """The fixture pair with faults written into the sidecars BEFORE
+    registration (so the registration's source hashes still verify)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    anno_path, model_path, _c = _write_pair(tmp_path)
+    for path, faults in ((model_path, model_faults), (anno_path, anno_faults)):
+        side = json.loads(path.read_text())
+        side["capture_integrity"]["capture_faults"] = [
+            {"fault": f, "detail": "test"} for f in faults]
+        if drop_integrity and path == anno_path:
+            del side["capture_integrity"]
+        if bbox_status is not None and path == anno_path:
+            side["annotation_bbox_status"] = bbox_status
+        path.write_text(json.dumps(side))
+    reg.register(anno_path)
+    _run_meta(tmp_path)
+    grid.grid_view(model_path, tmp_path / "out")
+    return json.loads((tmp_path / "out" / "V_1.grid.json").read_text())
+
+
+def test_a_capture_fault_that_invalidates_pixels_refuses_the_view(tmp_path):
+    """Codex P1: registration can succeed on a capture whose pixels are not
+    trustworthy. Each pass's own faults are read through capture_integrity();
+    a restore-only fault is recorded and does not refuse (the control)."""
+    clean = _faulted_view(tmp_path / "clean")
+    assert clean["status"] == "value"
+    assert clean["capture_faults"] == {"model": [], "annotation": []}
+    restore = _faulted_view(tmp_path / "restore", anno_faults=["view_membership_changed"])
+    assert restore["status"] == "value"
+    assert restore["capture_faults"]["annotation"] == ["view_membership_changed"]
+    for name, kw in (("anno", {"anno_faults": ["annotation_collection_failed"]}),
+                     ("model", {"model_faults": ["view_specific_import_not_suppressed"]}),
+                     ("unknown", {"anno_faults": ["a_fault_added_later"]}),
+                     ("absent", {"drop_integrity": True})):
+        on_disk = _faulted_view(tmp_path / name, **kw)
+        assert on_disk["status"] == "refused", name
+        assert "capture" in on_disk["reason"], (name, on_disk["reason"])
+
+
+def test_an_unavailable_bbox_map_refuses_rather_than_reads_as_empty(tmp_path):
+    """Codex P2: the producer writes an empty map with status "unavailable"
+    when bbox collection fails; that is not a view with no boxes."""
+    on_disk = _faulted_view(tmp_path, bbox_status={"status": "unavailable",
+                                                   "reason": "RuntimeError: x"})
+    assert on_disk["status"] == "refused"
+    assert "bbox map is unavailable" in on_disk["reason"]
+    assert "RuntimeError: x" in on_disk["reason"]
+
+
+def test_bboxes_are_placed_with_the_registrations_mapping(tmp_path, monkeypatch):
+    """Codex P2: the registered annotation pixels sit where the registration's
+    model mapping put them. When the grid chooses another mapping for model
+    pixels (here one 20 px off in v), black text must still
+    land in its own box. Control: the unshifted run assigns the same pixels."""
+    control, _a = _view_with_annotation(tmp_path / "control",
+                                        black=[(11.0, 10.5, 12.0, 11.5)])
+    real = grid.choose_mapping
+
+    def shifted(sidecar, rgb, crop_uv):
+        mapping, basis = real(sidecar, rgb, crop_uv)
+        # 20 px in v: more than the black text's 0.5 ft (9 px) margin to its
+        # box edges plus the 1 px pad, so a box placed by THIS mapping misses.
+        return dict(mapping, b_v=mapping["b_v"] + 20.0), basis
+    monkeypatch.setattr(grid, "choose_mapping", shifted)
+    rec, _a = _view_with_annotation(tmp_path / "shifted",
+                                    black=[(11.0, 10.5, 12.0, 11.5)])
+    assert control["black"]["assigned"] == control["black"]["total"] > 0
+    assert rec["black"] == control["black"]
