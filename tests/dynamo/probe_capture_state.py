@@ -1521,9 +1521,9 @@ def production_crop_box(ctx, view, shrink=None):
     which needs the pipeline raster and moves each edge by under a pixel;
     this is the unsnapped rectangle, and the record says so."""
     vb = ctx.production["view_basis"]
-    # Read the crop first: xy_bounds_from_crop_box_all_corners answers an
-    # AttributeError with a made-up +/-100 ft rectangle (view_basis.py), which
-    # must never stand in for a measured crop here.
+    # Read the crop first, so an unreadable crop is reported as the crop's own
+    # read failure. (xy_bounds_from_crop_box_all_corners once answered one with
+    # a made-up +/-100 ft rectangle; it now raises.)
     crop_box_record(view)
     basis = vb.make_view_basis(view)
     b = vb.xy_bounds_from_crop_box_all_corners(view, basis)
@@ -1571,7 +1571,7 @@ def crop_uv_at(ctx, view):
     windows. None-free: raises when it cannot be read, and the caller records
     that as unavailable."""
     vb = ctx.production["view_basis"]
-    crop_box_record(view)  # raises rather than let the +/-100 ft fallback through
+    crop_box_record(view)  # raises on an unreadable crop, before production does
     b = vb.xy_bounds_from_crop_box_all_corners(view, vb.make_view_basis(view))
     return [float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)]
 
