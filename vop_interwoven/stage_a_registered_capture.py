@@ -69,20 +69,33 @@ def _xyz(point):
             round(float(point.Z), 9)]
 
 
-def primary_view(doc, view):
+def primary_view(doc, view, diag=None, view_id=None):
     """``(primary, reason)``: the PRIMARY of a dependent view, else None with
     the reason. The passes detach a dependent view's template on its primary,
-    so that is a view the capture writes and must read back."""
+    so that is a view the capture writes and must read back. A primary that
+    will not read or resolve is warned to Diagnostics (Codex, PR #226): the
+    rollback check then cannot see the primary's template."""
+    def _warn(reason):
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite="registered_primary_view",
+                      message="the primary view could not be read, so its template "
+                              "is not read back after the rollback: {0}".format(reason),
+                      view_id=view_id)
     try:
         primary_id = view.GetPrimaryViewId()
         if _element_id_int(primary_id) in (None, -1):
             return None, "not a dependent view"
         primary = doc.GetElement(primary_id)
-        return primary, (None if primary is not None else
-                         "the primary view {0} did not resolve".format(
-                             _element_id_int(primary_id)))
+        if primary is None:
+            reason = "the primary view {0} did not resolve".format(
+                _element_id_int(primary_id))
+            _warn(reason)
+            return None, reason
+        return primary, None
     except Exception as ex:
-        return None, "{0}: {1}".format(type(ex).__name__, ex)
+        reason = "{0}: {1}".format(type(ex).__name__, ex)
+        _warn(reason)
+        return None, reason
 
 
 def view_state(view, primary=None):
@@ -482,7 +495,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             if timings.get(key) is not None:
                 record["timings_ms"][label.format(name)] = timings[key]
 
-    primary, record["primary_view"] = primary_view(doc, view)
+    primary, record["primary_view"] = primary_view(doc, view, diag=diag, view_id=view_id)
     if primary is not None:
         record["primary_view"] = _element_id_int(getattr(primary, "Id", None))
     before = view_state(view, primary)
@@ -559,7 +572,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         tx.Start()
         try:
             marks = registration.create_registration_marks(
-                doc, view, getattr(raster, "view_basis", None), layout)
+                doc, view, getattr(raster, "view_basis", None), layout,
+                diag=diag, view_id=view_id)
             if tx.Commit() != TransactionStatus.Committed:
                 raise RuntimeError("marks Transaction.Commit did not commit")
         except Exception:

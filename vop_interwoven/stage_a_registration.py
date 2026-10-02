@@ -703,7 +703,7 @@ def _lines_category_hidden(view):
         return None, "{0}: {1}".format(type(ex).__name__, ex)
 
 
-def _thinnest_line_style(doc, curve, view=None):
+def _thinnest_line_style(doc, curve, view=None, diag=None, view_id=None):
     """``(style, record)``: the thinnest line style this detail curve may take
     THAT THE VIEW DRAWS.
 
@@ -727,6 +727,17 @@ def _thinnest_line_style(doc, curve, view=None):
     from Autodesk.Revit.DB import GraphicsStyleType
     record = {"state": "value", "unreadable": [], "hidden": [],
               "hidden_unreadable": []}
+
+    def _warn(what, entry):
+        # Codex, PR #226: a failed read leaves that style out of the choice;
+        # the record names it, and so does Diagnostics.
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite="tick_line_style",
+                      message="line style {0} ({1}): its {2} would not read, so it is "
+                              "not a tick candidate: {3}".format(
+                                  entry.get("id"), entry.get("name"), what,
+                                  entry.get("error")),
+                      view_id=view_id, elem_id=entry.get("id"))
     current = curve.LineStyle
     current_id = _element_id_int(getattr(current, "Id", None))
     candidates = []
@@ -739,6 +750,7 @@ def _thinnest_line_style(doc, curve, view=None):
             record["unreadable"].append({
                 "id": _element_id_int(style_id),
                 "error": "{0}: {1}".format(type(ex).__name__, ex)})
+            _warn("weight", record["unreadable"][-1])
             continue
         style_int = _element_id_int(getattr(style, "Id", None))
         if style_int == current_id:
@@ -756,6 +768,7 @@ def _thinnest_line_style(doc, curve, view=None):
                          "projection_line_weight": weight}
                 if solid_error is not None:
                     entry["error"] = solid_error
+                    _warn("line pattern", entry)
                 record.setdefault("not_solid", []).append(entry)
                 continue
             hidden, error = _style_subcategory_hidden(view, style)
@@ -765,6 +778,7 @@ def _thinnest_line_style(doc, curve, view=None):
                 if error is not None:
                     entry["error"] = error
                     record["hidden_unreadable"].append(entry)
+                    _warn("hidden state", entry)
                 else:
                     record["hidden"].append(entry)
                 continue
@@ -864,7 +878,7 @@ def _temporary_tick_style(doc, view):
     return style, record
 
 
-def tick_line_style(doc, view, curve):
+def tick_line_style(doc, view, curve, diag=None, view_id=None):
     """``(style, record)``: the style every tick is drawn in, and WHICH PATH
     chose it -- ``record["path"]``:
 
@@ -879,7 +893,8 @@ def tick_line_style(doc, view, curve):
     on anything but False. ``existing`` keeps the existing-style search's
     record whichever path won.
     """
-    style, existing = _thinnest_line_style(doc, curve, view=view)
+    style, existing = _thinnest_line_style(doc, curve, view=view, diag=diag,
+                                           view_id=view_id)
     if style is not None:
         record = dict(existing, path="visible_existing")
     else:
@@ -898,7 +913,7 @@ def tick_line_style(doc, view, curve):
     return style, record
 
 
-def create_registration_marks(doc, view, view_basis, layout):
+def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=None):
     """Draw the registration ticks as DETAIL LINES and paint them MARK_COLOUR.
 
     Inside an open Transaction, inside the capture's TransactionGroup: the
@@ -970,7 +985,8 @@ def create_registration_marks(doc, view, view_basis, layout):
         # in BOTH passes; the record says which path, style and weight.
         try:
             if "line_style" not in record:
-                thinnest, record["line_style"] = tick_line_style(doc, view, curve)
+                thinnest, record["line_style"] = tick_line_style(
+                    doc, view, curve, diag=diag, view_id=view_id)
             if thinnest is not None:
                 curve.LineStyle = thinnest
             entry["line_style_applied"] = thinnest is not None

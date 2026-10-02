@@ -284,3 +284,20 @@ def test_an_annotation_pass_that_fails_after_the_detach_reattaches(tmp_path, mon
     with pytest.raises(RuntimeError, match="refused"):
         _run_both_passes(tmp_path, view=view)
     assert int(primary.ViewTemplateId.IntegerValue) == 777
+
+
+def test_a_primary_that_will_not_read_is_warned_and_an_ordinary_view_is_not():
+    from vop_interwoven.stage_a_registered_capture import primary_view
+    from tests.stage_a_capture_fakes import FakeDiag
+
+    class _Broken(FakeViewPlan):
+        def GetPrimaryViewId(self):
+            raise RuntimeError("no primary (fake)")
+    diag = FakeDiag()
+    found, reason = primary_view(_Doc(), _Broken(1), diag=diag, view_id=1)
+    assert found is None and "no primary" in reason
+    assert [w["callsite"] for w in diag.warnings] == ["registered_primary_view"]
+    quiet = FakeDiag()
+    primary = _Primary()
+    assert primary_view(_Doc(primary), primary, diag=quiet) == (None, "not a dependent view")
+    assert quiet.warnings == []

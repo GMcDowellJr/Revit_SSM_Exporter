@@ -168,3 +168,38 @@ def test_a_dashed_style_is_passed_over_for_a_solid_one():
     solid = _SubStyle(2, "<Overhead>", 1)
     style, _rec = _pick_in(_View(), [lines, solid], current=lines)
     assert style is solid
+
+
+# --- Codex, PR #226: a failed read reaches Diagnostics -----------------------
+
+class _Diag:
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, **kw):
+        self.warnings.append(kw)
+
+
+def test_each_failed_style_read_is_one_warning_and_a_clean_read_none():
+    """Mutation: dropping a _warn call turns this red."""
+    lines = _SubStyle(1, "Lines", 3)
+    bad_weight = _Style(4, "BadWeight", RuntimeError("no weight"))
+    bad_pattern = _SubStyle(5, "BadPattern", 1)
+
+    def _no_pattern(_kind):
+        raise RuntimeError("no pattern")
+    bad_pattern.GraphicsStyleCategory.GetLinePatternId = _no_pattern
+    styles = [lines, bad_weight, _SubStyle(2, "Thin", 1), bad_pattern]
+    diag = _Diag()
+    with _db():
+        _thinnest_line_style(_Doc(styles), _Curve(styles, lines),
+                             view=_View(unreadable={102}), diag=diag, view_id=9)
+    assert sorted(w["message"].split("its ")[1].split(" would")[0]
+                  for w in diag.warnings) == ["hidden state", "line pattern", "weight"]
+    assert all(w["view_id"] == 9 and w["callsite"] == "tick_line_style"
+               for w in diag.warnings)
+    clean = _Diag()
+    with _db():
+        _thinnest_line_style(_Doc([lines]), _Curve([lines], lines), view=_View(),
+                             diag=clean, view_id=9)
+    assert clean.warnings == []
