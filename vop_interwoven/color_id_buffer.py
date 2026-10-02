@@ -3459,6 +3459,34 @@ def _reattach_view_template(handle):
     handle["target"].ViewTemplateId = handle["orig"]
 
 
+def _reattach_after_failure(doc, handle, diag=None, view_id=None,
+                            callsite="reattach_view_template"):
+    """A pass that raises after its template detach COMMITTED puts the
+    template back in its own Transaction before the raise propagates -- the
+    restore that would otherwise do it is never reached. For a dependent view
+    the detach is on the PRIMARY, so a failure left unrepaired changes every
+    view of it (Codex, PR #226). Never raises; a reattach that fails is a
+    Diagnostics error. Returns whether the template was put back."""
+    if handle is None:
+        return False
+    from Autodesk.Revit.DB import Transaction
+    tx = Transaction(doc, "VOP Stage A REATTACH view template after failure")
+    tx.Start()
+    try:
+        _reattach_view_template(handle)
+        tx.Commit()
+        return True
+    except Exception as ex:
+        tx.RollBack()
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite=callsite,
+                       message="the capture failed after detaching the view template "
+                               "AND could not re-attach it; the view (or its primary) "
+                               "is left detached from its template",
+                       view_id=view_id, exc=ex)
+        return False
+
+
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None,
                                 elem_cache=None, geometry_out=None):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
@@ -3805,74 +3833,81 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         callsite="detach_view_template")
     view_template_detached = bool(view_template_detach["detached"])
 
-    filter_state = {}
-    for fid in view.GetFilters():
-        filter_state[fid.IntegerValue] = {
-            "was_enabled": view.GetIsFilterEnabled(fid),
-            "was_visible": view.GetFilterVisibility(fid),
+    # The detach above COMMITTED; a raise from here to the suppress
+    # transaction would leave the template detached (Codex, PR #226).
+    try:
+        filter_state = {}
+        for fid in view.GetFilters():
+            filter_state[fid.IntegerValue] = {
+                "was_enabled": view.GetIsFilterEnabled(fid),
+                "was_visible": view.GetFilterVisibility(fid),
+            }
+        pf_param = view.get_Parameter(BuiltInParameter.VIEW_PHASE_FILTER)
+        orig_phase_filter_id = pf_param.AsElementId().IntegerValue if pf_param is not None else None
+        phase_filter_state = {
+            "orig_phase_filter_id": orig_phase_filter_id,
+            "neutral_phase_filter_id": None,
+            "neutral_phase_filter_created": False,
         }
-    pf_param = view.get_Parameter(BuiltInParameter.VIEW_PHASE_FILTER)
-    orig_phase_filter_id = pf_param.AsElementId().IntegerValue if pf_param is not None else None
-    phase_filter_state = {
-        "orig_phase_filter_id": orig_phase_filter_id,
-        "neutral_phase_filter_id": None,
-        "neutral_phase_filter_created": False,
-    }
-    category_halftone_state = {}
-    # Every DWG/DXF import the model pass resolved, with its classification;
-    # the view-specific ones are hidden for the export and unhidden after.
-    view_specific_imports = []
-    # Deliberately NOT capturing/reusing prior OverrideGraphicSettings objects
-    # here (a "restore to what it was" behavior this module used to have).
-    # Reference SUPPRESS/RESTORE testing always resets element overrides to a
-    # freshly-constructed blank OverrideGraphicSettings() rather than reapplying
-    # a live object captured in an earlier transaction, and never carries a
-    # live API object across a Transaction.Commit()/export boundary. Observed
-    # bug: curtain wall panels silently kept their paint color after restore
-    # (no exception) while their parent Wall correctly cleared — consistent
-    # with a captured-then-reapplied-later OverrideGraphicSettings object not
-    # reliably taking full effect once reused across that boundary. Painted-id
-    # bookkeeping below exists only to know what to reset, not to remember
-    # what it looked like before. Host elements are always reset via
-    # resolved_ids directly (the full painted set, matching the reference
-    # script); LINK elements get no individual override to reset at all --
-    # created_link_category_filter_ids / reused_link_category_filter_ids
-    # instead track every view-id-scoped category filter this run touched,
-    # split by whether restore may doc.Delete it outright (freshly created,
-    # nothing else could reference it yet) or must only RemoveFilter it from
-    # THIS view (found already existing by name -- ParameterFilterElement
-    # objects are document-global, so some other view/template could
-    # reference the same one; see _apply_link_category_filters's docstring).
-    created_link_category_filter_ids = []
-    reused_link_category_filter_ids = []
-    category_hidden_state = _hidden_category_state(doc, view)
-    # A Config parameter (config.py), read by getattr so a caller's partial
-    # config object still reaches the shipped default:
-    #
-    #   color_id_buffer_model_lines_visible
-    #       False (default) -- OST_Lines is hidden with the other view-only
-    #           categories, as shipped.
-    #       True            -- OST_Lines is left VISIBLE in this capture. The
-    #           annotation-pass variant probe draws registration marks as
-    #           detail lines at known view UV and paints them a reserved
-    #           colour, so the SAME marks register BOTH passes. Hiding the
-    #           category happens inside this function's suppress transaction,
-    #           where a caller cannot undo it. Every other detail and model
-    #           line then draws in its native colour, unpainted -- the
-    #           known OST_Lines gap the annotation pass already carries, and
-    #           decoded the same way (exact palette match). Recorded in
-    #           model_lines_visible so a capture says which it was.
-    model_lines_visible = bool(getattr(cfg, "color_id_buffer_model_lines_visible", False))
-    if model_lines_visible:
-        from Autodesk.Revit.DB import BuiltInCategory
-        lines_bic = getattr(BuiltInCategory, "OST_Lines", None)
-        if lines_bic is None:
-            raise RuntimeError("color_id_buffer_model_lines_visible is set but "
-                               "BuiltInCategory.OST_Lines did not resolve")
-        category_hidden_state.pop(int(lines_bic), None)
-    solid_pattern_id = _get_solid_pattern_id(doc)
-    if solid_pattern_id is None:
-        raise RuntimeError("No solid drafting fill pattern found in project")
+        category_halftone_state = {}
+        # Every DWG/DXF import the model pass resolved, with its classification;
+        # the view-specific ones are hidden for the export and unhidden after.
+        view_specific_imports = []
+        # Deliberately NOT capturing/reusing prior OverrideGraphicSettings objects
+        # here (a "restore to what it was" behavior this module used to have).
+        # Reference SUPPRESS/RESTORE testing always resets element overrides to a
+        # freshly-constructed blank OverrideGraphicSettings() rather than reapplying
+        # a live object captured in an earlier transaction, and never carries a
+        # live API object across a Transaction.Commit()/export boundary. Observed
+        # bug: curtain wall panels silently kept their paint color after restore
+        # (no exception) while their parent Wall correctly cleared — consistent
+        # with a captured-then-reapplied-later OverrideGraphicSettings object not
+        # reliably taking full effect once reused across that boundary. Painted-id
+        # bookkeeping below exists only to know what to reset, not to remember
+        # what it looked like before. Host elements are always reset via
+        # resolved_ids directly (the full painted set, matching the reference
+        # script); LINK elements get no individual override to reset at all --
+        # created_link_category_filter_ids / reused_link_category_filter_ids
+        # instead track every view-id-scoped category filter this run touched,
+        # split by whether restore may doc.Delete it outright (freshly created,
+        # nothing else could reference it yet) or must only RemoveFilter it from
+        # THIS view (found already existing by name -- ParameterFilterElement
+        # objects are document-global, so some other view/template could
+        # reference the same one; see _apply_link_category_filters's docstring).
+        created_link_category_filter_ids = []
+        reused_link_category_filter_ids = []
+        category_hidden_state = _hidden_category_state(doc, view)
+        # A Config parameter (config.py), read by getattr so a caller's partial
+        # config object still reaches the shipped default:
+        #
+        #   color_id_buffer_model_lines_visible
+        #       False (default) -- OST_Lines is hidden with the other view-only
+        #           categories, as shipped.
+        #       True            -- OST_Lines is left VISIBLE in this capture. The
+        #           annotation-pass variant probe draws registration marks as
+        #           detail lines at known view UV and paints them a reserved
+        #           colour, so the SAME marks register BOTH passes. Hiding the
+        #           category happens inside this function's suppress transaction,
+        #           where a caller cannot undo it. Every other detail and model
+        #           line then draws in its native colour, unpainted -- the
+        #           known OST_Lines gap the annotation pass already carries, and
+        #           decoded the same way (exact palette match). Recorded in
+        #           model_lines_visible so a capture says which it was.
+        model_lines_visible = bool(getattr(cfg, "color_id_buffer_model_lines_visible", False))
+        if model_lines_visible:
+            from Autodesk.Revit.DB import BuiltInCategory
+            lines_bic = getattr(BuiltInCategory, "OST_Lines", None)
+            if lines_bic is None:
+                raise RuntimeError("color_id_buffer_model_lines_visible is set but "
+                                   "BuiltInCategory.OST_Lines did not resolve")
+            category_hidden_state.pop(int(lines_bic), None)
+        solid_pattern_id = _get_solid_pattern_id(doc)
+        if solid_pattern_id is None:
+            raise RuntimeError("No solid drafting fill pattern found in project")
+    except Exception:
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="reattach_view_template_after_failure")
+        raise
     orig_display_style = getattr(view, "DisplayStyle", None)
     # Capture only the plain bool, not the ViewDisplayModel object itself — the
     # curtain-panel restore bug earlier in this module was caused by exactly
@@ -4704,6 +4739,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         suppress_tx.Commit()
     except Exception:
         suppress_tx.RollBack()
+        # RollBack undoes the suppress transaction, not the committed detach.
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="reattach_view_template_after_failure")
         raise
 
     actual_pixel_size = pixel_size
@@ -5873,8 +5911,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # "If the view hides it, the capture does not unhide it" is a LOCKED
     # decision, and this pass hides model categories only -- it never touches
     # an annotation category's visibility in either direction.
-    model_category_hidden_state = _model_category_hidden_state(
-        doc, view, diag=diag, view_id=view_id)
+    try:
+        model_category_hidden_state = _model_category_hidden_state(
+            doc, view, diag=diag, view_id=view_id)
+    except Exception:
+        # After the committed detach: put the template back before raising.
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="annotation_reattach_view_template")
+        raise
     # Only categories whose halftone write SUCCEEDED, so restore touches exactly
     # what this pass changed.
     category_halftone_state = {}
@@ -6260,24 +6304,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # ONLY committed state at this point, which is why re-attaching it is
         # the whole recovery rather than a partial one.
         suppress_tx.RollBack()
-        if view_template_handle is not None:
-            reattach_tx = Transaction(doc, "VOP Stage A ANNO REATTACH view template")
-            reattach_tx.Start()
-            try:
-                _reattach_view_template(view_template_handle)
-                reattach_tx.Commit()
-            except Exception as ex:
-                reattach_tx.RollBack()
-                if diag is not None:
-                    diag.error(
-                        phase="color_id_buffer",
-                        callsite="annotation_reattach_view_template",
-                        message="the annotation pass failed during suppression AND could "
-                                "not re-attach the view template it had detached; this "
-                                "view is left detached from its template",
-                        view_id=view_id,
-                        exc=ex,
-                    )
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="annotation_reattach_view_template")
         raise
 
     actual_pixel_size = pixel_size

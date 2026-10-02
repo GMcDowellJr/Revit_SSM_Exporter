@@ -220,3 +220,67 @@ def test_the_registered_capture_reads_back_a_dependent_views_primary():
     assert verdict["primary_view_template_id"]["status"] == "not_restored"
     # Control: an ordinary view carries no primary key to be "unverified".
     assert "primary_view_template_id" not in view_state(FakeViewPlan(2))
+
+
+# --- Codex, PR #226: a pass that fails after the detach reattaches -----------
+#
+# The detach COMMITS (on the PRIMARY for a dependent view); a raise before the
+# restore used to leave every view of that primary detached in the frame-B
+# fallback, which has no TransactionGroup rollback behind it. Mutations:
+# deleting the pre-suppress guard -> the GetFilters test red; deleting the
+# suppress-handler reattach -> the SetCategoryHidden test red; deleting the
+# annotation guard -> the last test red.
+
+import pytest  # noqa: E402
+
+
+class _DependentFailing(_Dependent):
+    def __init__(self, view_id, primary, fail):
+        _Dependent.__init__(self, view_id, primary)
+        self._fail = fail
+
+    def GetFilters(self):
+        if self._fail == "filters":
+            raise RuntimeError("GetFilters refused (fake)")
+        return _Dependent.GetFilters(self)
+
+    def SetCategoryHidden(self, cat_id, value):
+        if self._fail == "hide" and value:
+            raise RuntimeError("SetCategoryHidden refused (fake)")
+        return _Dependent.SetCategoryHidden(self, cat_id, value)
+
+
+def _primary_doc(monkeypatch, primary):
+    from tests import test_stage_a_annotation_pass as harness
+    real_doc = harness._SizedDoc
+
+    class _DocWithPrimary(real_doc):
+        def GetElement(self, eid):
+            if int(eid.IntegerValue) == PRIMARY_ID:
+                return primary
+            return real_doc.GetElement(self, eid)
+    monkeypatch.setattr(harness, "_SizedDoc", _DocWithPrimary)
+
+
+@pytest.mark.parametrize("fail", ["filters", "hide"])
+def test_a_model_pass_that_fails_after_the_detach_reattaches_the_primary(
+        tmp_path, monkeypatch, fail):
+    primary = _Primary()
+    view = _DependentFailing(VIEW_ID, primary, fail)
+    _primary_doc(monkeypatch, primary)
+    with pytest.raises(RuntimeError, match="refused"):
+        _run_both_passes(tmp_path, view=view)
+    assert int(primary.ViewTemplateId.IntegerValue) == 777
+
+
+def test_an_annotation_pass_that_fails_after_the_detach_reattaches(tmp_path, monkeypatch):
+    primary = _Primary()
+    view = _Dependent(VIEW_ID, primary)
+    _primary_doc(monkeypatch, primary)
+
+    def _boom(*a, **k):
+        raise RuntimeError("category state refused (fake)")
+    monkeypatch.setattr(color_id_buffer, "_model_category_hidden_state", _boom)
+    with pytest.raises(RuntimeError, match="refused"):
+        _run_both_passes(tmp_path, view=view)
+    assert int(primary.ViewTemplateId.IntegerValue) == 777
