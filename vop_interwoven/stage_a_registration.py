@@ -875,6 +875,15 @@ def _temporary_tick_style(doc, view):
                       "subcategory_name": TEMPORARY_TICK_SUBCATEGORY,
                       "reason": "the temporary Lines subcategory could not be "
                                 "made: {0}: {1}".format(type(ex).__name__, ex)}
+    # Codex, PR #226: the solid pattern is READ BACK, not assumed from the
+    # write. A dashed or unreadable one would break each tick into pieces the
+    # fit cannot use, so the style is unavailable (path "none"), which the
+    # capture faults as registration_marks_may_not_draw.
+    if record["projection_pattern_solid"] is not True:
+        return None, dict(record, state="unavailable",
+                          reason="the temporary Lines subcategory's line pattern "
+                                 "did not read back as Solid ({0})".format(
+                                     record["projection_pattern_solid"]))
     return style, record
 
 

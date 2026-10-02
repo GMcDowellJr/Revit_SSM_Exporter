@@ -489,6 +489,27 @@ def test_q6_no_visible_style_and_no_temporary_one_is_a_fault_in_the_FILE(
     assert out["registration"]["success"] is False
 
 
+def test_q6_a_temporary_style_whose_solid_pattern_does_not_take_is_a_fault_in_the_FILE(
+        tmp_path, monkeypatch):
+    """Codex, PR #226: SetLinePatternId ignored leaves the new subcategory
+    dashed. The read-back says so; the style is unavailable and the capture
+    faults rather than drawing broken ticks. Mutation: dropping the
+    read-back refusal in _temporary_tick_style turns this red."""
+    monkeypatch.setattr(world._Subcategory, "SetLinePatternId",
+                        lambda self, pattern_id, kind: None)
+    monkeypatch.setattr(world, "DASHED", world.DASHED + (
+        registration.TEMPORARY_TICK_SUBCATEGORY,))
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, _doc, _e, _diag = _run(tmp_path, view_setup=_hide(*subs))
+    style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "none"
+    assert style["temporary"]["projection_pattern_solid"] is False
+    assert "did not read back as Solid" in style["reason"]
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        assert len(_may_not_draw(path)) == 1, path
+    assert out["registration"]["success"] is False
+
+
 def test_q6_a_temporary_subcategory_the_view_hides_is_a_fault(tmp_path):
     """Whether a template that controls V/G draws a subcategory it has never
     seen is probe Q6b's question; production READS it, and faults."""
