@@ -56,7 +56,7 @@ import traceback
 
 
 PROBE_NAME = "capture_state"
-PROBE_VERSION = "2026-10-02.3"
+PROBE_VERSION = "2026-10-02.4"
 SCHEMA = "vop.probe.capture_state.v1"
 
 DEFAULT_Q1_VIEW = 6112047
@@ -1475,6 +1475,17 @@ def _repo_root_candidates(params):
     return out
 
 
+def purge_cached_modules(package, modules=None):
+    """Drop ``package`` and its submodules from ``modules`` (sys.modules by
+    default) so the next import reads the files on disk. Returns how many
+    were dropped."""
+    modules = sys.modules if modules is None else modules
+    names = [n for n in list(modules) if n == package or n.startswith(package + ".")]
+    for name in names:
+        del modules[name]
+    return len(names)
+
+
 def import_production(params):
     """``(record, modules)``. Q3b and Q6 call PRODUCTION code -- the crop
     helper and the registration-mark functions -- rather than copies, so the
@@ -1490,6 +1501,11 @@ def import_production(params):
             continue
         if root not in sys.path:
             sys.path.insert(0, root)
+        # Dynamo's Python engine outlives a run and caches every module it
+        # imported: a Q6 run refused a checkout that HAD A and C,
+        # because an earlier run's vop_interwoven was still in sys.modules.
+        # Purged, so the import below reads THIS checkout's files.
+        purged = purge_cached_modules("vop_interwoven")
         try:
             from vop_interwoven.revit import view_basis
             from vop_interwoven import stage_a_registration, stage_a_registered_capture
@@ -1503,7 +1519,7 @@ def import_production(params):
                    "capture": stage_a_registered_capture,
                    "color_id_buffer": color_id_buffer,
                    "split_membership": split_stage_a_pass_membership, "Config": Config}
-        return ({"state": "value", "root": root,
+        return ({"state": "value", "root": root, "purged_cached_modules": purged,
                  "module_files": dict((k, getattr(m, "__file__", None))
                                       for k, m in sorted(modules.items())
                                       if hasattr(m, "__file__")),

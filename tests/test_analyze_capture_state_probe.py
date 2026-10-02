@@ -792,3 +792,15 @@ def test_q6_names_the_production_symbols_a_checkout_lacks():
     assert "C:/repo" in reason and "registration.tick_line_style" in reason
     assert probe._q6_production_mismatch(types.SimpleNamespace(
         production_record={"root": "x", "missing_for_q6": []})) is None
+
+
+
+def test_the_probe_purges_a_cached_vop_interwoven_before_importing():
+    """Dynamo's engine keeps sys.modules between runs, so a checkout updated
+    after the first run was refused as lacking A and C. Only the package and
+    its submodules go; a name that merely starts the same does not."""
+    from tests.dynamo import probe_capture_state as probe
+    cache = {"vop_interwoven": 1, "vop_interwoven.color_id_buffer": 2,
+             "vop_interwoven_extra": 3, "json": 4}
+    assert probe.purge_cached_modules("vop_interwoven", cache) == 2
+    assert sorted(cache) == ["json", "vop_interwoven_extra"]
