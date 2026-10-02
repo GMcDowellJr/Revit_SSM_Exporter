@@ -834,3 +834,55 @@ def test_the_canvas_holds_exactly_what_the_resampler_draws(scale, offset):
         assert ink[0]
     if canvas["canvas_w"] - canvas["shift_x"] > model_w:
         assert ink[-1]
+
+
+# ----------------------------------------------------------------------
+# exact-colour specks far from the tick (run 1001-1950: 1686390, 1686410)
+# ----------------------------------------------------------------------
+
+def test_exact_colour_specks_far_from_the_tick_are_not_the_tick(tmp_path):
+    """A tick's own palette colour turned up as 1-2 px specks inside text,
+    far from the tick, and the exact colour exempted them from every filter:
+    137 and 629 px residuals. They are off the tick's line, so they are not
+    it. Mutation: exempting anchored pieces from the line test again turns
+    this red; the short-exact-piece test above is the control that a piece
+    ON the line still counts."""
+    def draw(img, marks, colours):
+        rgb = colours[_left_mid_h(marks)["id"]]
+        img[300 % img.shape[0], 400:402] = rgb
+        img[150 % img.shape[0], img.shape[1] - 40] = rgb
+    anno_path, marks, colours = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6
+
+
+def test_model_capture_an_exact_speck_of_the_mark_colour_is_not_a_tick(tmp_path):
+    """One shared colour, so no tick line to test: a 1 px exact-colour speck
+    is neither line-shaped nor tick-sized, and is dropped. Mutation: keeping
+    every anchored piece in the shared path turns this red."""
+    def draw(img):
+        img[5, 5] = MARK_COLOUR
+        img[6, 400] = MARK_COLOUR
+    fit = _model_fit_with(tmp_path, draw)
+    assert fit["status"] == "value"
+    assert fit["components"]["components"] == 12
+    assert fit["components"]["merged_into_one_tick"] == 0
+    assert max(fit["residual_max_px"].values()) < 0.6
+
+
+def test_the_line_is_judged_from_the_exact_colour_not_the_biggest_blend(tmp_path):
+    """5166781, 5100330: a line-shaped blend of a tick's colour, with MORE
+    coverage than the tick itself, far from it. Taken as the reference line,
+    it kept itself and the (anchored) tick both: 96 and 426 px residuals. The
+    exact-colour piece is the reference, so the blend is off its line.
+    Mutation: choosing the reference from every kept piece turns this red."""
+    def draw(img, marks, colours):
+        m = _left_mid_h(marks)
+        _stray(img, colours[m["id"]], 200, 300 % img.shape[0], 120, 3, t=0.9)
+    anno_path, marks, _c = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6
