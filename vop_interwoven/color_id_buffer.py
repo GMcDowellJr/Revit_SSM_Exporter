@@ -3555,24 +3555,52 @@ def _reattach_after_failure(doc, handle, diag=None, view_id=None,
     template back in its own Transaction before the raise propagates -- the
     restore that would otherwise do it is never reached. For a dependent view
     the detach is on the PRIMARY, so a failure left unrepaired changes every
-    view of it (Codex, PR #226). Never raises; a reattach that fails is a
-    Diagnostics error. Returns whether the template was put back."""
+    view of it (Codex, PR #226).
+
+    NEVER RAISES: it runs inside an ``except`` whose own exception is the one
+    that must propagate. Every step can fail -- making the Transaction, its
+    Start (a document mid failure-handling refuses one), the write, a Commit
+    that returns RolledBack or Pending without raising -- and each is a
+    Diagnostics error, not a masked original. Returns True only when the
+    commit said Committed AND ViewTemplateId reads back as the template that
+    was cleared."""
     if handle is None:
         return False
-    from Autodesk.Revit.DB import Transaction
-    tx = Transaction(doc, "VOP Stage A REATTACH view template after failure")
-    tx.Start()
+    stage = "construct the Transaction"
+    tx = None
     try:
+        from Autodesk.Revit.DB import Transaction, TransactionStatus
+        tx = Transaction(doc, "VOP Stage A REATTACH view template after failure")
+        stage = "start the Transaction"
+        tx.Start()
+        stage = "write ViewTemplateId"
         _reattach_view_template(handle)
-        tx.Commit()
+        stage = "commit"
+        status = tx.Commit()
+        if status != TransactionStatus.Committed:
+            raise RuntimeError("Commit returned {0}, not Committed".format(status))
+        stage = "read ViewTemplateId back"
+        got = _id_int(handle["target"].ViewTemplateId)
+        want = _id_int(handle["orig"])
+        if got != want:
+            raise RuntimeError("ViewTemplateId reads {0} after the reattach; the "
+                               "template cleared was {1}".format(got, want))
         return True
     except Exception as ex:
-        tx.RollBack()
+        if tx is not None and stage in ("write ViewTemplateId", "commit"):
+            try:
+                if not tx.HasEnded():
+                    tx.RollBack()
+            except Exception as rollback_ex:
+                if diag is not None:
+                    diag.error(phase="color_id_buffer", callsite=callsite,
+                               message="rolling back the failed reattach also failed",
+                               view_id=view_id, exc=rollback_ex)
         if diag is not None:
             diag.error(phase="color_id_buffer", callsite=callsite,
                        message="the capture failed after detaching the view template "
-                               "AND could not re-attach it; the view (or its primary) "
-                               "is left detached from its template",
+                               "AND could not re-attach it (at: {0}); the view (or its "
+                               "primary) is left detached from its template".format(stage),
                        view_id=view_id, exc=ex)
         return False
 
@@ -3925,7 +3953,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     view_template_detached = bool(view_template_detach["detached"])
 
     # The detach above COMMITTED; a raise from here to the suppress
-    # transaction would leave the template detached (Codex, PR #226).
+    # transaction's Start would leave the template detached (Codex, PR #226).
+    # One guard over all of it -- see its handler below suppress_tx.Start().
     try:
         filter_state = {}
         for fid in view.GetFilters():
@@ -3995,138 +4024,143 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         solid_pattern_id = _get_solid_pattern_id(doc)
         if solid_pattern_id is None:
             raise RuntimeError("No solid drafting fill pattern found in project")
+        orig_display_style = getattr(view, "DisplayStyle", None)
+        # Capture only the plain bool, not the ViewDisplayModel object itself — the
+        # curtain-panel restore bug earlier in this module was caused by exactly
+        # this pattern (holding a live Revit API object across the suppress/export/
+        # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
+        # actually need to read or write it.
+        orig_smooth_edges = None
+        # The exception TYPE when the read itself fails, which is the difference
+        # between "AA was already off, nothing to do" and "this capture never
+        # found out whether AA was on". Both used to be recorded as
+        # applied_smooth_edges = "unchanged" -- and because
+        # bool(getattr(dm, "SmoothEdges", None)) can never return None, a failed
+        # read was in fact the ONLY way "unchanged" was ever written. A reader
+        # (tools/decode_stage_a_color_id._capture_reliability) could not tell the
+        # two apart, so a view whose AA state was unknown was reported exactly
+        # like one that needed no change.
+        smooth_edges_read_error = None
+        # No getattr default here. bool(getattr(dm, "SmoothEdges", None)) reads a
+        # host that does not expose the property at all as False -- "AA is
+        # already off, nothing to do" -- which is the same silent coercion the
+        # ShowShadows capture below already refuses via its own sentinel. An
+        # absent property means this capture does not know the view's AA state,
+        # and an unknown state is not an off state.
+        _MISSING_SMOOTH_EDGES = object()
+        try:
+            _dm = view.GetViewDisplayModel()
+            try:
+                _raw_smooth_edges = getattr(_dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+                if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                    # getattr without a default would have raised exactly this.
+                    smooth_edges_read_error = "AttributeError"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="smooth_edges_capture",
+                            message="ViewDisplayModel has no SmoothEdges attribute on this "
+                                    "Revit host; anti-aliasing cannot be confirmed off and "
+                                    "decoded edges may be blended",
+                            view_id=view_id,
+                        )
+                else:
+                    orig_smooth_edges = bool(_raw_smooth_edges)
+            finally:
+                try:
+                    _dm.Dispose()
+                except Exception:
+                    pass
+        except Exception as ex:
+            smooth_edges_read_error = type(ex).__name__
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="smooth_edges_capture",
+                    message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                            "capture proceeds but anti-aliasing cannot be confirmed off "
+                            "and decoded edges may be blended".format(
+                                type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+
+        # Shadows were confirmed (empirically) to shift assigned colors in the
+        # exported TIFF, the same class of per-pixel color drift SmoothEdges/
+        # DisplayStyle above exist to eliminate -- same live-API-object-across-
+        # transaction-boundary caution as orig_smooth_edges. Unlike orig_smooth_
+        # edges's bool(getattr(..., None)), a missing ShowShadows attribute
+        # (unsupported on this Revit host) is kept as None rather than coerced
+        # to False: coercing it would make suppression below silently skip AND
+        # the sidecar report "unchanged" as if nothing needed doing, when the
+        # real state is actually unknown and the export may still carry shadow
+        # tinting.
+        _MISSING_SHOW_SHADOWS = object()
+        orig_show_shadows = None
+        try:
+            _dm = view.GetViewDisplayModel()
+            try:
+                _raw_show_shadows = getattr(_dm, "ShowShadows", _MISSING_SHOW_SHADOWS)
+                if _raw_show_shadows is _MISSING_SHOW_SHADOWS:
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="show_shadows_capture",
+                            message="ViewDisplayModel has no ShowShadows attribute on this "
+                                    "Revit host; shadow suppression will be skipped and the "
+                                    "exported TIFF may still carry shadow tinting",
+                            view_id=view_id,
+                        )
+                else:
+                    orig_show_shadows = bool(_raw_show_shadows)
+            finally:
+                try:
+                    _dm.Dispose()
+                except Exception as ex:
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="show_shadows_capture_dispose",
+                            message=str(ex),
+                            view_id=view_id,
+                        )
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="show_shadows_capture",
+                    message=str(ex),
+                    view_id=view_id,
+                )
+
+        # Captured only as (BoundingBoxXYZ, bool) -- same live-API-object-across-
+        # transaction-boundary caution as orig_display_style/orig_smooth_edges
+        # above -- rather than re-derived at restore time.
+        orig_crop_box = None
+        orig_crop_box_active = None
+        try:
+            orig_crop_box = view.CropBox
+            orig_crop_box_active = bool(view.CropBoxActive)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="crop_box_capture",
+                    message=str(ex),
+                    view_id=view_id,
+                )
+
+        state_out = None
+        suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
+        suppress_tx.Start()
     except Exception:
+        # EVERYTHING from the committed detach to the suppress transaction's
+        # Start: a raise anywhere in it never reaches the restore, so the
+        # template goes back here (Codex, PR #226 -- twice: the first guard
+        # stopped at the solid-pattern lookup, before DisplayStyle and
+        # suppress_tx.Start()).
         _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
                                 callsite="reattach_view_template_after_failure")
         raise
-    orig_display_style = getattr(view, "DisplayStyle", None)
-    # Capture only the plain bool, not the ViewDisplayModel object itself — the
-    # curtain-panel restore bug earlier in this module was caused by exactly
-    # this pattern (holding a live Revit API object across the suppress/export/
-    # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
-    # actually need to read or write it.
-    orig_smooth_edges = None
-    # The exception TYPE when the read itself fails, which is the difference
-    # between "AA was already off, nothing to do" and "this capture never
-    # found out whether AA was on". Both used to be recorded as
-    # applied_smooth_edges = "unchanged" -- and because
-    # bool(getattr(dm, "SmoothEdges", None)) can never return None, a failed
-    # read was in fact the ONLY way "unchanged" was ever written. A reader
-    # (tools/decode_stage_a_color_id._capture_reliability) could not tell the
-    # two apart, so a view whose AA state was unknown was reported exactly
-    # like one that needed no change.
-    smooth_edges_read_error = None
-    # No getattr default here. bool(getattr(dm, "SmoothEdges", None)) reads a
-    # host that does not expose the property at all as False -- "AA is
-    # already off, nothing to do" -- which is the same silent coercion the
-    # ShowShadows capture below already refuses via its own sentinel. An
-    # absent property means this capture does not know the view's AA state,
-    # and an unknown state is not an off state.
-    _MISSING_SMOOTH_EDGES = object()
-    try:
-        _dm = view.GetViewDisplayModel()
-        try:
-            _raw_smooth_edges = getattr(_dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
-            if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
-                # getattr without a default would have raised exactly this.
-                smooth_edges_read_error = "AttributeError"
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="smooth_edges_capture",
-                        message="ViewDisplayModel has no SmoothEdges attribute on this "
-                                "Revit host; anti-aliasing cannot be confirmed off and "
-                                "decoded edges may be blended",
-                        view_id=view_id,
-                    )
-            else:
-                orig_smooth_edges = bool(_raw_smooth_edges)
-        finally:
-            try:
-                _dm.Dispose()
-            except Exception:
-                pass
-    except Exception as ex:
-        smooth_edges_read_error = type(ex).__name__
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="smooth_edges_capture",
-                message="could not read the view's SmoothEdges state ({0}: {1}); the "
-                        "capture proceeds but anti-aliasing cannot be confirmed off "
-                        "and decoded edges may be blended".format(
-                            type(ex).__name__, ex),
-                view_id=view_id,
-            )
-
-    # Shadows were confirmed (empirically) to shift assigned colors in the
-    # exported TIFF, the same class of per-pixel color drift SmoothEdges/
-    # DisplayStyle above exist to eliminate -- same live-API-object-across-
-    # transaction-boundary caution as orig_smooth_edges. Unlike orig_smooth_
-    # edges's bool(getattr(..., None)), a missing ShowShadows attribute
-    # (unsupported on this Revit host) is kept as None rather than coerced
-    # to False: coercing it would make suppression below silently skip AND
-    # the sidecar report "unchanged" as if nothing needed doing, when the
-    # real state is actually unknown and the export may still carry shadow
-    # tinting.
-    _MISSING_SHOW_SHADOWS = object()
-    orig_show_shadows = None
-    try:
-        _dm = view.GetViewDisplayModel()
-        try:
-            _raw_show_shadows = getattr(_dm, "ShowShadows", _MISSING_SHOW_SHADOWS)
-            if _raw_show_shadows is _MISSING_SHOW_SHADOWS:
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="show_shadows_capture",
-                        message="ViewDisplayModel has no ShowShadows attribute on this "
-                                "Revit host; shadow suppression will be skipped and the "
-                                "exported TIFF may still carry shadow tinting",
-                        view_id=view_id,
-                    )
-            else:
-                orig_show_shadows = bool(_raw_show_shadows)
-        finally:
-            try:
-                _dm.Dispose()
-            except Exception as ex:
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="show_shadows_capture_dispose",
-                        message=str(ex),
-                        view_id=view_id,
-                    )
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="show_shadows_capture",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    # Captured only as (BoundingBoxXYZ, bool) -- same live-API-object-across-
-    # transaction-boundary caution as orig_display_style/orig_smooth_edges
-    # above -- rather than re-derived at restore time.
-    orig_crop_box = None
-    orig_crop_box_active = None
-    try:
-        orig_crop_box = view.CropBox
-        orig_crop_box_active = bool(view.CropBoxActive)
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="crop_box_capture",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    state_out = None
-    suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
-    suppress_tx.Start()
     try:
         for fid_int, fstate in filter_state.items():
             if fstate["was_enabled"] and fstate["was_visible"]:
@@ -6008,142 +6042,145 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         view_id=view_id, callsite="annotation_detach_view_template")
     view_template_detached = bool(view_template_detach["detached"])
 
-    filter_state = {}
+    # The detach above COMMITTED; a raise from here to the suppress
+    # transaction's Start would leave the template detached -- for a
+    # dependent view, on its PRIMARY (Codex, PR #226). One guard over all of
+    # it.
     try:
-        for fid in view.GetFilters():
-            filter_state[fid.IntegerValue] = {
-                "was_enabled": view.GetIsFilterEnabled(fid),
-                "was_visible": view.GetFilterVisibility(fid),
-            }
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="annotation_capture_filters",
-                message=str(ex),
-                view_id=view_id,
-            )
+        filter_state = {}
+        try:
+            for fid in view.GetFilters():
+                filter_state[fid.IntegerValue] = {
+                    "was_enabled": view.GetIsFilterEnabled(fid),
+                    "was_visible": view.GetFilterVisibility(fid),
+                }
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_capture_filters",
+                    message=str(ex),
+                    view_id=view_id,
+                )
 
-    # NOTE: annotation categories the view itself hides are NOT unhidden here.
-    # "If the view hides it, the capture does not unhide it" is a LOCKED
-    # decision, and this pass hides model categories only -- it never touches
-    # an annotation category's visibility in either direction.
-    try:
+        # NOTE: annotation categories the view itself hides are NOT unhidden here.
+        # "If the view hides it, the capture does not unhide it" is a LOCKED
+        # decision, and this pass hides model categories only -- it never touches
+        # an annotation category's visibility in either direction.
         model_category_hidden_state = _model_category_hidden_state(
             doc, view, diag=diag, view_id=view_id)
+        # Only categories whose halftone write SUCCEEDED, so restore touches exactly
+        # what this pass changed.
+        category_halftone_state = {}
+        # Every category considered, three-valued: "applied" / "not_overridable" /
+        # "failed". A category absent from category_halftone_state is not the same
+        # fact as one that was never looked at, and this is what says which.
+        category_halftone_outcomes = {}
+
+        orig_crop_box = None
+        orig_crop_box_active = None
+        try:
+            orig_crop_box = view.CropBox
+            orig_crop_box_active = bool(view.CropBoxActive)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_capture_crop_box",
+                    message=str(ex),
+                    view_id=view_id,
+                )
+
+        orig_display_style = getattr(view, "DisplayStyle", None)
+
+        # SmoothEdges, captured the way export_color_id_buffer_view captures it
+        # and for the same reason: the plain bool only, never the live
+        # ViewDisplayModel held across a transaction boundary. Three-valued by
+        # construction -- a missing attribute is an UNKNOWN AA state, not an off
+        # one, so it is recorded as a read error rather than coerced to False.
+        # Captured only when the caller asked for the change; otherwise the
+        # sidecar says "not_attempted", which is a different fact from the model
+        # pass's "read_failed".
+        def _dispose_view_display_model(dm, callsite):
+            """Dispose a ViewDisplayModel, RECORDING a failure rather than
+            discarding it (Refactor Rule #1). The model pass spells this as a bare
+            ``except Exception: pass`` in three places; copying that idiom into
+            this pass would have added three more discarded handlers to the
+            repository's ground-truth population. A leaked ViewDisplayModel is not
+            a capture failure, so nothing here raises -- but a host on which
+            Dispose raises every time is a fact worth having once."""
+            try:
+                dm.Dispose()
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite=callsite,
+                        message="could not dispose the ViewDisplayModel ({0}: {1}); the "
+                                "capture is unaffected".format(type(ex).__name__, ex),
+                        view_id=view_id,
+                    )
+
+        orig_smooth_edges = None
+        smooth_edges_read_error = None
+        _MISSING_SMOOTH_EDGES = object()
+        if anno_smooth_edges_off:
+            try:
+                _dm = view.GetViewDisplayModel()
+                try:
+                    _raw_smooth_edges = getattr(
+                        _dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+                    if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                        smooth_edges_read_error = "AttributeError"
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="annotation_smooth_edges_capture",
+                                message="ViewDisplayModel has no SmoothEdges attribute on "
+                                        "this Revit host; anti-aliasing cannot be confirmed "
+                                        "off for the annotation pass and decoded edges may "
+                                        "be blended",
+                                view_id=view_id,
+                            )
+                    else:
+                        orig_smooth_edges = bool(_raw_smooth_edges)
+                finally:
+                    _dispose_view_display_model(
+                        _dm, "annotation_smooth_edges_capture_dispose")
+            except Exception as ex:
+                smooth_edges_read_error = type(ex).__name__
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_smooth_edges_capture",
+                        message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                                "annotation capture proceeds but anti-aliasing cannot be "
+                                "confirmed off".format(type(ex).__name__, ex),
+                        view_id=view_id,
+                    )
+
+        state_out = None
+        painted_ids = []
+        authored_overrides = {
+            "status": "unavailable",
+            "reason": "the suppression transaction did not reach the override scan",
+        }
+        crop_bounds_xy = None
+        # D: the crop write's read-back (None when this pass writes no crop).
+        crop_write = None
+        applied_display_style = "unchanged"
+        # "not_attempted" is this pass's shipped state: it has never touched
+        # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
+        # cannot tell those apart cannot tell an AA-off capture from one that
+        # never asked.
+        applied_smooth_edges = "not_attempted"
+
+        suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
+        suppress_tx.Start()
     except Exception:
-        # After the committed detach: put the template back before raising.
         _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
                                 callsite="annotation_reattach_view_template")
         raise
-    # Only categories whose halftone write SUCCEEDED, so restore touches exactly
-    # what this pass changed.
-    category_halftone_state = {}
-    # Every category considered, three-valued: "applied" / "not_overridable" /
-    # "failed". A category absent from category_halftone_state is not the same
-    # fact as one that was never looked at, and this is what says which.
-    category_halftone_outcomes = {}
-
-    orig_crop_box = None
-    orig_crop_box_active = None
-    try:
-        orig_crop_box = view.CropBox
-        orig_crop_box_active = bool(view.CropBoxActive)
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="annotation_capture_crop_box",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    orig_display_style = getattr(view, "DisplayStyle", None)
-
-    # SmoothEdges, captured the way export_color_id_buffer_view captures it
-    # and for the same reason: the plain bool only, never the live
-    # ViewDisplayModel held across a transaction boundary. Three-valued by
-    # construction -- a missing attribute is an UNKNOWN AA state, not an off
-    # one, so it is recorded as a read error rather than coerced to False.
-    # Captured only when the caller asked for the change; otherwise the
-    # sidecar says "not_attempted", which is a different fact from the model
-    # pass's "read_failed".
-    def _dispose_view_display_model(dm, callsite):
-        """Dispose a ViewDisplayModel, RECORDING a failure rather than
-        discarding it (Refactor Rule #1). The model pass spells this as a bare
-        ``except Exception: pass`` in three places; copying that idiom into
-        this pass would have added three more discarded handlers to the
-        repository's ground-truth population. A leaked ViewDisplayModel is not
-        a capture failure, so nothing here raises -- but a host on which
-        Dispose raises every time is a fact worth having once."""
-        try:
-            dm.Dispose()
-        except Exception as ex:
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite=callsite,
-                    message="could not dispose the ViewDisplayModel ({0}: {1}); the "
-                            "capture is unaffected".format(type(ex).__name__, ex),
-                    view_id=view_id,
-                )
-
-    orig_smooth_edges = None
-    smooth_edges_read_error = None
-    _MISSING_SMOOTH_EDGES = object()
-    if anno_smooth_edges_off:
-        try:
-            _dm = view.GetViewDisplayModel()
-            try:
-                _raw_smooth_edges = getattr(
-                    _dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
-                if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
-                    smooth_edges_read_error = "AttributeError"
-                    if diag is not None:
-                        diag.warn(
-                            phase="color_id_buffer",
-                            callsite="annotation_smooth_edges_capture",
-                            message="ViewDisplayModel has no SmoothEdges attribute on "
-                                    "this Revit host; anti-aliasing cannot be confirmed "
-                                    "off for the annotation pass and decoded edges may "
-                                    "be blended",
-                            view_id=view_id,
-                        )
-                else:
-                    orig_smooth_edges = bool(_raw_smooth_edges)
-            finally:
-                _dispose_view_display_model(
-                    _dm, "annotation_smooth_edges_capture_dispose")
-        except Exception as ex:
-            smooth_edges_read_error = type(ex).__name__
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_smooth_edges_capture",
-                    message="could not read the view's SmoothEdges state ({0}: {1}); the "
-                            "annotation capture proceeds but anti-aliasing cannot be "
-                            "confirmed off".format(type(ex).__name__, ex),
-                    view_id=view_id,
-                )
-
-    state_out = None
-    painted_ids = []
-    authored_overrides = {
-        "status": "unavailable",
-        "reason": "the suppression transaction did not reach the override scan",
-    }
-    crop_bounds_xy = None
-    # D: the crop write's read-back (None when this pass writes no crop).
-    crop_write = None
-    applied_display_style = "unchanged"
-    # "not_attempted" is this pass's shipped state: it has never touched
-    # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
-    # cannot tell those apart cannot tell an AA-off capture from one that
-    # never asked.
-    applied_smooth_edges = "not_attempted"
-
-    suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
-    suppress_tx.Start()
     try:
         # Both loops are the "hide_categories" mode's work. Under "external"
         # the caller's own suppression is what makes this capture annotation-

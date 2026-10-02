@@ -301,3 +301,111 @@ def test_a_primary_that_will_not_read_is_warned_and_an_ordinary_view_is_not():
     primary = _Primary()
     assert primary_view(_Doc(primary), primary, diag=quiet) == (None, "not a dependent view")
     assert quiet.warnings == []
+
+
+# --- Codex, PR #226 (round 2): the WHOLE stretch from detach to Start --------
+#
+# The first guard stopped at the solid-pattern lookup; the DisplayStyle read
+# and suppress_tx.Start() came after it, in both passes. And the reattach
+# itself could raise out of its own handler (an unguarded Start) or claim
+# success on a Commit that returned RolledBack. Mutations: narrowing either
+# pass's guard back to where it was turns the Start / DisplayStyle cases red;
+# taking Start out of the helper's try, or dropping the Committed check or
+# the read-back, turns the helper cases red.
+
+from tests import stage_a_capture_fakes as fakes  # noqa: E402
+
+
+class _DependentDisplayFails(_Dependent):
+    """DisplayStyle raises once the template is detached -- i.e. only on the
+    read the capture makes AFTER the detach."""
+
+    @property
+    def DisplayStyle(self):
+        if int(self._primary.ViewTemplateId.IntegerValue) == -1:
+            raise RuntimeError("DisplayStyle refused (fake)")
+        return getattr(self, "_display_style", None)
+
+    @DisplayStyle.setter
+    def DisplayStyle(self, value):
+        object.__setattr__(self, "_display_style", value)
+
+
+def test_a_model_pass_whose_display_style_read_fails_reattaches(tmp_path, monkeypatch):
+    primary = _Primary()
+    view = _DependentDisplayFails(VIEW_ID, primary)
+    _primary_doc(monkeypatch, primary)
+    with pytest.raises(RuntimeError, match="DisplayStyle refused"):
+        _run_both_passes(tmp_path, view=view)
+    assert int(primary.ViewTemplateId.IntegerValue) == 777
+
+
+def _start_refused_for(monkeypatch, name_part):
+    real_start = fakes.FakeTransaction.Start
+
+    def _start(self):
+        if name_part in self.name:
+            raise RuntimeError("Start refused (fake): {0}".format(self.name))
+        return real_start(self)
+    monkeypatch.setattr(fakes.FakeTransaction, "Start", _start)
+
+
+@pytest.mark.parametrize("which", ["VOP Stage A SUPPRESS", "VOP Stage A ANNO SUPPRESS"])
+def test_a_suppress_transaction_that_will_not_start_reattaches(tmp_path, monkeypatch, which):
+    primary = _Primary()
+    view = _Dependent(VIEW_ID, primary)
+    _primary_doc(monkeypatch, primary)
+    _start_refused_for(monkeypatch, which)
+    with pytest.raises(RuntimeError, match="Start refused"):
+        _run_both_passes(tmp_path, view=view)
+    assert int(primary.ViewTemplateId.IntegerValue) == 777
+
+
+# --- the helper itself ---------------------------------------------------------
+
+def _reattach(view, monkeypatch=None, **patch):
+    for name, fn in patch.items():
+        monkeypatch.setattr(fakes.FakeTransaction, name, fn)
+    diag = FakeDiag()
+    with install_fake_revit_db():
+        ok = color_id_buffer._reattach_after_failure(
+            None, {"target": view, "orig": TEMPLATE}, diag=diag, view_id=1)
+    return ok, diag
+
+
+def _detached_primary():
+    primary = _Primary()
+    primary.ViewTemplateId = INVALID_ELEMENT_ID
+    return primary
+
+
+def test_control_a_reattach_that_commits_and_reads_back_is_true():
+    primary = _detached_primary()
+    ok, diag = _reattach(primary)
+    assert ok is True and diag.errors == []
+    assert int(primary.ViewTemplateId.IntegerValue) == 777
+
+
+def test_a_reattach_whose_start_raises_returns_false_and_does_not_raise(monkeypatch):
+    def _start(self):
+        raise RuntimeError("document is in failure handling (fake)")
+    ok, diag = _reattach(_detached_primary(), monkeypatch, Start=_start)
+    assert ok is False
+    assert len(diag.errors) == 1 and "start the Transaction" in diag.errors[0]["message"]
+
+
+def test_a_reattach_whose_commit_rolls_back_is_not_a_success(monkeypatch):
+    def _commit(self):
+        self._ended = True
+        return fakes.FakeTransactionStatus.RolledBack
+    ok, diag = _reattach(_detached_primary(), monkeypatch, Commit=_commit)
+    assert ok is False
+    assert len(diag.errors) == 1 and "commit" in diag.errors[0]["message"]
+
+
+def test_a_reattach_that_does_not_read_back_is_not_a_success():
+    view = _Stubborn(5)
+    object.__setattr__(view, "_tid", INVALID_ELEMENT_ID)   # detached; writes ignored
+    ok, diag = _reattach(view)
+    assert ok is False
+    assert len(diag.errors) == 1 and "read ViewTemplateId back" in diag.errors[0]["message"]

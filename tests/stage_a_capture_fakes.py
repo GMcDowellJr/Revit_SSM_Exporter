@@ -184,19 +184,36 @@ def _as_valid_color(color):
     return color
 
 
+class FakeTransactionStatus(object):
+    Started = "Started"
+    Committed = "Committed"
+    RolledBack = "RolledBack"
+    Pending = "Pending"
+
+
 class FakeTransaction(object):
+    """Start/Commit/RollBack return a FakeTransactionStatus, as Revit's do:
+    production that checks ``Commit() == TransactionStatus.Committed`` has to
+    be able to see a commit succeed here, not only fail."""
+
     def __init__(self, doc, name):
         self.doc = doc
         self.name = name
+        self._ended = False
 
     def Start(self):
-        pass
+        return FakeTransactionStatus.Started
 
     def Commit(self):
-        pass
+        self._ended = True
+        return FakeTransactionStatus.Committed
 
     def RollBack(self):
-        pass
+        self._ended = True
+        return FakeTransactionStatus.RolledBack
+
+    def HasEnded(self):
+        return self._ended
 
 
 class FakeTransform(object):
@@ -619,6 +636,7 @@ def install_fake_revit_db():
     fake_db.Color = FakeColor
     fake_db.OverrideGraphicSettings = FakeOGS
     fake_db.Transaction = FakeTransaction
+    fake_db.TransactionStatus = FakeTransactionStatus
     fake_db.Transform = FakeTransform
     fake_db.FilteredElementCollector = FakeCollector
     fake_db.FillPatternElement = FakeFillPatternElement
