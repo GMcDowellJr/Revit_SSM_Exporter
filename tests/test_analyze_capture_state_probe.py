@@ -702,10 +702,11 @@ def test_a_round_1_probe_json_still_analyzes_with_empty_round_2_sections(tmp_pat
     q3 = [{"view_id": 11, "role": "test", "steps": [s1]}]
     _probe(tmp_path, [e1], {"Q3_S1_11.tiff": _flat(200, 100)}, q3=q3)
     rec = _run(tmp_path)
-    assert rec["status"] == "value" and rec["tool_version"] == "1.2.1"
+    assert rec["status"] == "value" and rec["tool_version"] == "1.3.0"
     assert (rec["writes"], rec["commit_without_effect"]) == ([], [])
     assert (rec["q1b"], rec["q3b"], rec["q5b"], rec["q6"]) == ([], [], [], [])
     assert rec["q6_authored"] == []
+    assert (rec["q7_split"], rec["q7_markers"]) == ([], [])
     assert rec["q3"][0]["rows"][0]["non_fit_delta_px"] == 0
     assert rec["images"][0]["non_white_pixels"] == 0
 
@@ -804,3 +805,65 @@ def test_the_probe_purges_a_cached_vop_interwoven_before_importing():
              "vop_interwoven_extra": 3, "json": 4}
     assert probe.purge_cached_modules("vop_interwoven", cache) == 2
     assert sorted(cache) == ["json", "vop_interwoven_extra"]
+
+
+# --- round 3 (analyzer 1.3.0): Q7 ---------------------------------------------
+
+def _q7_export(step, view_id):
+    return {"step": "Q7_{0}".format(step), "view_id": view_id,
+            "file": "Q7_{0}_{1}.tiff".format(step, view_id), "state": "value",
+            "dims_px": {"state": "value", "value": [W, H]}}
+
+
+def _q7_step(step, view_id, regions=None):
+    rec = {"step": step, "writes": {}, "export": _q7_export(step, view_id),
+           "common": {"crop_region_shape": {"state": "value",
+                                            "value": {"NumberOfSplitRegions": {
+                                                "state": "value", "value": regions}}},
+                      "crop_box": {"state": "value",
+                                   "value": {"min": [0, 0, 0], "max": [10, 5, 0]}}}}
+    return rec
+
+
+def test_q7_split_rows_carry_the_region_count_per_step(tmp_path):
+    steps = [_q7_step("S0", 7, 2), _q7_step("R0", 7, 1), _q7_step("U", 7, 1)]
+    steps[1]["writes"] = {"remove_other_regions": _write({"count_at_most": 1}, {"count": 1})}
+    exports = [s["export"] for s in steps]
+    images = dict((e["file"], _flat()) for e in exports)
+    _round2_probe(tmp_path, {"q7": {"split_views": [
+        {"view_id": 7, "split_region_count": {"state": "value", "value": 2},
+         "steps": steps}], "marker_views": []}}, exports=exports, images=images)
+    rec = _run(tmp_path)
+    view = rec["q7_split"][0]
+    assert view["split_region_count"] == 2
+    assert [(r["step"], r["split_regions"]) for r in view["rows"]] == [
+        ("S0", 2), ("R0", 1), ("U", 1)]
+    assert view["rows"][0]["crop_box_extent_ft"] == [10.0, 5.0]
+    assert view["rows"][0]["exported_px"] == [W, H]
+
+
+def test_q7_marker_rows_count_each_colour_and_the_black_the_paint_removed(tmp_path):
+    marker, viewer = (201, 3, 197), (3, 157, 203)
+    s0, s1, s2 = _flat(), _flat(), _flat()
+    s0[0:2, 0:5] = (0, 0, 0)                       # 10 black
+    s1[0:2, 0:3] = marker                          # 6 painted ...
+    s1[0:2, 3:5] = (0, 0, 0)                       # ... 4 still black
+    s2[0:2, 0:3] = marker
+    s2[2:3, 0:4] = viewer
+    steps = [_q7_step(s, 9) for s in ("S0", "S1", "S2")]
+    exports = [st["export"] for st in steps]
+    images = dict(zip([e["file"] for e in exports], (s0, s1, s2)))
+    row = {"id": 5, "class": {"state": "value", "value": "ElevationMarker"},
+           "category_name": {"state": "value", "value": "Elevations"},
+           "production_placement": {"state": "value",
+                                     "value": {"pass": "model", "basis": "no_owner_view"}}}
+    _round2_probe(tmp_path, {"q7": {"split_views": [], "marker_views": [
+        {"view_id": 9, "colours": {"marker": list(marker), "viewer": list(viewer)},
+         "elevation_markers": {"shown_in_view": [row]}, "viewers": {"rows": []},
+         "steps": steps}]}}, exports=exports, images=images)
+    rec = _run(tmp_path)
+    view = rec["q7_markers"][0]
+    assert view["markers_by"] == {"ElevationMarker|Elevations|no_owner_view": 1}
+    assert [(r["step"], r["marker_colour_px"], r["viewer_colour_px"], r["black_px"])
+            for r in view["steps"]] == [("S0", 0, 0, 10), ("S1", 6, 0, 4), ("S2", 6, 4, 0)]
+    assert view["black_removed_by_marker_paint"] == 6

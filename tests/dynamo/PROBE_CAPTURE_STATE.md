@@ -6,8 +6,13 @@ evidence, **before** any capture code changes. The offline half is
 
 - **Round 1** (probe `2026-10-01.1`): Q1–Q5, run in Revit on 2026-10-01.
 - **Round 2** (probe `2026-10-02.1`, analyzer `1.1.0`): Q1b, Q3b, Q5b and Q6,
-  described under [Round 2](#round-2-probe-2026-10-021). Round 2 is the
-  default question set.
+  described under [Round 2](#round-2-probe-2026-10-021).
+- **Round 3** (probe `2026-10-02.5`, analyzer `1.3.0`): Q7, described under
+  [Round 3](#round-3-probe-2026-10-025). Round 3 is the default question set.
+
+**Round 3 is UNVERIFIED in Revit.** Only its pure parts are tested offline
+(the question set, the IN[9] keys, and the order in which split regions are
+removed); every Revit call in it is the question.
 
 **Round 2 is UNVERIFIED in Revit.** It has been smoke-run only against a
 throwaway fake of the Revit API, including the production code Q3b and Q6
@@ -396,6 +401,34 @@ when the imported production lacks `tick_line_style`,
 `production_imports` records `module_files` and `missing_for_q6`. IN[9] must
 point at a checkout of PR #226's branch or later.
 
+## Round 3 (probe 2026-10-02.5)
+
+From run 1001-1950 (529 views). Q7 imports production, like Q3b and Q6, so
+`IN[9]` must point at PR #226's branch.
+
+**Q7 split: can a split crop be captured segment by segment?** HIGH ROOF PLAN
+(3300684) is a split crop: its mid ticks did not draw and its two fits
+disagreed on scale (18.75 and 23.00 px residuals). Steps, each in its own
+rolled-back group: `S0` as authored; `R<i>` with every split region except
+`i` removed (`RemoveSplitRegion`, highest index first); `U` with the split
+removed (`RemoveSplit`). Each step reads the crop box, the crop shape and its
+split regions (count, minimum, maximum, offset), and production's crop A,
+then exports. The answer is whether `R<i>` is a plain one-region view of
+segment `i` that the registered capture could take as it is. The restore
+gate includes `split_regions`, so a region left removed refuses every later
+step.
+
+**Q7 markers: does painting the ElevationMarker colour its text?** CABINET
+TYPES (17732958) painted its markers' viewers and left the marker body (the
+`ElevationMarker` element, which carries the text) black. Recorded: every
+`ElevationMarker` in the document that has a bbox in the view or is returned
+by its collector, and the view's `OST_Viewers` elements, each with its class,
+category, OwnerViewId, collector membership, hidden state and production's
+pass placement. Steps: `S0` as authored; `S1` the markers painted
+`(201, 3, 197)` with production's flat override; `S2` the markers and the
+viewers, the viewers `(3, 157, 203)`. The analyzer counts each colour and
+black per step; `black_removed_by_marker_paint` is S0 black minus S1 black.
+
 ## How to run
 
 1. Open the model with the views below. Dynamo 3.x, CPython3 Python node.
@@ -418,7 +451,7 @@ point at a checkout of PR #226's branch or later.
 | `IN[5]` | Q4 elevation id | `2888380` | only if different |
 | `IN[6]` | Q5 view ids, a list | `[13663964, 11999340]` | only if different |
 | `IN[7]` | export pixel width | `2000` | optional |
-| `IN[8]` | questions: `"round2"`, `"round1"`, `"all"`, or a comma list of `q1_q2,q3,q4,q5,q1b,q3b,q5b,q6` | `"round2"` (empty means round 2) | optional |
+| `IN[8]` | questions: `"round3"`, `"round2"`, `"round1"`, `"all"`, or a comma list of `q1_q2,q3,q4,q5,q1b,q3b,q5b,q6,q7` | `"round3"` (empty means round 3) | optional |
 | `IN[9]` | round-2 options: a Dictionary or a JSON object (keys below). An unknown key is refused. | `{}` | `repo_root` |
 
    `IN[9]` keys:
@@ -431,6 +464,8 @@ point at a checkout of PR #226's branch or later.
    | `q5b_views` | Q5b dependent views | `[13663964, 11999340]` |
    | `q6_views` | Q6 views | `[5823803, 9948, 11999340]` |
    | `q6_extra_views` | more Q6 views, appended | `[]` |
+   | `q7_split_views` | Q7 split-crop views | `[3300684]` (HIGH ROOF PLAN) |
+   | `q7_marker_views` | Q7 elevation-marker views | `[17732958]` (CABINET TYPES) |
 
    The simplest `IN[9]` is just the repository folder as a string, which is
    taken as `repo_root` once it is confirmed to hold `vop_interwoven`. For

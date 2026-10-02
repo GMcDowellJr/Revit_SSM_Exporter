@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.capture_state.analysis.v1"
-TOOL_VERSION = "1.2.1"
+TOOL_VERSION = "1.3.0"
 ANALYSIS_NAME = "probe_capture_state_analysis.json"
 PROBE_GLOB = "probe_capture_state_*.json"
 
@@ -657,6 +657,89 @@ def q6_authored_rows(report, pixels):
 
 # --- the run -------------------------------------------------------------------
 
+# --- Q7 (round 3): split crops and the elevation-marker body -------------------
+
+def _export_file(step):
+    export = (step or {}).get("export") or {}
+    return export.get("file") if export.get("state") == "value" else None
+
+
+def q7_split_rows(report, images_by_file):
+    """Per split view, one row per step: the split-region count and the
+    crop as read at that step, production's crop A, and the exported size."""
+    out = []
+    for view in ((report.get("questions") or {}).get("q7") or {}).get("split_views") or []:
+        rows = []
+        for step in view.get("steps") or []:
+            common = step.get("common") or {}
+            shape = _value(common.get("crop_region_shape")) or {}
+            img = images_by_file.get(_export_file(step)) or {}
+            writes = step.get("writes") or {}
+            rows.append({
+                "step": step.get("step"), "refused": step.get("refused"),
+                "refused_reason": step.get("refused_reason"),
+                "split_regions": _value(shape.get("NumberOfSplitRegions")),
+                "crop_box_extent_ft": _extent(_value(common.get("crop_box"))),
+                "production_crop_uv": _value(step.get("production_crop_uv")),
+                "exported_px": img.get("size_px"),
+                "writes_took_effect": dict((k, w.get("took_effect"))
+                                           for k, w in writes.items()
+                                           if isinstance(w, dict))})
+        out.append({"view_id": view.get("view_id"), "refused": view.get("refused"),
+                    "split_region_count": _value(view.get("split_region_count")),
+                    "not_split": view.get("not_split"), "rows": rows})
+    return out
+
+
+def q7_marker_rows(report, pixels):
+    """Per marker view: the markers it shows (by class, category and
+    production's placement), then per step the pixels exactly the marker
+    colour, the viewer colour, and black. Black that S1 leaves where S0 had
+    it is ink the marker override does not reach."""
+    out = []
+    for view in ((report.get("questions") or {}).get("q7") or {}).get("marker_views") or []:
+        colours = view.get("colours") or {}
+        marker = tuple(colours.get("marker") or ())
+        viewer = tuple(colours.get("viewer") or ())
+        shown = (view.get("elevation_markers") or {}).get("shown_in_view") or []
+        viewers = (view.get("viewers") or {}).get("rows") or []
+
+        def _summary(rows):
+            by = {}
+            for r in rows:
+                key = "{0}|{1}|{2}".format(
+                    _value(r.get("class")), _value(r.get("category_name")),
+                    (_value(r.get("production_placement")) or {}).get("basis"))
+                by[key] = by.get(key, 0) + 1
+            return by
+        steps, black = [], {}
+        for step in view.get("steps") or []:
+            rgb = pixels.get(_export_file(step))
+            row = {"step": step.get("step"), "refused": step.get("refused")}
+            if rgb is not None:
+                packed = pack(rgb)
+                row["marker_colour_px"] = (int((packed == pack_rgb(marker)).sum())
+                                           if marker else None)
+                row["viewer_colour_px"] = (int((packed == pack_rgb(viewer)).sum())
+                                           if viewer else None)
+                row["black_px"] = int((packed == BLACK).sum())
+                black[step.get("step")] = row["black_px"]
+            steps.append(row)
+        out.append({"view_id": view.get("view_id"), "refused": view.get("refused"),
+                    "markers_shown": len(shown), "markers_by": _summary(shown),
+                    "viewers": len(viewers), "viewers_by": _summary(viewers),
+                    "steps": steps,
+                    "black_removed_by_marker_paint": (
+                        black["S0"] - black["S1"] if "S0" in black and "S1" in black
+                        else None)})
+    return out
+
+
+def pack_rgb(rgb):
+    r, g, b = (int(c) for c in rgb)
+    return (r << 16) | (g << 8) | b
+
+
 def find_probe_json(target):
     target = Path(target)
     if target.is_file():
@@ -743,6 +826,8 @@ def analyse(probe_json, probe_dir):
             "q5b": q5b_section(report),
             "q6": q6_rows(report, pixels, images_by_file),
             "q6_authored": q6_authored_rows(report, pixels),
+            "q7_split": q7_split_rows(report, images_by_file),
+            "q7_markers": q7_marker_rows(report, pixels),
             "verify_changed": report.get("verify_changed"),
             "verify_summary": report.get("VERIFY_SUMMARY")}
 
@@ -879,6 +964,27 @@ def _print_round2(record):
         print("Q6b {0:<9} {1} vs {2}: changed px {3}  {4}  writes {5}".format(
             r["view_id"], r["step"], r["twin"], _fmt(r["changed_px"]),
             r.get("reason") or "", r["writes"]))
+    for v in record.get("q7_split") or []:
+        print()
+        print("Q7 split view {0}: {1} region(s){2}".format(
+            v["view_id"], _short(v["split_region_count"]),
+            "  REFUSED: {0}".format(v["refused"]) if v.get("refused") else ""))
+        for r in v["rows"]:
+            print("  {0:<3} regions {1:<4} crop ft {2:<16} px {3:<11} {4} {5}".format(
+                str(r["step"]), _short(r["split_regions"]), _fmt(r["crop_box_extent_ft"]),
+                _fmt(r["exported_px"]), r["writes_took_effect"] or "",
+                r.get("refused_reason") or r.get("refused") or ""))
+    for v in record.get("q7_markers") or []:
+        print()
+        print("Q7 markers view {0}: {1} marker(s) {2}; {3} viewer(s) {4}".format(
+            v["view_id"], v["markers_shown"], v["markers_by"], v["viewers"], v["viewers_by"]))
+        for r in v["steps"]:
+            print("  {0:<3} marker px {1:<8} viewer px {2:<8} black px {3:<8} {4}".format(
+                str(r["step"]), _short(r.get("marker_colour_px")),
+                _short(r.get("viewer_colour_px")), _short(r.get("black_px")),
+                r.get("refused") or ""))
+        print("  black removed by painting the markers (S0 - S1): {0}".format(
+            _short(v["black_removed_by_marker_paint"])))
 
 
 def main(argv=None):
