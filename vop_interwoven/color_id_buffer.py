@@ -3211,6 +3211,11 @@ def read_crop_uv(view, basis, diag=None, view_id=None):
         b = xy_bounds_from_crop_box_all_corners(view, basis, diag=diag, view_id=view_id)
         return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)), None
     except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="bounds", callsite="read_crop_uv",
+                      message="the view's crop could not be read or projected: "
+                              "{0}: {1}".format(type(ex).__name__, ex),
+                      view_id=view_id)
         return None, "{0}: {1}".format(type(ex).__name__, ex)
 
 
@@ -3245,8 +3250,10 @@ def crop_write_fault(crop_write):
 
     * ``crop_write_not_applied`` -- written, and the crop read back is not
       the rectangle written (a scope box: the write commits and the crop
-      stays where it was);
-    * ``crop_write_unverified`` -- written, and the read-back did not read;
+      stays where it was), or CropBoxActive reads back False -- the box is
+      right and the export is uncropped;
+    * ``crop_write_unverified`` -- written, and the box or CropBoxActive did
+      not read back;
     * ``authored_crop_unreadable`` -- an active authored crop that would not
       read, so the export renders a crop nothing recorded;
     * ``authored_crop_changed`` -- not written, and the crop read at the
@@ -3256,9 +3263,10 @@ def crop_write_fault(crop_write):
         return None
     read_back = crop_write.get("read_back") or {}
     if crop_write.get("written"):
-        if read_back.get("matches_request") is False:
+        active = crop_write.get("crop_box_active_read_back", True)
+        if read_back.get("matches_request") is False or active is False:
             return "crop_write_not_applied"
-        if read_back.get("matches_request") is None:
+        if read_back.get("matches_request") is None or active is not True:
             return "crop_write_unverified"
         return None
     if crop_write.get("source") == "authored_unreadable" or read_back.get(
@@ -3303,6 +3311,12 @@ def resolve_crop_a(view, raster, diag=None, view_id=None):
         record["authored_crop_active"] = bool(view.CropBoxActive)
     except Exception as ex:
         record["authored_crop_active_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+        if diag is not None:
+            diag.warn(phase="bounds", callsite="resolve_crop_a",
+                      message="view.CropBoxActive would not read ({0}); crop A is the "
+                              "model crop and is written, then read back".format(
+                                  record["authored_crop_active_error"]),
+                      view_id=view_id)
     if record["authored_crop_active"] is True:
         uv, error = read_crop_uv(view, getattr(raster, "view_basis", None),
                                  diag=diag, view_id=view_id)
@@ -4067,6 +4081,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
         # D: what this pass did with the crop, and the crop READ BACK.
         crop_write = None
+        # Set before the FIRST crop write, so a write that raises half-way
+        # (CropBox taken, CropBoxActive refused) is still restored.
+        crop_write_attempted = False
         _crop_fpp = geom["achieved_fpp_ft"] if geom is not None else None
         try:
             if crop_a_record is not None and not crop_a_record.get("write", True):
@@ -4132,6 +4149,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
                 new_crop_box = _crop_box_from_uv_bounds(view, basis, b.xmin, b.ymin, b.xmax, b.ymax)
                 if new_crop_box is not None:
+                    crop_write_attempted = True
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
                     crop_bounds_xy = (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
@@ -4787,7 +4805,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
         # Only a crop this pass WROTE is put back: restoring one it did not
         # write would be the identity write D exists to avoid.
-        if orig_crop_box is not None and (crop_write or {}).get("written"):
+        if orig_crop_box is not None and crop_write_attempted:
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
                 view.CropBoxActive = orig_crop_box_active
@@ -6009,6 +6027,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                   "read_back": crop_read_back_record(
                                       crop_bounds_xy, read_uv, read_error,
                                       geom.get("achieved_fpp_ft"))}
+                    try:
+                        crop_write["crop_box_active_read_back"] = bool(view.CropBoxActive)
+                    except Exception as ex:
+                        crop_write["crop_box_active_read_back"] = None
+                        crop_write["crop_box_active_read_error"] = "{0}: {1}".format(
+                            type(ex).__name__, ex)
                 elif diag is not None:
                     diag.warn(
                         phase="color_id_buffer",

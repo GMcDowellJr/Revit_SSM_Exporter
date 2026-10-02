@@ -97,7 +97,12 @@ def reencode(sidecar: dict[str, Any]) -> dict[str, Any]:
     for key in SIDECAR_PROBE_ONLY_KEYS:
         out.pop(key, None)
     if isinstance(sidecar.get("frame"), dict):
-        return out                        # C1-C6 shape already
+        # C1-C6 shape already. A frame written after C5 but before D has no
+        # crop_write: rebuilt and marked, as for a pre-C5 one (Codex, PR #226).
+        rebuilt = crop_write(sidecar["frame"])
+        if rebuilt is not None and "crop_write" not in sidecar["frame"]:
+            out["frame"] = dict(sidecar["frame"], crop_write=rebuilt)
+        return out
     out["frame"] = reencode_frame(sidecar)
     for key in ("resolution", "export_frame", "bounds_xy"):
         out.pop(key, None)
