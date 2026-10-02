@@ -1046,7 +1046,17 @@ def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=
                     doc, view, curve, diag=diag, view_id=view_id)
             if thinnest is not None:
                 curve.LineStyle = thinnest
-            entry["line_style_applied"] = thinnest is not None
+                # READ BACK (Codex, PR #226): the chosen style is checked for
+                # visibility, so a tick that kept its default -- which may be
+                # the hidden one -- must not pass on the chosen style's word.
+                applied_id = _element_id_int(getattr(curve.LineStyle, "Id", None))
+                entry["line_style_applied"] = applied_id == _element_id_int(thinnest.Id)
+                if not entry["line_style_applied"]:
+                    entry["line_style_error"] = (
+                        "LineStyle reads {0} after setting {1}".format(
+                            applied_id, _element_id_int(thinnest.Id)))
+            else:
+                entry["line_style_applied"] = False
         except Exception as ex:
             entry["line_style_applied"] = False
             entry["line_style_error"] = "{0}: {1}".format(type(ex).__name__, ex)
@@ -1054,6 +1064,14 @@ def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=
                 "state": "unavailable",
                 "reason": "the line style could not be read or set: " + entry[
                     "line_style_error"]})
+        if thinnest is not None and not entry["line_style_applied"]:
+            record.setdefault("line_style_not_applied", []).append(entry.get("id"))
+            if diag is not None:
+                diag.warn(phase="color_id_buffer", callsite="tick_line_style_apply",
+                          message="tick {0}: the chosen line style did not take ({1}); "
+                                  "it may draw in a style the view hides".format(
+                                      entry.get("key"), entry.get("line_style_error")),
+                          view_id=view_id, elem_id=entry.get("id"))
         try:
             geometry_curve = curve.GeometryCurve
             ends = [tuple(view_basis.transform_to_view_uv(

@@ -668,3 +668,56 @@ def test_control_uncapped_ticks_are_unchanged(tmp_path):
     _fpp, arms = _arm_px(out)
     assert out["registration"]["marks"]["layout"]["fpp_ft"] == frame["achieved_fpp_ft"]
     assert min(arms) >= registration.MARK_MIN_ARM_PX - 1e-6, arms
+
+
+# --- Codex, PR #226: a tick that did not TAKE the chosen style ----------------
+#
+# The chosen style's visibility is what the capture checks, so a tick that kept
+# its default -- possibly the hidden one -- passed on the chosen style's word.
+# Each tick's style is now read back after the assignment. Mutation: dropping
+# the read-back (applied = the assignment did not raise) turns "ignored" red;
+# dropping the fault turns both red.
+
+def _one_tick_keeps_its_default(monkeypatch, mode):
+    real = world._Create.NewDetailCurve
+
+    def _new(self, view, line):
+        elem = real(self, view, line)
+        if self.calls != 1:
+            return elem
+        default = elem.LineStyle
+
+        def _set(obj, value):
+            if mode == "raises":
+                raise RuntimeError("LineStyle refused (fake)")
+        elem.__class__ = type("_StickyCurve", (type(elem),),
+                              {"LineStyle": property(lambda obj: default, _set)})
+        return elem
+    monkeypatch.setattr(world._Create, "NewDetailCurve", _new)
+
+
+def _style_faults(path):
+    return [f for f in _sidecar(path)["capture_integrity"]["capture_faults"]
+            if f.get("fault") == "registration_mark_style_not_applied"]
+
+
+@pytest.mark.parametrize("mode", ["ignored", "raises"])
+def test_a_tick_that_keeps_its_default_style_is_a_fault_in_the_FILE(
+        tmp_path, monkeypatch, mode):
+    _one_tick_keeps_its_default(monkeypatch, mode)
+    out, _view, _doc, _e, diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        faults = _style_faults(path)
+        assert len(faults) == 1, path
+    created = out["registration"]["marks"]["created"]
+    assert [m["line_style_applied"] for m in created].count(False) == 1
+    assert out["registration_success"] is False
+    assert any(w.get("callsite") == "tick_line_style_apply" for w in diag.warnings)
+
+
+def test_control_every_tick_takes_the_style_and_nothing_faults(tmp_path):
+    out, _view, _doc, _e, diag = _run(tmp_path)
+    assert _style_faults(out["sidecar_path"]) == []
+    assert all(m["line_style_applied"] is True
+               for m in out["registration"]["marks"]["created"])
+    assert not any(w.get("callsite") == "tick_line_style_apply" for w in diag.warnings)

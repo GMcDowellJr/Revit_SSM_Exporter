@@ -596,6 +596,14 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             _fault("registration_marks_may_not_draw",
                    "the view hides OST_Lines, or its state could not be read "
                    "({0})".format(marks.get("lines_category_hidden_in_view")))
+        # A tick that did not TAKE the chosen style (read back per tick) is
+        # not covered by the chosen style's visibility below (Codex, PR #226).
+        if marks.get("line_style_not_applied"):
+            _fault("registration_mark_style_not_applied",
+                   "{0} tick(s) do not carry the chosen line style ({1}): {2}".format(
+                       len(marks["line_style_not_applied"]),
+                       (marks.get("line_style") or {}).get("name"),
+                       marks["line_style_not_applied"][:12]))
         # The parent is not enough: a view can hide the ticks' own line-style
         # subcategory with OST_Lines visible (probe Q6: <Thin Lines> hidden by
         # the template, 31 views without a tick and no fault).
