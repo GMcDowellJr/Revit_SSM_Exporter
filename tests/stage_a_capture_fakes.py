@@ -458,6 +458,15 @@ class FakeDoc(object):
             f.write(b"FAKE_TIFF")
 
 
+class FakeLinePatternElement(object):
+    """LinePatternElement.GetSolidPatternId: the built-in Solid pattern."""
+    SOLID_ID = -3000010
+
+    @staticmethod
+    def GetSolidPatternId():
+        return FakeElementId(FakeLinePatternElement.SOLID_ID)
+
+
 class FakeDisplayModel(object):
     def __init__(self, smooth_edges, show_shadows):
         self.SmoothEdges = smooth_edges
@@ -622,6 +631,7 @@ def install_fake_revit_db():
     fake_db.BuiltInCategory = FakeBuiltInCategory
     fake_db.GraphicsStyleType = types.SimpleNamespace(Projection="Projection",
                                                       Cut="Cut")
+    fake_db.LinePatternElement = FakeLinePatternElement
     fake_db.ImageFileType = FakeImageFileType
     fake_db.ImageExportOptions = FakeImageExportOptions
     fake_db.ExportRange = FakeExportRange

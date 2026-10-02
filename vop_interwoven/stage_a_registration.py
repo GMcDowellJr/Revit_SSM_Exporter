@@ -723,6 +723,18 @@ def _thinnest_line_style(doc, curve, view=None):
                                        "name": getattr(style, "Name", None),
                                        "projection_line_weight": weight}
         if view is not None:
+            # SOLID ONLY (Q6 run 20261001T183711): on 5823803 A picked
+            # <Overhead>, a dashed style, and its ticks changed 92 px where the
+            # solid temporary subcategory changed 141. A dashed tick is several
+            # components, each read as a tick by the fit.
+            solid, solid_error = _style_pattern_is_solid(style)
+            if solid is not True:
+                entry = {"id": style_int, "name": getattr(style, "Name", None),
+                         "projection_line_weight": weight}
+                if solid_error is not None:
+                    entry["error"] = solid_error
+                record.setdefault("not_solid", []).append(entry)
+                continue
             hidden, error = _style_subcategory_hidden(view, style)
             if hidden is not False:
                 entry = {"id": style_int, "name": getattr(style, "Name", None),
@@ -739,15 +751,34 @@ def _thinnest_line_style(doc, curve, view=None):
         record["state"] = "unavailable"
         record["reason"] = (
             "no line style of the detail curve had a readable weight"
-            if not (record["hidden"] or record["hidden_unreadable"]) else
-            "every line style with a readable weight is hidden in this view, or "
-            "its hidden state would not read")
+            if not (record["hidden"] or record["hidden_unreadable"]
+                    or record.get("not_solid")) else
+            "every line style with a readable weight is hidden in this view, is "
+            "not solid, or its hidden state or pattern would not read")
         return None, record
     weight, _pref, style_int, style = min(candidates, key=lambda c: c[:3])
     record.update({"id": style_int, "name": getattr(style, "Name", None),
                    "projection_line_weight": weight,
                    "candidates": len(candidates)})
     return style, record
+
+
+def _solid_line_pattern_id():
+    """The id of Revit's built-in Solid line pattern, as an int."""
+    from Autodesk.Revit.DB import LinePatternElement
+    return _element_id_int(LinePatternElement.GetSolidPatternId())
+
+
+def _style_pattern_is_solid(style):
+    """``(solid, error)``: whether the line style's projection pattern is
+    Revit's Solid pattern, three-valued."""
+    try:
+        from Autodesk.Revit.DB import GraphicsStyleType
+        pattern = _element_id_int(style.GraphicsStyleCategory.GetLinePatternId(
+            GraphicsStyleType.Projection))
+        return pattern == _solid_line_pattern_id(), None
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
 
 
 def _style_subcategory_hidden(view, style):
@@ -790,6 +821,9 @@ def _temporary_tick_style(doc, view):
         sub = existing if existing is not None else categories.NewSubcategory(
             lines, TEMPORARY_TICK_SUBCATEGORY)
         sub.SetLineWeight(1, GraphicsStyleType.Projection)
+        from Autodesk.Revit.DB import LinePatternElement
+        sub.SetLinePatternId(LinePatternElement.GetSolidPatternId(),
+                             GraphicsStyleType.Projection)
         style = sub.GetGraphicsStyle(GraphicsStyleType.Projection)
         record.update({
             "id": _element_id_int(getattr(style, "Id", None)),
@@ -797,6 +831,7 @@ def _temporary_tick_style(doc, view):
             "subcategory_id": _element_id_int(getattr(sub, "Id", None)),
             "projection_line_weight": int(sub.GetLineWeight(
                 GraphicsStyleType.Projection)),
+            "projection_pattern_solid": _style_pattern_is_solid(style)[0],
         })
     except Exception as ex:
         return None, {"state": "unavailable",
@@ -810,9 +845,9 @@ def tick_line_style(doc, view, curve):
     """``(style, record)``: the style every tick is drawn in, and WHICH PATH
     chose it -- ``record["path"]``:
 
-    * ``"visible_existing"`` -- the thinnest of the curve's own styles whose
-      subcategory the view does not hide;
-    * ``"temporary"`` -- none is visible, so a weight-1 subcategory made for
+    * ``"visible_existing"`` -- the thinnest of the curve's own SOLID styles
+      whose subcategory the view does not hide;
+    * ``"temporary"`` -- none is, so a weight-1 solid subcategory made for
       the capture (rolled back with it);
     * ``"none"`` -- neither; ``style`` is None and the ticks keep the default.
 

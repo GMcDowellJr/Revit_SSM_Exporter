@@ -47,6 +47,7 @@ class _Curve:
 def _db():
     fake = types.ModuleType("Autodesk.Revit.DB")
     fake.GraphicsStyleType = types.SimpleNamespace(Projection="Projection")
+    fake.LinePatternElement = types.SimpleNamespace(GetSolidPatternId=lambda: _Id(SOLID))
     saved = sys.modules.get("Autodesk.Revit.DB")
     sys.modules["Autodesk.Revit.DB"] = fake
     try:
@@ -106,13 +107,18 @@ class _View:
         return cat_id.IntegerValue in self._hidden
 
 
-class _SubStyle(_Style):
-    """A style whose GraphicsStyleCategory has its OWN id (sid + 100)."""
+SOLID, DASH = -3000010, 7900
 
-    def __init__(self, sid, name, weight):
+
+class _SubStyle(_Style):
+    """A style whose GraphicsStyleCategory has its OWN id (sid + 100), and a
+    projection line pattern (solid unless ``pattern`` says otherwise)."""
+
+    def __init__(self, sid, name, weight, pattern=SOLID):
         _Style.__init__(self, sid, name, weight)
         self.GraphicsStyleCategory = types.SimpleNamespace(
-            Id=_Id(sid + 100), GetLineWeight=self.GetLineWeight)
+            Id=_Id(sid + 100), GetLineWeight=self.GetLineWeight,
+            GetLinePatternId=lambda _kind: _Id(pattern))
 
 
 def _pick_in(view, styles, current):
@@ -147,3 +153,18 @@ def test_every_style_hidden_is_unavailable_and_says_so():
     style, rec = _pick_in(_View(hidden={101, 102}), [lines, thin], current=lines)
     assert style is None and rec["state"] == "unavailable"
     assert "hidden" in rec["reason"]
+
+
+
+def test_a_dashed_style_is_passed_over_for_a_solid_one():
+    """Q6 run 20261001T183711: A picked <Overhead> (dashed, weight 1) on
+    5823803; its ticks changed 92 px where the solid temporary one changed
+    141. Control: the same weight, solid, is chosen."""
+    lines = _SubStyle(1, "Lines", 3)
+    overhead = _SubStyle(2, "<Overhead>", 1, pattern=DASH)
+    style, rec = _pick_in(_View(), [lines, overhead], current=lines)
+    assert style is lines
+    assert [e["name"] for e in rec["not_solid"]] == ["<Overhead>"]
+    solid = _SubStyle(2, "<Overhead>", 1)
+    style, _rec = _pick_in(_View(), [lines, solid], current=lines)
+    assert style is solid

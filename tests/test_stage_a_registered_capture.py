@@ -451,7 +451,9 @@ def _may_not_draw(path):
 def test_q6_a_hidden_thin_lines_subcategory_is_passed_over_in_the_FILE(tmp_path):
     out, view, _d, _e, _diag = _run(tmp_path, view_setup=_hide(world.THIN_LINES_SUBCAT_ID))
     style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    # Not <Overhead>: also weight 1, but dashed (Q6 run 20261001T183711).
     assert style["path"] == "visible_existing" and style["name"] == "Lines"
+    assert [e["name"] for e in style["not_solid"]] == ["<Overhead>"]
     assert [h["name"] for h in style["hidden"]] == ["<Thin Lines>"]
     assert _may_not_draw(out["sidecar_path"]) == []
     assert out["registration"]["success"] is True
@@ -463,6 +465,9 @@ def test_q6_every_existing_style_hidden_makes_a_temporary_subcategory(tmp_path):
     style = _sidecar(out["annotation_sidecar_path"])["registration_marks"]["line_style"]
     assert style["path"] == "temporary" and style["created"] is True
     assert style["projection_line_weight"] == 1
+    # A new subcategory is not solid until set (the fake's, like Revit's
+    # default, is not); the ticks must not be dashed.
+    assert style["projection_pattern_solid"] is True
     assert style["subcategory_id"] == world.TEMP_SUBCAT_ID
     assert style["subcategory_hidden_in_view"] is False
     assert _may_not_draw(out["sidecar_path"]) == []

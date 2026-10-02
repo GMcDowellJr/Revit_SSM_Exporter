@@ -63,8 +63,14 @@ class _Line(object):
 # view can hide the subcategory while OST_Lines stays visible (capture-state
 # probe Q6). (name, style id, subcategory id, projection weight).
 LINE_STYLES = (("Lines", 7001, 7101, 3), ("<Thin Lines>", 7002, 7102, 1),
-               ("<Wide Lines>", 7003, 7103, 5))
+               ("<Wide Lines>", 7003, 7103, 5), ("<Overhead>", 7004, 7104, 1))
 THIN_LINES_SUBCAT_ID = 7102
+# <Overhead> is DASHED, as Revit's is (Q6 run 20261001T183711): weight 1 like
+# <Thin Lines>, so only the pattern keeps it out of the choice.
+OVERHEAD_SUBCAT_ID = 7104
+SOLID_PATTERN_ID = -3000010
+DASH_PATTERN_ID = 7900
+DASHED = ("<Overhead>",)
 TEMP_SUBCAT_ID = 7199
 
 
@@ -74,10 +80,18 @@ class _Subcategory(object):
         self.Name = name
         self.Id = FakeElementId(sub_id)
         self._weight = weight
+        self._pattern = DASH_PATTERN_ID if name in DASHED else SOLID_PATTERN_ID
         self._style = _LineStyle(name, style_id, self)
 
     def GetLineWeight(self, _kind):
         return self._weight
+
+    def GetLinePatternId(self, _kind):
+        from tests.stage_a_capture_fakes import FakeElementId
+        return FakeElementId(self._pattern)
+
+    def SetLinePatternId(self, pattern_id, _kind):
+        self._pattern = int(pattern_id.IntegerValue)
 
     def SetLineWeight(self, weight, _kind):
         self._weight = int(weight)
@@ -123,6 +137,7 @@ class _Categories(list):
         if self.refuse_new:
             raise RuntimeError("NewSubcategory refused (fake)")
         sub = _Subcategory(name, TEMP_SUBCAT_ID, TEMP_SUBCAT_ID + 1000, 3)
+        sub._pattern = DASH_PATTERN_ID  # a new subcategory is NOT solid until set
         subs = dict(self._doc._fake_subcategories)
         subs[name] = sub
         self._doc._fake_subcategories = subs
