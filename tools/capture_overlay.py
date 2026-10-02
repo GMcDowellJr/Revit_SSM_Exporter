@@ -111,6 +111,7 @@ CLASS_DWG = "DWG"
 CLASS_LINK = "LINK"
 CLASS_ANNOTATION = "ANNOTATION"
 CLASS_DATUM = "DATUM"
+CLASS_VIEW_REFERENCE = "VIEW_REFERENCE"
 CLASS_UNKNOWN_SOURCE = "UNKNOWN_SOURCE"
 CLASS_UNKNOWN_BASIS = "UNKNOWN_BASIS"
 
@@ -120,6 +121,7 @@ CLASS_COLORS = {
     CLASS_LINK: (0, 158, 62),
     CLASS_ANNOTATION: (198, 0, 196),
     CLASS_DATUM: (0, 172, 204),
+    CLASS_VIEW_REFERENCE: (230, 160, 0),
     CLASS_UNKNOWN_SOURCE: (214, 0, 0),
     CLASS_UNKNOWN_BASIS: (214, 0, 0),
 }
@@ -132,6 +134,7 @@ FILTER_NAMES = {
     "link": CLASS_LINK,
     "annotation": CLASS_ANNOTATION,
     "datum": CLASS_DATUM,
+    "view_reference": CLASS_VIEW_REFERENCE,
     "unknown": CLASS_UNKNOWN_SOURCE,
 }
 
@@ -246,8 +249,9 @@ def _annotation_class_for(entry: dict[str, Any]) -> tuple[str, str | None]:
     """ANNOTATION vs DATUM for one ``annotation_bbox_map`` entry.
 
     ``membership_basis`` is what put the element in the annotation pass:
-    ``owner_view`` (view-specific, no model extent) or ``datum_category``
-    (a grid or level, which does have one). A missing basis is its own
+    ``owner_view`` (view-specific, no model extent), ``datum_category``
+    (a grid or level, which does have one) or ``view_reference_category``
+    (an elevation/section/callout marker, which does too). A missing basis is its own
     class -- it is exactly the case color_id_buffer.py refuses to claim
     either way when deciding ``bbox_3d``.
     """
@@ -256,6 +260,8 @@ def _annotation_class_for(entry: dict[str, Any]) -> tuple[str, str | None]:
         return (CLASS_ANNOTATION, None)
     if basis == "datum_category":
         return (CLASS_DATUM, None)
+    if basis == "view_reference_category":
+        return (CLASS_VIEW_REFERENCE, None)
     return (CLASS_UNKNOWN_BASIS,
             "membership_basis is {0!r}, so this element cannot be told apart "
             "from a datum".format(basis))

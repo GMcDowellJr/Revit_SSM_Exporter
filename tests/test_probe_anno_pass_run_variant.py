@@ -358,7 +358,8 @@ def _run(tmp_path, monkeypatch, variant, rollback_restores=("view", "doc")):
             raster=raster, geometry_out=geom)
         assert model_out["success"], model_out.get("failure_reason")
         model_members, anno_members, unresolved, _basis = (
-            split_stage_a_pass_membership(elements, capture_view_id_int=VIEW_ID))
+            split_stage_a_pass_membership(elements, capture_view_id_int=VIEW_ID,
+                                          capture_view_name=view.Name))
         candidates = [{"id": 1001, "rect": (25.0, 18.0, 26.0, 19.0),
                        "category": "Walls"},
                       {"id": 1002, "rect": (70.0, 52.0, 71.0, 53.0),

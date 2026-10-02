@@ -148,6 +148,12 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   `view_specific_import_state()` is a recorded diagnostic only. The model pass
   hides the view's own imports and fails the capture
   (`view_specific_import_not_suppressed`) if one could draw unpainted.
+- **View markers are annotation** (2026-10-02): elevation, section and
+  callout markers and reference viewers are ownerless, so ownership put them in
+  the model pass and they came out white. They join the annotation pass on
+  category (`view_reference_category`), as grids and levels do
+  (`datum_category`); the view's own crop-region element, named like the view,
+  stays in the model pass (`own_view_reference`).
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
   unpainted and counted per category under `not_painted`.

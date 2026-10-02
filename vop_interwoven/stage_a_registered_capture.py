@@ -505,7 +505,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             i for i in (_element_id_int(getattr(e, "Id", None)) for e in collected)
             if i is not None)
         model_members, _anno, unresolved, _basis = split_stage_a_pass_membership(
-            collected, capture_view_id_int=view_id, diag=diag)
+            collected, capture_view_id_int=view_id, diag=diag,
+            capture_view_name=getattr(view, "Name", None))
         model_member_ids = [i for i in (_element_id_int(getattr(e, "Id", None))
                                         for e in model_members) if i is not None]
         record["membership"] = {"model": len(model_member_ids),
