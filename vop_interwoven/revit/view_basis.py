@@ -338,7 +338,8 @@ def resolve_view_w_volume(view, vb, cfg, diag=None):
     return (w0, wmax, meta)
 
 
-def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
+def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0, diag=None,
+                                        view_id=None):
     """Compute XY bounds from view crop box (all 8 corners method).
 
     Notes on API correctness:
@@ -353,6 +354,13 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
 
     Returns:
         Bounds2D in view-local XY coordinates
+
+    Raises:
+        AttributeError when the view has no readable CropBox (or a corner will
+        not project), recorded in ``diag`` first. It used to return a made-up
+        +/-100 ft rectangle instead, indistinguishable from a measured crop to
+        every caller; both callers here already fall back to extents on a
+        raise, and say so.
     """
     from ..core.math_utils import Bounds2D
 
@@ -401,9 +409,18 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
             max(v_coords) + buffer,
         )
 
-    except AttributeError:
-        # Fallback for views without crop box
-        return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+    except AttributeError as e:
+        # No invented rectangle: a crop that cannot be read is unavailable.
+        if diag is not None:
+            diag.error(
+                phase="bounds",
+                callsite="xy_bounds_from_crop_box_all_corners",
+                message="the view's crop box could not be read or projected; no "
+                        "crop bounds are returned: {0}".format(e),
+                view_id=view_id,
+                exc=e,
+            )
+        raise
 
 
 def crop_box_from_uv_bounds(view, basis, min_u, min_v, max_u, max_v):
@@ -488,7 +505,8 @@ def xy_bounds_effective(doc, view, basis, buffer=0.0, diag=None):
 
     if crop_active:
         try:
-            return xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer)
+            return xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer,
+                                                       diag=diag)
         except Exception as e:
             if diag is not None:
                 diag.error(
@@ -911,7 +929,8 @@ def resolve_view_bounds(view, diag=None, policy=None):
                         "policy must provide doc and basis when bounds_crop_fn is not supplied"
                     )
                 # Base bounds drives raster sizing (may include buffer_ft).
-                base_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer_ft)
+                base_bounds = xy_bounds_from_crop_box_all_corners(
+                    view, basis, buffer=buffer_ft, diag=diag, view_id=view_id)
 
                 # Model clip bounds must be the true crop (NO buffer), so model ink does not extend past crop.
                 model_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0)

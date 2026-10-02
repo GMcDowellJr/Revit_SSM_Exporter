@@ -278,7 +278,8 @@ def test_the_annotation_pass_paints_view_owned_elements_and_datums(tmp_path):
     md = anno_result["metadata"]
     painted = set(int(k) for k in md["color_assignment_map"])
     assert painted == {2001, 2002, 2003, 3001, 3002}
-    assert md["membership"]["membership_rule"] == "OwnerViewId+datum_category"
+    assert md["membership"]["membership_rule"] == (
+        "OwnerViewId+datum_category+view_reference_category")
     assert md["membership"]["annotation_count"] == 5
     assert md["membership"]["model_count"] == 3
     assert md["membership"]["unresolved_count"] == 0

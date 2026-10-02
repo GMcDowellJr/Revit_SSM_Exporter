@@ -1933,8 +1933,8 @@ _INVALID_ELEMENT_ID_INT = -1
 # the count is only ever written by a scan that ran.
 #
 # STILL ENUMERATED, NOT DERIVED. _EXCLUDED_BIC_NAMES_GLOBAL also holds
-# section heads, elevation marks, callout heads, viewers, cameras and the
-# sun path. Those are not datums and Greg has not named them.
+# cameras, the sun path and the section box: not datums, not view markers,
+# and not named.
 
 STAGE_A_DATUM_BIC_NAMES = (
     "OST_Grids",
@@ -1942,6 +1942,35 @@ STAGE_A_DATUM_BIC_NAMES = (
     "OST_GridHeads",
     "OST_LevelHeads",
 )
+
+# VIEW MARKERS (Greg, 2026-10-02): elevation, section and callout markers, and
+# reference viewers. Like a datum they are ownerless -- they belong to the
+# view they REFER to, not the view they are drawn in -- so ownership placed
+# them in the model pass, where nothing paints them and the annotation pass
+# suppresses them to white. They are annotation, and join the annotation
+# pass on category, under their own basis ("view_reference_category") so a
+# record says which rule placed them.
+#
+# THE CAPTURE VIEW'S OWN MARKER IS NOT ONE OF THEM. A view's crop-region
+# element is an OST_Viewers element named like the view, and a section or
+# elevation view's own marker is named like it too; neither is a marker drawn
+# IN the view. Each is left in the model pass (basis "own_view_reference")
+# and counted. Heads and marks that are not separate elements match nothing
+# here, measured per category exactly as the datum heads are.
+STAGE_A_VIEW_REFERENCE_BIC_NAMES = (
+    "OST_Viewers",
+    "OST_ElevationMarks",
+    "OST_SectionHeads",
+    "OST_CalloutHeads",
+    "OST_ReferenceViewer",
+)
+
+
+def stage_a_view_reference_category_ids(names_out=None):
+    """(ids, error) for STAGE_A_VIEW_REFERENCE_BIC_NAMES, resolved from the
+    live enum -- stage_a_datum_category_ids' contract, for the view markers."""
+    return _resolve_stage_a_category_ids(
+        STAGE_A_VIEW_REFERENCE_BIC_NAMES, "view-marker", names_out)
 
 
 def stage_a_datum_category_ids(names_out=None):
@@ -1958,6 +1987,11 @@ def stage_a_datum_category_ids(names_out=None):
     disagree with the ids actually in use, and the per-category counts these
     label are the evidence for whether heads are separate elements at all.
     """
+    return _resolve_stage_a_category_ids(STAGE_A_DATUM_BIC_NAMES, "datum", names_out)
+
+
+def _resolve_stage_a_category_ids(bic_names, label, names_out=None):
+    """(ids, error) for ``bic_names``; see stage_a_datum_category_ids."""
     try:
         from Autodesk.Revit.DB import BuiltInCategory
     except Exception as ex:
@@ -1966,7 +2000,7 @@ def stage_a_datum_category_ids(names_out=None):
 
     ids = set()
     missing = []
-    for name in STAGE_A_DATUM_BIC_NAMES:
+    for name in bic_names:
         bic = getattr(BuiltInCategory, name, None)
         if bic is None:
             missing.append(name)
@@ -1980,8 +2014,8 @@ def stage_a_datum_category_ids(names_out=None):
         if names_out is not None:
             names_out[cat_id] = name
     if missing:
-        return ids, "datum categories not resolvable on this host: {0}".format(
-            ", ".join(missing))
+        return ids, "{0} categories not resolvable on this host: {1}".format(
+            label, ", ".join(missing))
     return ids, None
 
 
@@ -2002,7 +2036,8 @@ def _invalid_element_id_int():
         return _INVALID_ELEMENT_ID_INT
 
 
-def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=None):
+def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=None,
+                            view_reference_category_ids=None, capture_view_name=None):
     """Which Stage A capture pass ``elem`` belongs to.
 
     Ownership decides everything it can answer; a DATUM decides on category
@@ -2012,7 +2047,16 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
       ``owner_view``     -- OwnerViewId is a real view; annotation pass
       ``datum_category`` -- ownerless, but in ``datum_category_ids``;
                             annotation pass
-      ``no_owner_view``  -- ownerless and not a datum; model pass
+      ``view_reference_category`` -- ownerless, a view marker in
+                            ``view_reference_category_ids``; annotation pass
+      ``own_view_reference`` -- such a marker NAMED like the capture view
+                            (``capture_view_name``): its own crop region or
+                            marker, not one drawn in it; model pass
+      ``view_reference_name_unreadable`` -- such a marker whose Name would
+                            not read, with a capture view name to compare:
+                            it may be the view's own, so it is not painted;
+                            model pass, ``reason`` says why
+      ``no_owner_view``  -- ownerless and none of the above; model pass
 
     Returns a three-valued record. ``state`` is ``"value"`` when OwnerViewId
     was read, ``"unavailable"`` when it was not; ``pass`` is
@@ -2102,6 +2146,29 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
             record["pass"] = STAGE_A_PASS_ANNOTATION
             record["basis"] = "datum_category"
             return record
+        if (view_reference_category_ids and cat_id is not None
+                and cat_id in view_reference_category_ids):
+            name = None
+            try:
+                name = elem.Name
+            except Exception as ex:
+                record["reason"] = "Name read failed ({0}: {1})".format(
+                    type(ex).__name__, ex)
+                if capture_view_name is not None:
+                    # Codex, PR #226: an unreadable name may be the capture
+                    # view's own crop region; painting that would colour the
+                    # whole crop. Not painted, counted, and warned per split.
+                    record["pass"] = STAGE_A_PASS_MODEL
+                    record["basis"] = "view_reference_name_unreadable"
+                    return record
+            if capture_view_name is not None and name is not None \
+                    and str(name) == str(capture_view_name):
+                record["pass"] = STAGE_A_PASS_MODEL
+                record["basis"] = "own_view_reference"
+                return record
+            record["pass"] = STAGE_A_PASS_ANNOTATION
+            record["basis"] = "view_reference_category"
+            return record
         record["pass"] = STAGE_A_PASS_MODEL
         record["basis"] = "no_owner_view"
         return record
@@ -2119,7 +2186,9 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
 
 def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
                                   datum_category_ids=None, basis_out=None,
-                                  unreadable_imports_out=None):
+                                  unreadable_imports_out=None,
+                                  view_reference_category_ids=None,
+                                  capture_view_name=None):
     """Partition ``elements`` into the Stage A model and annotation passes.
 
     Returns ``(model, annotation, unresolved, basis_counts)``. ``unresolved``
@@ -2163,6 +2232,21 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
                 view_id=capture_view_id_int,
             )
 
+    view_reference_error = None
+    view_reference_names = {}
+    if view_reference_category_ids is None:
+        view_reference_category_ids, view_reference_error = (
+            stage_a_view_reference_category_ids(names_out=view_reference_names))
+        if view_reference_error and diag is not None:
+            diag.warn(
+                phase="annotation",
+                callsite="stage_a_view_reference_category_ids",
+                message="{0}; view markers in those categories fall back to the model "
+                        "pass and render white in the annotation capture".format(
+                            view_reference_error),
+                view_id=capture_view_id_int,
+            )
+
     model = []
     annotation = []
     unresolved = []
@@ -2171,25 +2255,41 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     # Both placed in the model pass; the second is also listed, with its
     # reason, in ``unreadable_imports_out`` and warned below.
     basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0,
+                    "view_reference_category": 0, "own_view_reference": 0,
+                    "view_reference_name_unreadable": 0,
                     "import_not_owned_by_view": 0, "import_owner_unreadable": 0}
     unreadable_imports = []
+    unreadable_names = []
     # Seeded with EVERY datum category that resolved, so a category present
     # in the set but matching nothing reads as 0 rather than being absent.
     # That distinction is the whole measurement: "OST_GridHeads": 0 beside
     # "OST_Grids": 12 says heads are not separate elements on this host,
     # where a missing key would say only that nobody looked.
     datum_category_counts = dict((name, 0) for name in datum_names.values())
+    view_reference_category_counts = dict(
+        (name, 0) for name in view_reference_names.values())
 
     for elem in elements or []:
         record = stage_a_pass_membership(
             elem, capture_view_id_int=capture_view_id_int,
-            datum_category_ids=datum_category_ids)
+            datum_category_ids=datum_category_ids,
+            view_reference_category_ids=view_reference_category_ids,
+            capture_view_name=capture_view_name)
         if record["basis"] in basis_counts:
             basis_counts[record["basis"]] += 1
         if record["basis"] == "datum_category":
             key = datum_names.get(record["category_id"],
                                   str(record["category_id"]))
             datum_category_counts[key] = datum_category_counts.get(key, 0) + 1
+        if record["basis"] in ("view_reference_category", "own_view_reference",
+                               "view_reference_name_unreadable"):
+            key = view_reference_names.get(record["category_id"],
+                                           str(record["category_id"]))
+            view_reference_category_counts[key] = (
+                view_reference_category_counts.get(key, 0) + 1)
+        if record["basis"] == "view_reference_name_unreadable":
+            unreadable_names.append({"element_id": _stage_a_element_id_int(elem),
+                                     "reason": record["reason"]})
         if record["basis"] == "import_owner_unreadable":
             unreadable_imports.append({"element_id": _stage_a_element_id_int(elem),
                                        "state": record["state"],
@@ -2217,6 +2317,17 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
                         len(unreadable_imports), unreadable_imports[0]["reason"]),
             view_id=capture_view_id_int,
         )
+    if unreadable_names and diag is not None:
+        diag.warn(
+            phase="annotation",
+            callsite="split_stage_a_pass_membership.view_reference_name_unreadable",
+            message="{0} view marker(s) have no readable Name, so none can be told "
+                    "from the capture view's own; placed in the MODEL pass and left "
+                    "unpainted. First: element {1}, {2}".format(
+                        len(unreadable_names), unreadable_names[0]["element_id"],
+                        unreadable_names[0]["reason"]),
+            view_id=capture_view_id_int,
+        )
     if unresolved and diag is not None:
         diag.warn(
             phase="annotation",
@@ -2233,6 +2344,10 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     basis_counts["datum_categories_resolved"] = sorted(datum_category_ids or [])
     basis_counts["datum_resolution_error"] = datum_error
     basis_counts["datum_category_counts"] = datum_category_counts
+    basis_counts["view_reference_categories_resolved"] = sorted(
+        view_reference_category_ids or [])
+    basis_counts["view_reference_resolution_error"] = view_reference_error
+    basis_counts["view_reference_category_counts"] = view_reference_category_counts
     return model, annotation, unresolved, basis_counts
 
 
@@ -2250,7 +2365,7 @@ def stage_a_pass_membership_summary(model, annotation, unresolved, basis_counts=
         # place. Named as both, because "OwnerViewId" alone stopped being
         # the whole rule on 2026-09-21 and a stale value here would
         # misdescribe every record under it.
-        "membership_rule": "OwnerViewId+datum_category",
+        "membership_rule": "OwnerViewId+datum_category+view_reference_category",
         "model_count": len(model),
         "annotation_count": len(annotation),
         "unresolved_count": len(unresolved),

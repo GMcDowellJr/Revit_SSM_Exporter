@@ -97,7 +97,16 @@ def test_reencoding_what_the_old_writer_wrote_gives_what_the_new_writer_writes(t
         1.0, Bounds2D(12.0, 9.0, 40.0, 30.0)))["metadata"]))
     old = dict(legacy_view(md))
     del old["frame"]
-    assert reencode(old)["frame"] == md["frame"]
+    frame = dict(reencode(old)["frame"])
+    # D added a fact the old writer never recorded -- whether the crop was
+    # written, and the crop read back -- so it is rebuilt and MARKED, never
+    # equal to a measured one. Everything else is the new writer's, exactly.
+    rebuilt = frame.pop("crop_write")
+    assert rebuilt["status"] == "rebuilt_from_pre_d_frame"
+    assert rebuilt["read_back"]["state"] == "unavailable"
+    new = dict(md["frame"])
+    assert new.pop("crop_write")["read_back"]["matches_request"] is True
+    assert frame == new
 
 
 def test_an_old_near_face_w_entry_reencodes_to_the_c1_c4_shape():

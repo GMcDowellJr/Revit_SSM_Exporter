@@ -278,15 +278,28 @@ def _tick_pieces(ys, xs, weights, orientation=None, exact=None):
     """The connected pieces of a candidate pixel set, as index arrays, and how
     many were dropped as stray fringe.
 
-    A piece holding any pixel of the tick's EXACT colour (``exact``) is always
-    kept: that colour is reserved to the mark, so every piece of it is the
-    mark's -- including a short one left where crossing ink cut a tick near
-    its end, which the filters below would otherwise drop and leave
-    unsubtracted (review, PR #219). Only BLEND-ONLY pieces are filtered: not
+    A piece holding any pixel of the tick's EXACT colour (``exact``) is
+    ANCHORED: that colour is the mark's, so a short piece of it left where
+    crossing ink cut a tick near its end is kept although the size filters
+    below would drop it (review, PR #219). BLEND-ONLY pieces are filtered: not
     line-shaped (TICK_PIECE_MIN_ASPECT, along ``orientation`` when it is
-    known), without one pixel half covered, under TICK_PIECE_MIN_FRACTION of
-    the strongest piece's coverage, or off its line. Nothing is dropped from
-    an exact-colour-only set (``weights`` None)."""
+    known), without one pixel half covered, or under TICK_PIECE_MIN_FRACTION
+    of the strongest piece's coverage.
+
+    ANCHORED IS NOT EXEMPT (run 1001-1950). The exact colour turned up as
+    1-2 px specks far from the tick, inside text: on 1686390 and 1686410 the
+    palette colour of one tick is also some anti-aliased text pixel, and the
+    specks took the fit to 137 and 629 px residuals. So:
+
+    * where the orientation is known, EVERY piece but the reference one must
+      be on its line (TICK_PIECE_MAX_OFF_LINE_PX, gap along it no longer than
+      the reference), and the reference is the strongest ANCHORED piece when
+      there is one -- the line is judged from the exact colour, not from
+      whichever blend happens to be biggest;
+    * where it is not (one shared colour, assigned to ticks afterwards), an
+      anchored piece must be tick-sized or line-shaped, which a speck is not.
+
+    Nothing is dropped from an exact-colour-only set (``weights`` None)."""
     pieces = [np.asarray(c) for c in _components(ys, xs)]
     if weights is None or not pieces:
         return pieces, 0
@@ -299,9 +312,14 @@ def _tick_pieces(ys, xs, weights, orientation=None, exact=None):
         return [], len(pieces)
     strongest = max(float(weights[c].sum()) for c in anchored + shaped)
     floor = TICK_PIECE_MIN_FRACTION * strongest
+    if orientation not in ("horizontal", "vertical"):
+        anchored = [c for c in anchored if float(weights[c].sum()) >= floor
+                    or _line_shaped(ys[c], xs[c])]
     kept = anchored + [c for c in shaped if float(weights[c].sum()) >= floor]
     if orientation in ("horizontal", "vertical") and len(kept) > 1:
-        best = kept[int(np.argmax([float(weights[c].sum()) for c in kept]))]
+        reference = anchored if anchored else kept
+        best = reference[int(np.argmax([float(weights[c].sum())
+                                         for c in reference]))]
         along, across = (xs, ys) if orientation == "horizontal" else (ys, xs)
 
         def _on_line(c):
@@ -312,8 +330,7 @@ def _tick_pieces(ys, xs, weights, orientation=None, exact=None):
             gap = max(float(along[c].min() - along[best].max()),
                       float(along[best].min() - along[c].max()), 0.0)
             return gap <= length
-        kept = [c for c in kept
-                if c is best or id(c) in anchored_ids or _on_line(c)]
+        kept = [c for c in kept if c is best or _on_line(c)]
     return kept, len(pieces) - len(kept)
 
 
@@ -688,14 +705,18 @@ def recorded_marks(sidecar):
 def mark_colours(payload):
     """``(colour_by_id, shared_colour, refusal)`` for a payload, as
     ``locate_mark_pixels`` takes them. The MODEL pass paints every tick one
-    reserved colour; the ANNOTATION pass paints each its own palette colour.
-    A model record whose ticks disagree on the colour is refused."""
+    reserved colour, and since the reserved tick colour (2026-10-02) so does
+    the ANNOTATION pass: its record says ``colour_mode: "shared"``. An
+    annotation record without it is the older shape, each tick its own
+    palette colour. A shared record whose ticks disagree on the colour is
+    refused."""
     marks = payload.get("marks") or []
-    if payload.get("pass") == "model":
+    if payload.get("pass") == "model" or payload.get("colour_mode") == "shared":
         colours = set(tuple(int(c) for c in m["rgb"]) for m in marks if m.get("rgb"))
         if len(colours) != 1:
-            return None, None, "the model record names {0} tick colours; it " \
-                               "must name exactly one".format(len(colours))
+            return None, None, "the {0} record names {1} tick colours; it " \
+                               "must name exactly one".format(
+                                   payload.get("pass"), len(colours))
         return None, colours.pop(), None
     by_id = {}
     for mark in marks:

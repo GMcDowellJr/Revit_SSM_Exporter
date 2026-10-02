@@ -302,7 +302,8 @@ def test_a_datum_in_the_annotation_pass_gets_a_real_3d_aabb():
     assert rec["9102"]["bbox_3d"]["state"] == "not_applicable"
     assert rec["9102"]["membership_basis"] == "owner_view"
 
-    assert bases == {"owner_view": 1, "datum_category": 1, "unknown": 0}
+    assert bases == {"owner_view": 1, "datum_category": 1,
+                     "view_reference_category": 0, "unknown": 0}
 
 
 def test_an_unknown_membership_basis_is_unavailable_not_guessed():

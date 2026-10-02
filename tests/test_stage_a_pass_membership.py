@@ -183,7 +183,7 @@ def test_a_read_failure_is_diagnosed_not_swallowed():
     split_stage_a_pass_membership(
         [_model_elem(50), _ElemOwnerRaises(51, RuntimeError("boom"))],
         capture_view_id_int=CAPTURE_VIEW_ID, diag=diag,
-        datum_category_ids=set())
+        datum_category_ids=set(), view_reference_category_ids=set())
 
     assert len(diag.warnings) == 1
     warned = diag.warnings[0]
@@ -216,7 +216,7 @@ def test_no_diagnostic_when_everything_resolved():
     split_stage_a_pass_membership(
         [_model_elem(70), _anno_elem(71)],
         capture_view_id_int=CAPTURE_VIEW_ID, diag=diag,
-        datum_category_ids=set())
+        datum_category_ids=set(), view_reference_category_ids=set())
     assert diag.warnings == []
 
 
@@ -244,7 +244,8 @@ def test_summary_counts_are_always_present():
         capture_view_id_int=CAPTURE_VIEW_ID)
     summary = stage_a_pass_membership_summary(model, annotation, unresolved)
 
-    assert summary["membership_rule"] == "OwnerViewId+datum_category"
+    assert summary["membership_rule"] == (
+        "OwnerViewId+datum_category+view_reference_category")
     assert summary["model_count"] == 1
     assert summary["annotation_count"] == 1
     assert summary["unresolved_count"] == 1

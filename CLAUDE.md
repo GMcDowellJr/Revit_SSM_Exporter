@@ -111,13 +111,25 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   rollback is the restore, and the view is read back afterwards.
 - **Twelve registration ticks are drawn as detail lines, into both captures.**
   The view's other detail lines are hidden for the model pass only. Ticks are
-  32 px arms in the thinnest line style the curve allows, sized on the model
+  32 px arms in the thinnest SOLID line style the curve allows whose own
+  subcategory the view does not hide (else a temporary weight-1 solid Lines
+  subcategory, rolled back; `line_style.path` records which). A view that
+  hides OST_Lines itself gets its template detached and Lines unhidden for the
+  capture, with every line that revealed hidden one by one
+  (`registration_marks.lines_unhidden`); failing that, `lines_unhide_failed`.
+  Ticks are sized on the model
   pass's own achieved lattice (`mark_fpp_ft()`, so a capped view keeps 32 px),
   and moved within their corner/edge band to clear annotation bboxes; each
   segment records `placement` (original / moved / blocked). The annotation
   pass runs with smooth edges off; tick-blend handling in
   `tools/registration_marks.py` is the fallback. Revit anti-aliases TEXT
   regardless, so text edges stay off-palette.
+- **The ticks have a reserved colour** (2026-10-02): MARK_COLOUR in BOTH
+  captures (`colour_mode: "shared"`; an annotation record without it is the
+  older per-tick shape), and neither palette hands out a colour whose fringe
+  toward white the locator could take for a tick's
+  (`stage_a_registration.fringe_reads_as_mark`, recorded as
+  `palette_reservation`). The ticks are not in `color_assignment_map`.
 - **The annotation pass keeps the authored crop.** A crop-inactive view gets
   the model pass's crop A. Model content is suppressed by membership: white
   element overrides and white link filters.
@@ -127,7 +139,12 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   Its canvas is union(model crop A, measured annotation rect) on the model's
   pixel phase, origin recorded; the model pass is sized from crop A alone and
   frame B is not recorded (`color_id_buffer_model_frame="crop_a"`).
-  It refuses rather than guesses. `tools/decode_stage_a_color_id.py` removes the
+  It refuses rather than guesses. **An active authored crop is never
+  written** (D, 2026-10-01: an identical CropBox write changed 8.8 % of a split
+  elevation's pixels; under a scope box writes do not take): crop A is then
+  that crop as read, unsnapped. Every crop write that remains (crop-inactive
+  views) is read back, and `frame.crop_write` records which happened;
+  `crop_write_not_applied` fails the capture. `tools/decode_stage_a_color_id.py` removes the
   ticks from either capture. Accuracy on the nine test views is recorded in
   `tools/notes/RUN_pipeline_0928_0953_REGISTRATION.md`: at most 0.39 px of fit
   residual, about 8 % of a 1/8" cell.
@@ -137,6 +154,12 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   `view_specific_import_state()` is a recorded diagnostic only. The model pass
   hides the view's own imports and fails the capture
   (`view_specific_import_not_suppressed`) if one could draw unpainted.
+- **View markers are annotation** (2026-10-02): elevation, section and
+  callout markers and reference viewers are ownerless, so ownership put them in
+  the model pass and they came out white. They join the annotation pass on
+  category (`view_reference_category`), as grids and levels do
+  (`datum_category`); the view's own crop-region element, named like the view,
+  stays in the model pass (`own_view_reference`).
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
   unpainted and counted per category under `not_painted`.

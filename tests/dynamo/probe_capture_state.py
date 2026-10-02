@@ -9,6 +9,10 @@ Answers five questions about view state BEFORE any capture code changes:
   Q4  What do ShadowIntensity and a flat background change on an elevation?
   Q5  Can DisplayStyle be set with the template attached, and after detaching?
 
+Round 2 (Q1b, Q3b, Q5b, Q6) and round 3 (Q7: split crops segment by segment,
+and whether painting the ElevationMarker colours its text) are described in
+PROBE_CAPTURE_STATE.md.
+
 Dynamo inputs (every view id is an integer ElementId value):
     IN[0] = output directory (required). A subfolder
             capture_state_<timestamp>/ is created in it.
@@ -21,8 +25,10 @@ Dynamo inputs (every view id is an integer ElementId value):
     IN[5] = Q4 elevation view id                    (default 2888380)
     IN[6] = Q5 view ids, a list                     (default [13663964, 11999340])
     IN[7] = export pixel width                      (default 2000)
-    IN[8] = questions to run: "all" or a comma list of q1_q2,q3,q4,q5
-            (default "all")
+    IN[8] = questions to run: "round3" (the default: Q7), "round2",
+            "round1", "all", or a comma list of question names
+    IN[9] = options (repo_root, per-question view lists); see
+            PROBE_CAPTURE_STATE.md
 
 Output: OUT = the path of probe_capture_state_<timestamp>.json. The TIFFs sit
 beside it, named <step>_<viewid>.tiff. Pixel analysis is OFFLINE:
@@ -56,7 +62,7 @@ import traceback
 
 
 PROBE_NAME = "capture_state"
-PROBE_VERSION = "2026-10-02.1"
+PROBE_VERSION = "2026-10-02.5"
 SCHEMA = "vop.probe.capture_state.v1"
 
 DEFAULT_Q1_VIEW = 6112047
@@ -64,21 +70,32 @@ DEFAULT_Q3_TEST_VIEW = 11999340
 DEFAULT_Q4_VIEW = 2888380
 DEFAULT_Q5_VIEWS = (13663964, 11999340)
 DEFAULT_PIXEL_WIDTH = 2000
-QUESTIONS = ("q1_q2", "q3", "q4", "q5", "q1b", "q3b", "q5b", "q6")
+QUESTIONS = ("q1_q2", "q3", "q4", "q5", "q1b", "q3b", "q5b", "q6", "q7")
 ROUND1_QUESTIONS = ("q1_q2", "q3", "q4", "q5")
 # The default since 2026-10-02.1: round 2 only. "round1" and "all" select
 # the others.
 ROUND2_QUESTIONS = ("q1b", "q3b", "q5b", "q6")
+# The default since 2026-10-02.5: round 3, Q7 only. "round2" selects round 2.
+ROUND3_QUESTIONS = ("q7",)
 
 # Round 2 view defaults (IN[9] keys override them).
 DEFAULT_Q1B_VIEWS = (6112047, 6207878)       # Plaza elevation; WEST - EAST SECTION
 DEFAULT_Q3B_VIEWS = (11999340, 5823803)      # MOHAVE; slab plan as the control
 DEFAULT_Q5B_VIEWS = (13663964, 11999340)     # dependent views
 DEFAULT_Q6_VIEWS = (5823803, 9948, 11999340)
+# Round 3 (run 1001-1950): HIGH ROOF PLAN, a split crop; CABINET TYPES, whose
+# elevation-marker text came out black.
+DEFAULT_Q7_SPLIT_VIEWS = (3300684,)
+DEFAULT_Q7_MARKER_VIEWS = (17732958,)
+# Q7 S1 paints every ElevationMarker the view shows this colour, S2 also its
+# viewers this one: off the palette lattice (not multiples of 8) and far from
+# MARK_COLOUR, so the analyzer can count each exactly.
+Q7_MARKER_COLOUR = (201, 3, 197)
+Q7_VIEWER_COLOUR = (3, 157, 203)
 # Ids round 1 saw enter or leave Plaza's membership on the identity write.
 Q1B_WATCH_IDS = (15846537, 15809670)
 OPTION_KEYS = ("repo_root", "q1b_views", "q3b_views", "q5b_views", "q6_views",
-               "q6_extra_views")
+               "q6_extra_views", "q7_split_views", "q7_marker_views")
 
 # Case-insensitive substrings of a parameter's definition name that put it in
 # the per-view parameter dump.
@@ -305,10 +322,12 @@ def parse_view_ids(value, default):
 
 
 def select_questions(value):
-    """None or "" -> round 2; "round1", "round2" or "all" -> that set; else a
-    comma list of names, refused when one is unknown."""
+    """None or "" -> round 3; "round1", "round2", "round3" or "all" -> that
+    set; else a comma list of names, refused when one is unknown."""
     text = value.strip().lower() if isinstance(value, str) else None
-    if value is None or text in ("", "round2"):
+    if value is None or text in ("", "round3"):
+        return list(ROUND3_QUESTIONS)
+    if text == "round2":
         return list(ROUND2_QUESTIONS)
     if text == "round1":
         return list(ROUND1_QUESTIONS)
@@ -606,6 +625,13 @@ def state_snapshot(doc, view):
     def _shape_set():
         return bool(view.GetCropRegionShapeManager().ShapeSet)
 
+    def _split_regions():
+        # Q7 removes split regions; the restore must be able to see them.
+        m = view.GetCropRegionShapeManager()
+        n = int(m.NumberOfSplitRegions)
+        return {"count": n,
+                "offsets": [xyz_list(m.GetSplitRegionOffset(i)) for i in range(n)]}
+
     ids = value_of(read(member_ids, doc, view))
     return {
         "template_id": _snap(read(lambda: element_id_int(view.ViewTemplateId))),
@@ -613,6 +639,7 @@ def state_snapshot(doc, view):
         "crop_box_active": _snap(read_attr(view, "CropBoxActive", bool)),
         "scope_box": _snap(read(_scope_box)),
         "shape_set": _snap(read(_shape_set)),
+        "split_regions": _snap(read(_split_regions)),
         "display_style": _snap(read_attr(view, "DisplayStyle", enum_text)),
         "shadow_intensity": _snap(read_attr(view, "ShadowIntensity", jsonable)),
         "background": _snap(read(background_fingerprint, view)),
@@ -1475,6 +1502,17 @@ def _repo_root_candidates(params):
     return out
 
 
+def purge_cached_modules(package, modules=None):
+    """Drop ``package`` and its submodules from ``modules`` (sys.modules by
+    default) so the next import reads the files on disk. Returns how many
+    were dropped."""
+    modules = sys.modules if modules is None else modules
+    names = [n for n in list(modules) if n == package or n.startswith(package + ".")]
+    for name in names:
+        del modules[name]
+    return len(names)
+
+
 def import_production(params):
     """``(record, modules)``. Q3b and Q6 call PRODUCTION code -- the crop
     helper and the registration-mark functions -- rather than copies, so the
@@ -1490,21 +1528,62 @@ def import_production(params):
             continue
         if root not in sys.path:
             sys.path.insert(0, root)
+        # Dynamo's Python engine outlives a run and caches every module it
+        # imported: a Q6 run refused a checkout that HAD A and C,
+        # because an earlier run's vop_interwoven was still in sys.modules.
+        # Purged, so the import below reads THIS checkout's files.
+        purged = purge_cached_modules("vop_interwoven")
         try:
             from vop_interwoven.revit import view_basis
             from vop_interwoven import stage_a_registration, stage_a_registered_capture
+            from vop_interwoven import color_id_buffer
             from vop_interwoven.revit.annotation import split_stage_a_pass_membership
             from vop_interwoven.config import Config
         except Exception as ex:
             return ({"state": "raised", "root": root,
                      "error": "{0}: {1}".format(type(ex).__name__, ex)}, None)
-        return ({"state": "value", "root": root},
-                {"view_basis": view_basis, "registration": stage_a_registration,
-                 "capture": stage_a_registered_capture,
-                 "split_membership": split_stage_a_pass_membership, "Config": Config})
+        modules = {"view_basis": view_basis, "registration": stage_a_registration,
+                   "capture": stage_a_registered_capture,
+                   "color_id_buffer": color_id_buffer,
+                   "split_membership": split_stage_a_pass_membership, "Config": Config}
+        return ({"state": "value", "root": root, "purged_cached_modules": purged,
+                 "module_files": dict((k, getattr(m, "__file__", None))
+                                      for k, m in sorted(modules.items())
+                                      if hasattr(m, "__file__")),
+                 "missing_for_q6": q6_missing_symbols(modules)}, modules)
     return ({"state": "unavailable",
              "error": "no vop_interwoven package found; set IN[9] repo_root",
              "searched": searched[:40]}, None)
+
+
+# What Q6 needs from the production checkout: A's tick style and C's detach.
+# Run 20261001T175557 imported a checkout without them -- every Q6b step that
+# needed them raised, and S1/S3 measured the OLD tick style while looking like
+# a measurement of A. A checkout without these is refused, by name.
+Q6_PRODUCTION_SYMBOLS = (("registration", "tick_line_style"),
+                         ("registration", "_temporary_tick_style"),
+                         ("registration", "TEMPORARY_TICK_SUBCATEGORY"),
+                         ("color_id_buffer", "_detach_view_template"))
+Q6_PRODUCTION_BRANCH = "claude/stage-a-capture-state-fixes-m4wb64 (PR #226) or later"
+
+
+def q6_missing_symbols(modules):
+    """PURE. ``"<module>.<name>"`` for each Q6_PRODUCTION_SYMBOLS entry the
+    imported production does not have."""
+    return ["{0}.{1}".format(mod, name) for mod, name in Q6_PRODUCTION_SYMBOLS
+            if not hasattr(modules.get(mod), name)]
+
+
+def _q6_production_mismatch(ctx):
+    """The refusal text when the imported production lacks what Q6 needs,
+    else None."""
+    missing = (ctx.production_record or {}).get("missing_for_q6") or []
+    if not missing:
+        return None
+    return ("the production checkout at {0} lacks {1}; Q6 measures production's "
+            "tick style and detach, so it needs {2}".format(
+                (ctx.production_record or {}).get("root"), ", ".join(missing),
+                Q6_PRODUCTION_BRANCH))
 
 
 def _production_refusal(ctx):
@@ -1521,9 +1600,9 @@ def production_crop_box(ctx, view, shrink=None):
     which needs the pipeline raster and moves each edge by under a pixel;
     this is the unsnapped rectangle, and the record says so."""
     vb = ctx.production["view_basis"]
-    # Read the crop first: xy_bounds_from_crop_box_all_corners answers an
-    # AttributeError with a made-up +/-100 ft rectangle (view_basis.py), which
-    # must never stand in for a measured crop here.
+    # Read the crop first, so an unreadable crop is reported as the crop's own
+    # read failure. (xy_bounds_from_crop_box_all_corners once answered one with
+    # a made-up +/-100 ft rectangle; it now raises.)
     crop_box_record(view)
     basis = vb.make_view_basis(view)
     b = vb.xy_bounds_from_crop_box_all_corners(view, basis)
@@ -1571,7 +1650,7 @@ def crop_uv_at(ctx, view):
     windows. None-free: raises when it cannot be read, and the caller records
     that as unavailable."""
     vb = ctx.production["view_basis"]
-    crop_box_record(view)  # raises rather than let the +/-100 ft fallback through
+    crop_box_record(view)  # raises on an unreadable crop, before production does
     b = vb.xy_bounds_from_crop_box_all_corners(view, vb.make_view_basis(view))
     return [float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)]
 
@@ -1793,6 +1872,7 @@ def run_q5b_view(ctx, dependent, dep_baseline, primary, primary_baseline, primar
 # ======================================================================
 
 Q6_REQUIRED = ("crop_box", "crop_box_active", "members_sha1")
+Q6_STEPS = ("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10")
 
 
 class _LayoutRaster(object):
@@ -1967,17 +2047,168 @@ def _q6_marked(ctx, view, step, prefix):
     return rec
 
 
+# ---- Q6b (2026-10-02.2): the tick-style fix (A) and the Lines-hidden case (B)
+#
+# A picks the thinnest line style whose own subcategory the view does not
+# hide, else a TEMPORARY weight-1 Lines subcategory. Two things only a Revit
+# run can say: whether that temporary subcategory draws under a template that
+# controls V/G, and whether a style the view draws with the template ATTACHED
+# (when the capture draws the ticks) still draws once the capture DETACHES it
+# (when it exports). B asks what can be done when OST_Lines itself is hidden:
+# unhide it for the capture with every pre-existing line hidden individually,
+# so the view still shows as authored. Production does not do B; this
+# measures whether it would work.
+
+def production_detach(ctx, view, name):
+    """Production's own detach (color_id_buffer._detach_view_template: on the
+    primary for a dependent view), which opens its own Transaction and reads
+    ViewTemplateId back. Recorded as a write: attempted -1, read back here
+    again after it returned."""
+    rec = {"attempted": -1, "production_record": None}
+    out = read(lambda: ctx.production["color_id_buffer"]._detach_view_template(
+        ctx.doc, view, "VOP capture-state probe: " + name))
+    if out["state"] != "value":
+        rec.update(state="raised", error=out["error"], read_back=rec_unavailable(
+            "the detach raised"), took_effect=None)
+        return rec
+    rec["production_record"] = out["value"][0]
+    rec["read_back"] = read(lambda: element_id_int(view.ViewTemplateId))
+    rec["took_effect"] = (value_of(rec["read_back"]) == -1
+                          if rec["read_back"]["state"] == "value" else None)
+    rec.update(state="value", error=None)
+    return rec
+
+
+def unhide_lines_category(ctx, view, name):
+    from Autodesk.Revit.DB import ElementId
+
+    def _hidden():
+        return bool(view.GetCategoryHidden(ElementId(int(lines_category_id()))))
+    return tx_write(ctx.doc, name,
+                    lambda: view.SetCategoryHidden(ElementId(int(lines_category_id())), False),
+                    False, _hidden)
+
+
+def line_ids_in_view(ctx, view):
+    """The OST_Lines elements FilteredElementCollector(doc, view.Id) returns."""
+    from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
+    return sorted(element_id_int(e.Id) for e in FilteredElementCollector(ctx.doc, view.Id)
+                  .OfCategory(BuiltInCategory.OST_Lines).WhereElementIsNotElementType())
+
+
+def hide_existing_lines(ctx, view, name, shown_before):
+    """The OST_Lines elements the view returns NOW but did not return before
+    the unhide (``shown_before``) -- the lines unhiding made visible -- hidden
+    one by one with production's hide_in_view. Lines the view already showed
+    are left alone: hiding them changes the view as authored (run
+    20261001T175557 hid all 6 of 9948's and changed 367 px). attempted = the
+    ids it hid; read back = which of them read hidden."""
+    registration = ctx.production["registration"]
+    now = line_ids_in_view(ctx, view)
+    ids = sorted(set(now) - set(shown_before))
+    holder = {}
+
+    def _apply():
+        holder["record"] = registration.hide_in_view(ctx.doc, view, ids)
+        return holder["record"]
+
+    def _read_back():
+        hidden, _unreadable = registration.still_hidden(
+            ctx.doc, view, (holder.get("record") or {}).get("hidden") or ids)
+        return sorted(hidden)
+    rec = tx_write(ctx.doc, name, _apply, None, _read_back,
+                   lambda _a, value: value == sorted((holder.get("record") or {}).get("hidden") or []))
+    rec["attempted"] = sorted((holder.get("record") or {}).get("hidden") or [])
+    rec["line_ids_before_unhide"] = len(shown_before)
+    rec["line_ids_after_unhide"] = len(now)
+    rec["line_ids_revealed"] = len(ids)
+    rec["hide_record"] = dict((k, v) for k, v in (holder.get("record") or {}).items()
+                              if k != "hidden")
+    return rec
+
+
+def force_temporary_style(ctx, view, marks_record, name):
+    """Retarget every created mark to production's TEMPORARY tick
+    subcategory (_temporary_tick_style), whatever A chose: attempted = its
+    name; read back = the set of style names the marks carry."""
+    from Autodesk.Revit.DB import ElementId
+    registration = ctx.production["registration"]
+    created = [m["id"] for m in (marks_record or {}).get("created") or []]
+    holder = {}
+
+    def _apply():
+        style, rec = registration._temporary_tick_style(ctx.doc, view)
+        holder["record"] = rec
+        if style is None:
+            raise RuntimeError(rec.get("reason"))
+        for mark_id in created:
+            ctx.doc.GetElement(ElementId(int(mark_id))).LineStyle = style
+        return rec.get("name")
+
+    def _read_back():
+        return sorted(set(str(ctx.doc.GetElement(ElementId(int(i))).LineStyle.Name)
+                          for i in created))
+    rec = tx_write(ctx.doc, name, _apply, registration.TEMPORARY_TICK_SUBCATEGORY,
+                   _read_back, lambda a, value: value == [a])
+    rec["temporary_record"] = holder.get("record")
+    return rec
+
+
+def _q6_production_marks(ctx, view, step, prefix, before_export=None):
+    """Production's layout and marks (tick_line_style chooses the style),
+    then ``before_export(marks_record)`` -- a dict of further writes -- and
+    the marked export, with the per-mark rows read AT EXPORT."""
+    built = read(mark_layout, ctx, view)
+    if built["state"] != "value":
+        return {"step": step, "refused": "layout_unavailable",
+                "refused_reason": "the capture's layout raised: {0}".format(built["error"])}
+    basis, layout, layout_record = built["value"]
+    if layout.get("state") != "value":
+        return {"step": step, "refused": "layout_unavailable", "layout": layout_record,
+                "refused_reason": "the capture's layout is unavailable: {0}".format(
+                    layout.get("reason"))}
+    write, marks = create_marks(ctx, view, basis, layout, "{0} marks".format(prefix))
+    writes = {"marks": write}
+    if before_export is not None:
+        writes.update(before_export(marks))
+    ids = value_of(read(member_ids, ctx.doc, view))
+    rec = _q6_export(ctx, view, step, writes)
+    rec["layout"] = layout_record
+    rec["marks_record"] = dict((k, v) for k, v in (marks or {}).items() if k != "created")
+    rec["mark_rows"] = mark_rows(ctx.doc, view, marks, set(ids) if ids is not None else None)
+    rec["view_filters"] = read(view_filter_records, ctx.doc, view)
+    rec["template_vg_control"] = read(template_vg_control, ctx.doc, view)
+    return rec
+
+
 def run_q6_view(ctx, view, baseline):
-    """Two variants, each in its own rolled-back group: marks with the crop
-    as authored (S0 unmarked, S1 marked), and marks after production's crop
-    write (S2 unmarked, S3 marked). Each marked export has an unmarked twin
-    from the same state, so the analyzer can see which pixels the marks
-    changed."""
+    """Variants, each in its own rolled-back group, every marked export with
+    an unmarked twin from the same state (the analyzer's Q6_TWINS):
+
+      no_crop_write    S0 unmarked, S1 marked (production's marks, as authored)
+      crop_write       S2 after production's crop write, S3 marked
+      detached_twin    S6 template detached (production's detach), unmarked
+      production_order S7 marks drawn with the template ATTACHED, then the
+                       template detached -- the capture's own order; twin S6
+      temporary_style  S4 unmarked; S5 marks retargeted to production's
+                       TEMPORARY subcategory, template attached; then
+                       detached, S10; twins S4 and S6
+      lines_unhidden   S8 template detached, OST_Lines unhidden, every line
+                       then in view hidden one by one (B); S9 marked. S8
+                       against S6 is whether the view still shows as
+                       authored; S9 against S8 whether the ticks draw.
+    """
     out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
     if ctx.production is None:
         out["refused"] = _production_refusal(ctx)
         out["steps"] = [{"step": s, "refused": "production_unavailable",
-                         "refused_reason": out["refused"]} for s in ("S0", "S1", "S2", "S3")]
+                         "refused_reason": out["refused"]} for s in Q6_STEPS]
+        return out
+    mismatch = _q6_production_mismatch(ctx)
+    if mismatch is not None:
+        out["refused"] = mismatch
+        out["steps"] = [{"step": s, "refused": "production_mismatch",
+                         "refused_reason": mismatch} for s in Q6_STEPS]
         return out
 
     def _no_crop():
@@ -1989,9 +2220,277 @@ def run_q6_view(ctx, view, baseline):
         out["steps"].append(_q6_export(ctx, view, "S2", {"production_crop": write}))
         out["steps"].append(_q6_marked(ctx, view, "S3", "Q6 S3"))
 
+    def _detached_twin():
+        write = production_detach(ctx, view, "Q6 S6 detach")
+        out["steps"].append(_q6_export(ctx, view, "S6", {"detach": write}))
+
+    def _production_order():
+        out["steps"].append(_q6_production_marks(
+            ctx, view, "S7", "Q6 S7",
+            before_export=lambda _m: {"detach": production_detach(ctx, view, "Q6 S7 detach")}))
+
+    def _temporary_style():
+        out["steps"].append(_q6_export(ctx, view, "S4"))
+        holder = {}
+
+        def _retarget(marks):
+            holder["marks"] = marks
+            return {"temporary_style": force_temporary_style(
+                ctx, view, marks, "Q6 S5 temporary style")}
+        out["steps"].append(_q6_production_marks(ctx, view, "S5", "Q6 S5",
+                                                 before_export=_retarget))
+        write = production_detach(ctx, view, "Q6 S10 detach")
+        ids = value_of(read(member_ids, ctx.doc, view))
+        rec = _q6_export(ctx, view, "S10", {"detach": write})
+        rec["marks_record"] = out["steps"][-1].get("marks_record")
+        rec["mark_rows"] = mark_rows(ctx.doc, view, holder.get("marks"),
+                                     set(ids) if ids is not None else None)
+        out["steps"].append(rec)
+
+    def _lines_unhidden():
+        detach = production_detach(ctx, view, "Q6 S8 detach")
+        if detach.get("took_effect") is not True:
+            # With the template attached SetCategoryHidden(OST_Lines) raises
+            # "Category cannot be hidden" (run 20261001T175557), so S8 would
+            # be the attached view, not B.
+            reason = "the template detach did not take effect ({0}); B needs it".format(
+                detach.get("error") or detach.get("read_back"))
+            for name in ("S8", "S9"):
+                out["steps"].append({"step": name, "refused": "detach_failed",
+                                     "refused_reason": reason, "writes": {"detach": detach}})
+            return
+        shown_before = line_ids_in_view(ctx, view)
+        writes = {"detach": detach,
+                  "unhide_lines": unhide_lines_category(ctx, view, "Q6 S8 unhide Lines")}
+        writes["hide_existing_lines"] = hide_existing_lines(
+            ctx, view, "Q6 S8 hide lines", shown_before)
+        out["steps"].append(_q6_export(ctx, view, "S8", writes))
+        out["steps"].append(_q6_production_marks(ctx, view, "S9", "Q6 S9"))
+
     run_gated(ctx, [(view, baseline)], Q6_REQUIRED, out,
               (("no_crop_write", ("S0", "S1"), _no_crop),
-               ("crop_write", ("S2", "S3"), _crop)), "Q6 {0}".format(out["view_id"]))
+               ("crop_write", ("S2", "S3"), _crop),
+               ("detached_twin", ("S6",), _detached_twin),
+               ("production_order", ("S7",), _production_order),
+               ("temporary_style", ("S4", "S5", "S10"), _temporary_style),
+               ("lines_unhidden", ("S8", "S9"), _lines_unhidden)),
+              "Q6 {0}".format(out["view_id"]))
+    return out
+
+
+
+# ======================================================================
+# Q7 -- split crops, and the elevation-marker body (round 3)
+# ======================================================================
+#
+# Run 1001-1950. HIGH ROOF PLAN (3300684) is a SPLIT crop: its mid ticks did
+# not draw and its two fits disagreed on scale (18.75 / 23.00 px). CABINET
+# TYPES (17732958) painted its elevation markers' VIEWER and left the marker
+# body -- the ElevationMarker element, which carries the text -- black.
+# Greg: salvage split views if possible; the marker body can be coloured by
+# hand, so maybe in code.
+
+Q7_SPLIT_REQUIRED = ("crop_box", "crop_box_active", "members_sha1", "split_regions")
+Q7_MARKER_REQUIRED = ("members_sha1",)
+
+
+def split_region_count(view):
+    return int(view.GetCropRegionShapeManager().NumberOfSplitRegions)
+
+
+def remove_split_regions_except(ctx, view, keep, name):
+    """Remove every split region but ``keep`` (highest index first, so the
+    indices still to remove do not shift). attempted: one region left;
+    read_back: the region count and the remaining region's offset."""
+    def _apply():
+        m = view.GetCropRegionShapeManager()
+        n = int(m.NumberOfSplitRegions)
+        for j in range(n - 1, -1, -1):
+            if j != keep:
+                m.RemoveSplitRegion(j)
+        return True
+
+    def _read():
+        m = view.GetCropRegionShapeManager()
+        n = int(m.NumberOfSplitRegions)
+        return {"count": n,
+                "offsets": [xyz_list(m.GetSplitRegionOffset(i)) for i in range(n)]}
+    return tx_write(ctx.doc, name, _apply, {"count_at_most": 1}, _read,
+                    lambda attempted, got: isinstance(got, dict) and got.get("count", 9) <= 1)
+
+
+def remove_split(ctx, view, name):
+    """ViewCropRegionShapeManager.RemoveSplit: the crop unsplit."""
+    def _apply():
+        view.GetCropRegionShapeManager().RemoveSplit()
+        return True
+    return tx_write(ctx.doc, name, _apply, {"count_at_most": 1},
+                    lambda: {"count": split_region_count(view)},
+                    lambda attempted, got: isinstance(got, dict) and got.get("count", 9) <= 1)
+
+
+def _q7_export(ctx, view, step, writes=None):
+    rec, _ids = _step(ctx, view, "q7", step, writes)
+    if ctx.production is not None:
+        rec["production_crop_uv"] = read(crop_uv_at, ctx, view)
+    return rec
+
+
+def run_q7_split_view(ctx, view, baseline):
+    """S0 as authored; then, each in its own rolled-back group, R<i> with
+    every split region but i removed, and U with the split removed. Each step
+    reads the crop (box, shape, regions) and production's crop A, and exports.
+    Whether R<i> is a plain one-region view of segment i -- one the
+    registered capture could take as it is -- is the question."""
+    out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
+    count = read(split_region_count, view)
+    out["split_region_count"] = count
+    n = value_of(count)
+
+    def _s0():
+        out["steps"].append(_q7_export(ctx, view, "S0"))
+    plan = [("as_authored", ("S0",), _s0)]
+    if isinstance(n, int) and n > 1:
+        for i in range(n):
+            def _keep(i=i):
+                write = remove_split_regions_except(
+                    ctx, view, i, "Q7 R{0} keep region {0}".format(i))
+                out["steps"].append(_q7_export(ctx, view, "R{0}".format(i),
+                                               {"remove_other_regions": write}))
+            plan.append(("keep_region_{0}".format(i), ("R{0}".format(i),), _keep))
+
+        def _unsplit():
+            write = remove_split(ctx, view, "Q7 U remove split")
+            out["steps"].append(_q7_export(ctx, view, "U", {"remove_split": write}))
+        plan.append(("unsplit", ("U",), _unsplit))
+    else:
+        out["not_split"] = ("the view reports {0} split region(s); only S0 runs".format(
+            n if n is not None else "an unreadable number of"))
+    run_gated(ctx, [(view, baseline)], Q7_SPLIT_REQUIRED, out, plan,
+              "Q7 split {0}".format(out["view_id"]))
+    return out
+
+
+def _elevation_markers(doc):
+    from Autodesk.Revit.DB import ElevationMarker, FilteredElementCollector
+    return list(FilteredElementCollector(doc).OfClass(ElevationMarker))
+
+
+def _viewers_in_view(doc, view):
+    from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
+    return list(FilteredElementCollector(doc, view.Id).OfCategory(
+        BuiltInCategory.OST_Viewers).WhereElementIsNotElementType())
+
+
+def _placement(ctx, elem, view):
+    """Production's Stage A pass placement for one element in this view."""
+    split = ctx.production["split_membership"]
+    basis = {}
+    model, anno, unresolved, _counts = split(
+        [elem], capture_view_id_int=element_id_int(view.Id), basis_out=basis,
+        capture_view_name=str(view.Name))
+    return {"pass": ("annotation" if anno else "model" if model else "unresolved"),
+            "basis": basis.get(element_id_int(elem.Id))}
+
+
+def marker_row(ctx, elem, view, collector_ids):
+    eid = element_id_int(elem.Id)
+    row = {"id": eid,
+           "class": read(lambda: str(elem.GetType().Name)),
+           "category_id": read(lambda: element_id_int(elem.Category.Id)),
+           "category_name": read(lambda: str(elem.Category.Name)),
+           "name": read_attr(elem, "Name", str),
+           "owner_view_id": read(lambda: element_id_int(elem.OwnerViewId)),
+           "in_view_collector": (rec_value(eid in collector_ids)
+                                 if collector_ids is not None
+                                 else rec_unavailable("the view collector could not be read")),
+           "bbox_in_view": read(lambda: (lambda b: None if b is None else {
+               "min": xyz_list(b.Min), "max": xyz_list(b.Max)})(elem.get_BoundingBox(view))),
+           "hidden_in_view": read(lambda: bool(elem.IsHidden(view)))}
+    if ctx.production is not None:
+        row["production_placement"] = read(_placement, ctx, elem, view)
+
+    def _hosted():
+        n = int(elem.MaximumViewCount)
+        ids = []
+        for i in range(n):
+            if not elem.IsAvailableIndex(i):
+                ids.append(element_id_int(elem.GetViewId(i)))
+        return ids
+    if value_of(row["class"]) == "ElevationMarker":
+        row["hosted_view_ids"] = read(_hosted)
+    return row
+
+
+def paint_flat(ctx, view, ids, colour, name):
+    """Production's flat colour override on ``ids``; read back as the
+    projection line colour of each."""
+    from Autodesk.Revit.DB import Color, ElementId
+    cib = ctx.production["color_id_buffer"]
+    solid = cib._get_solid_pattern_id(ctx.doc)
+
+    def _apply():
+        ogs = cib._build_flat_color_ogs(solid, Color(colour[0], colour[1], colour[2]))
+        for i in ids:
+            view.SetElementOverrides(ElementId(int(i)), ogs)
+        return len(ids)
+
+    def _read():
+        return dict((str(i), colour_list(view.GetElementOverrides(
+            ElementId(int(i))).ProjectionLineColor)) for i in ids)
+    return tx_write(ctx.doc, name, _apply,
+                    dict((str(i), list(colour)) for i in ids), _read)
+
+
+def run_q7_marker_view(ctx, view, baseline):
+    """The markers the view shows: every ElevationMarker in the document with
+    a bbox in this view or returned by its collector, and the view's
+    OST_Viewers elements, each with category, OwnerViewId, collector
+    membership and production's pass placement. Then S0 as authored; S1 the
+    markers painted Q7_MARKER_COLOUR (production's override); S2 the
+    markers AND the viewers, the viewers Q7_VIEWER_COLOUR. Black left in S1
+    near a marker is text the marker's override does not reach."""
+    out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
+    if ctx.production is None:
+        out["refused"] = _production_refusal(ctx)
+        return out
+    ids = value_of(read(member_ids, ctx.doc, view))
+    collector_ids = set(ids) if ids is not None else None
+    markers_rec = read(_elevation_markers, ctx.doc)
+    rows, shown = [], []
+    for elem in value_of(markers_rec) or []:
+        row = marker_row(ctx, elem, view, collector_ids)
+        if value_of(row["in_view_collector"]) or value_of(row["bbox_in_view"]):
+            rows.append(row)
+            shown.append(row["id"])
+    out["elevation_markers"] = {"state": markers_rec["state"], "error": markers_rec["error"],
+                                "document_count": len(value_of(markers_rec) or []),
+                                "shown_in_view": rows}
+    viewers_rec = read(_viewers_in_view, ctx.doc, view)
+    viewer_rows = [marker_row(ctx, e, view, collector_ids)
+                   for e in value_of(viewers_rec) or []]
+    out["viewers"] = {"state": viewers_rec["state"], "error": viewers_rec["error"],
+                      "rows": viewer_rows}
+    viewer_ids = [r["id"] for r in viewer_rows]
+    out["colours"] = {"marker": list(Q7_MARKER_COLOUR), "viewer": list(Q7_VIEWER_COLOUR)}
+
+    def _s0():
+        out["steps"].append(_q7_export(ctx, view, "S0"))
+
+    def _s1():
+        write = paint_flat(ctx, view, shown, Q7_MARKER_COLOUR, "Q7 S1 paint markers")
+        out["steps"].append(_q7_export(ctx, view, "S1", {"paint_markers": write}))
+
+    def _s2():
+        writes = {"paint_markers": paint_flat(ctx, view, shown, Q7_MARKER_COLOUR,
+                                              "Q7 S2 paint markers"),
+                  "paint_viewers": paint_flat(ctx, view, viewer_ids, Q7_VIEWER_COLOUR,
+                                              "Q7 S2 paint viewers")}
+        out["steps"].append(_q7_export(ctx, view, "S2", writes))
+    run_gated(ctx, [(view, baseline)], Q7_MARKER_REQUIRED, out,
+              (("as_authored", ("S0",), _s0), ("markers", ("S1",), _s1),
+               ("markers_and_viewers", ("S2",), _s2)),
+              "Q7 markers {0}".format(out["view_id"]))
     return out
 
 
@@ -2037,6 +2536,10 @@ def parse_inputs(inputs):
         "q5b_views": parse_view_ids(options.get("q5b_views"), DEFAULT_Q5B_VIEWS),
         "q6_views": (parse_view_ids(options.get("q6_views"), DEFAULT_Q6_VIEWS)
                      + parse_view_ids(options.get("q6_extra_views"), ())),
+        "q7_split_views": parse_view_ids(options.get("q7_split_views"),
+                                         DEFAULT_Q7_SPLIT_VIEWS),
+        "q7_marker_views": parse_view_ids(options.get("q7_marker_views"),
+                                          DEFAULT_Q7_MARKER_VIEWS),
     })
     return params
 
@@ -2125,7 +2628,9 @@ def run_probe(inputs):
     for question, key, role in (("q1b", "q1b_views", "identity_write"),
                                 ("q3b", "q3b_views", "scope_box"),
                                 ("q5b", "q5b_views", "dependent"),
-                                ("q6", "q6_views", "ticks")):
+                                ("q6", "q6_views", "ticks"),
+                                ("q7", "q7_split_views", "split_crop"),
+                                ("q7", "q7_marker_views", "view_markers")):
         if question in params["questions"]:
             for vid in params[key]:
                 wanted.append((question, vid, role))
@@ -2161,7 +2666,7 @@ def run_probe(inputs):
             if primary_of[vid] is not None:
                 _want("q5b", primary_of[vid], "primary_of_{0}".format(vid))
     report["q5b_primaries"] = dict((str(k), v) for k, v in primary_of.items())
-    if set(params["questions"]) & {"q3b", "q6"}:
+    if set(params["questions"]) & {"q3b", "q6", "q7"}:
         ctx.production_record, ctx.production = import_production(params)
         report["production_imports"] = ctx.production_record
 
@@ -2219,6 +2724,16 @@ def run_probe(inputs):
             q["q6"] = {"views": [_guarded(ctx, "q6", views.get(vid),
                                           lambda v, b=before.get(vid): run_q6_view(ctx, v, b))
                                  for vid in params["q6_views"]]}
+        if "q7" in params["questions"]:
+            q["q7"] = {
+                "split_views": [_guarded(
+                    ctx, "q7 split", views.get(vid),
+                    lambda v, b=before.get(vid): run_q7_split_view(ctx, v, b))
+                    for vid in params["q7_split_views"]],
+                "marker_views": [_guarded(
+                    ctx, "q7 markers", views.get(vid),
+                    lambda v, b=before.get(vid): run_q7_marker_view(ctx, v, b))
+                    for vid in params["q7_marker_views"]]}
     except Exception as ex:
         ctx.exceptions.append(exception_record("outer", ex))
     finally:

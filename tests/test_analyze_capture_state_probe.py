@@ -702,8 +702,168 @@ def test_a_round_1_probe_json_still_analyzes_with_empty_round_2_sections(tmp_pat
     q3 = [{"view_id": 11, "role": "test", "steps": [s1]}]
     _probe(tmp_path, [e1], {"Q3_S1_11.tiff": _flat(200, 100)}, q3=q3)
     rec = _run(tmp_path)
-    assert rec["status"] == "value" and rec["tool_version"] == "1.1.0"
+    assert rec["status"] == "value" and rec["tool_version"] == "1.3.0"
     assert (rec["writes"], rec["commit_without_effect"]) == ([], [])
     assert (rec["q1b"], rec["q3b"], rec["q5b"], rec["q6"]) == ([], [], [], [])
+    assert rec["q6_authored"] == []
+    assert (rec["q7_split"], rec["q7_markers"]) == ([], [])
     assert rec["q3"][0]["rows"][0]["non_fit_delta_px"] == 0
     assert rec["images"][0]["non_white_pixels"] == 0
+
+
+# --- Q6b (probe 2026-10-02.2): the tick-style fix (A) and Lines unhidden (B) --
+
+def _q6b_case(tmp_path, s8_paint=(), s9_draw=True):
+    """S6 (detached twin), S8 (Lines unhidden, unmarked), S9 (marked)."""
+    w, h = W * 4, H * 6
+    e6, e8, e9 = (_export("Q6_S6", 9948, w=w), _export("Q6_S8", 9948, w=w),
+                  _export("Q6_S9", 9948, w=w))
+    s6_img, s8_img, s9_img = _flat(w, h), _flat(w, h), _flat(w, h)
+    for y, x in s8_paint:
+        s8_img[y, x] = [0, 0, 0]
+        s9_img[y, x] = [0, 0, 0]
+    if s9_draw:
+        s9_img[285, 20:41] = MARK
+    row = {"id": 900001, "key": "left_bottom_h", "orientation": "horizontal",
+           "uv0": [2.0, 1.5], "uv1": [4.0, 1.5], "uv_source": "readback", "painted": True}
+    crop = {"state": "value", "value": [0, 0, 40, 30], "error": None}
+    active = {"state": "value", "value": True, "error": None}
+    steps = [
+        {"step": "S6", "export": e6},
+        {"step": "S8", "export": e8, "writes": {
+            "detach": {"state": "value", "took_effect": True},
+            "unhide_lines": {"state": "raised", "took_effect": True},
+            "hide_existing_lines": {"state": "value", "took_effect": True}}},
+        {"step": "S9", "export": e9, "mark_rows": [row], "marks_record": {"colour": MARK},
+         "crop_uv_at_export": crop, "crop_box_active_at_export": active}]
+    images = {"Q6_S6_9948.tiff": s6_img, "Q6_S8_9948.tiff": s8_img,
+              "Q6_S9_9948.tiff": s9_img}
+    _round2_probe(tmp_path, {"q6": {"views": [{"view_id": 9948, "steps": steps}]}},
+                  exports=[e6, e8, e9], images=images)
+    return _run(tmp_path)
+
+
+def test_q6b_lines_unhidden_ticks_are_judged_against_S8(tmp_path):
+    rec = _q6b_case(tmp_path)
+    rows = [r for r in rec["q6"] if r["step"] == "S9"]
+    assert len(rows) == 1 and rows[0]["variant"] == "lines_unhidden"
+    assert rows[0]["rendered"] is True and rows[0]["changed_anywhere_px"] == 21
+    # Round 2's S1/S3 are still reported (as not recorded); absent Q6b steps
+    # other than these are not.
+    assert sorted(r["step"] for r in rec["q6"]) == ["S1", "S3", "S9"]
+
+
+def test_q6b_a_view_that_still_shows_as_authored_changes_no_pixel(tmp_path):
+    rec = _q6b_case(tmp_path)
+    (row,) = rec["q6_authored"]
+    assert (row["step"], row["twin"], row["changed_px"]) == ("S8", "S6", 0)
+    # A write that RAISED is shown raised, even when its read-back matched.
+    assert row["writes"] == {
+        "detach": {"state": "value", "took_effect": True},
+        "unhide_lines": {"state": "raised", "took_effect": True},
+        "hide_existing_lines": {"state": "value", "took_effect": True}}
+
+
+def test_q6b_lines_that_reappear_are_counted(tmp_path):
+    """Control: unhiding Lines brought 2 px of linework back."""
+    rec = _q6b_case(tmp_path, s8_paint=[(10, 10), (11, 10)])
+    assert rec["q6_authored"][0]["changed_px"] == 2
+
+
+
+# --- probe 2026-10-02.3: Q6 refuses a production checkout without A and C --
+
+def test_q6_names_the_production_symbols_a_checkout_lacks():
+    """Run 20261001T175557 imported a checkout without A and C: the Q6b steps
+    raised and S1/S3 measured the OLD tick style. The probe now refuses Q6 on
+    such a checkout, naming what is missing. Control: this checkout has all."""
+    import types
+    from tests.dynamo import probe_capture_state as probe
+    from vop_interwoven import color_id_buffer, stage_a_registration
+    modules = {"registration": stage_a_registration, "color_id_buffer": color_id_buffer}
+    assert probe.q6_missing_symbols(modules) == []
+    old = {"registration": types.SimpleNamespace(),
+           "color_id_buffer": types.SimpleNamespace()}
+    assert probe.q6_missing_symbols(old) == [
+        "registration.tick_line_style", "registration._temporary_tick_style",
+        "registration.TEMPORARY_TICK_SUBCATEGORY", "color_id_buffer._detach_view_template"]
+    ctx = types.SimpleNamespace(production_record={
+        "root": "C:/repo", "missing_for_q6": ["registration.tick_line_style"]})
+    reason = probe._q6_production_mismatch(ctx)
+    assert "C:/repo" in reason and "registration.tick_line_style" in reason
+    assert probe._q6_production_mismatch(types.SimpleNamespace(
+        production_record={"root": "x", "missing_for_q6": []})) is None
+
+
+
+def test_the_probe_purges_a_cached_vop_interwoven_before_importing():
+    """Dynamo's engine keeps sys.modules between runs, so a checkout updated
+    after the first run was refused as lacking A and C. Only the package and
+    its submodules go; a name that merely starts the same does not."""
+    from tests.dynamo import probe_capture_state as probe
+    cache = {"vop_interwoven": 1, "vop_interwoven.color_id_buffer": 2,
+             "vop_interwoven_extra": 3, "json": 4}
+    assert probe.purge_cached_modules("vop_interwoven", cache) == 2
+    assert sorted(cache) == ["json", "vop_interwoven_extra"]
+
+
+# --- round 3 (analyzer 1.3.0): Q7 ---------------------------------------------
+
+def _q7_export(step, view_id):
+    return {"step": "Q7_{0}".format(step), "view_id": view_id,
+            "file": "Q7_{0}_{1}.tiff".format(step, view_id), "state": "value",
+            "dims_px": {"state": "value", "value": [W, H]}}
+
+
+def _q7_step(step, view_id, regions=None):
+    rec = {"step": step, "writes": {}, "export": _q7_export(step, view_id),
+           "common": {"crop_region_shape": {"state": "value",
+                                            "value": {"NumberOfSplitRegions": {
+                                                "state": "value", "value": regions}}},
+                      "crop_box": {"state": "value",
+                                   "value": {"min": [0, 0, 0], "max": [10, 5, 0]}}}}
+    return rec
+
+
+def test_q7_split_rows_carry_the_region_count_per_step(tmp_path):
+    steps = [_q7_step("S0", 7, 2), _q7_step("R0", 7, 1), _q7_step("U", 7, 1)]
+    steps[1]["writes"] = {"remove_other_regions": _write({"count_at_most": 1}, {"count": 1})}
+    exports = [s["export"] for s in steps]
+    images = dict((e["file"], _flat()) for e in exports)
+    _round2_probe(tmp_path, {"q7": {"split_views": [
+        {"view_id": 7, "split_region_count": {"state": "value", "value": 2},
+         "steps": steps}], "marker_views": []}}, exports=exports, images=images)
+    rec = _run(tmp_path)
+    view = rec["q7_split"][0]
+    assert view["split_region_count"] == 2
+    assert [(r["step"], r["split_regions"]) for r in view["rows"]] == [
+        ("S0", 2), ("R0", 1), ("U", 1)]
+    assert view["rows"][0]["crop_box_extent_ft"] == [10.0, 5.0]
+    assert view["rows"][0]["exported_px"] == [W, H]
+
+
+def test_q7_marker_rows_count_each_colour_and_the_black_the_paint_removed(tmp_path):
+    marker, viewer = (201, 3, 197), (3, 157, 203)
+    s0, s1, s2 = _flat(), _flat(), _flat()
+    s0[0:2, 0:5] = (0, 0, 0)                       # 10 black
+    s1[0:2, 0:3] = marker                          # 6 painted ...
+    s1[0:2, 3:5] = (0, 0, 0)                       # ... 4 still black
+    s2[0:2, 0:3] = marker
+    s2[2:3, 0:4] = viewer
+    steps = [_q7_step(s, 9) for s in ("S0", "S1", "S2")]
+    exports = [st["export"] for st in steps]
+    images = dict(zip([e["file"] for e in exports], (s0, s1, s2)))
+    row = {"id": 5, "class": {"state": "value", "value": "ElevationMarker"},
+           "category_name": {"state": "value", "value": "Elevations"},
+           "production_placement": {"state": "value",
+                                     "value": {"pass": "model", "basis": "no_owner_view"}}}
+    _round2_probe(tmp_path, {"q7": {"split_views": [], "marker_views": [
+        {"view_id": 9, "colours": {"marker": list(marker), "viewer": list(viewer)},
+         "elevation_markers": {"shown_in_view": [row]}, "viewers": {"rows": []},
+         "steps": steps}]}}, exports=exports, images=images)
+    rec = _run(tmp_path)
+    view = rec["q7_markers"][0]
+    assert view["markers_by"] == {"ElevationMarker|Elevations|no_owner_view": 1}
+    assert [(r["step"], r["marker_colour_px"], r["viewer_colour_px"], r["black_px"])
+            for r in view["steps"]] == [("S0", 0, 0, 10), ("S1", 6, 0, 4), ("S2", 6, 4, 0)]
+    assert view["black_removed_by_marker_paint"] == 6

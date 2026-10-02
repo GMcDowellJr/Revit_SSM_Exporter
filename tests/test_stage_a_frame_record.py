@@ -75,6 +75,9 @@ def test_an_old_shape_folds_back_to_the_same_frame(tmp_path):
     expected = dict(f, crop_snapped_uv=f["crop_uv"], raster_bounds_uv=f["frame_uv"],
                     requested_pixel_size=f["dim_check_attempts"][0]["requested_px"],
                     requested_axis="width")
+    # D's crop_write has no pre-C5 key to fold into; stage_a_sidecar_shapes.
+    # crop_write() is its reader for both shapes.
+    expected.pop("crop_write")
     assert rebuilt == expected
 
 

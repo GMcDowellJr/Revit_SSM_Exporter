@@ -128,11 +128,11 @@ def test_both_passes_run_registered_and_the_view_comes_back(tmp_path):
     assert all(model_export["overrides"][i] == registration.MARK_COLOUR
                for i in mark_ids)
     assert WHITE not in model_export["overrides"].values()
-    # ANNOTATION export: every model member white, the marks in the pass's
-    # own palette colours.
+    # ANNOTATION export: every model member white, the marks in the reserved
+    # tick colour too (2026-10-02; before, each took a palette colour).
     for eid in (1001, 1002, 1003):
         assert anno_export["overrides"][eid] == WHITE, eid
-    assert all(anno_export["overrides"][i] not in (WHITE, registration.MARK_COLOUR)
+    assert all(anno_export["overrides"][i] == registration.MARK_COLOUR
                for i in mark_ids)
     # The rollback put everything back, and the read-back says so.
     assert reg["restore"]["rolled_back"] is True
@@ -162,9 +162,28 @@ def test_the_FILES_carry_the_registration_record_with_its_restore_verdict(tmp_pa
         assert record["restore"]["rolled_back"] is True
         assert record["annotation_crop_mode"] == "authored_else_crop_a"
         assert len(record["marks"]) == 12
-    assert {tuple(m["rgb"]) for m in model["marks"]} == {registration.MARK_COLOUR}
-    colours = _sidecar(out["annotation_sidecar_path"])["color_assignment_map"]
-    assert all(m["rgb"] == colours[str(m["id"])] for m in anno["marks"])
+        # The reserved tick colour: ONE colour, in both captures.
+        assert record["colour_mode"] == "shared"
+        assert {tuple(m["rgb"]) for m in record["marks"]} == {registration.MARK_COLOUR}
+    anno_side = _sidecar(out["annotation_sidecar_path"])
+    # The ticks are not elements: no palette entry, named where they are.
+    assert not set(str(m["id"]) for m in anno["marks"]) & set(
+        anno_side["color_assignment_map"])
+    assert anno_side["palette_reservation"]["mark_ids_painted"] == sorted(
+        m["id"] for m in anno["marks"])
+
+
+def test_neither_palette_hands_out_a_tick_look_alike_in_the_FILE(tmp_path):
+    """Mutation: the registered capture not passing reserve_tick_colour turns
+    this red (reserved_tick_colour None)."""
+    out, _view, _doc, _e, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        side = _sidecar(path)
+        assert side["palette_reservation"]["reserved_tick_colour"] == list(
+            registration.MARK_COLOUR), path
+        for key in ("color_assignment_map", "link_category_color_map"):
+            for rgb in (side.get(key) or {}).values():
+                assert not registration.fringe_reads_as_mark(tuple(rgb)), (path, rgb)
 
 
 def test_a_rollback_that_undoes_nothing_is_a_fault_in_the_FILE(tmp_path):
@@ -360,7 +379,12 @@ def test_c7_the_model_lattice_is_crop_As_own_and_frame_B_is_not_recorded(tmp_pat
     a = (MODEL_BOUNDS.xmin, MODEL_BOUNDS.ymin, MODEL_BOUNDS.xmax, MODEL_BOUNDS.ymax)
     own = frame_export_geometry(a, a, 96.0, 150.0)
     assert frame["crop_px"] == list(own["crop_px"])
-    assert frame["crop_uv"] == pytest.approx(list(own["crop_snapped_uv"]))
+    # D: the view's crop is ACTIVE, so it is not written; crop_uv is the
+    # authored crop as read -- not the snapped lattice rectangle, which the
+    # export does not render and the frame does not record.
+    assert frame["crop_uv"] == pytest.approx(list(a))
+    assert "crop_snapped_uv" not in frame
+    assert frame["crop_write"]["written"] is False
     assert frame["achieved_fpp_ft"] == pytest.approx(own["achieved_fpp_ft"])
     anno_reg = _sidecar(out["annotation_sidecar_path"])["registration"]
     assert anno_reg["sizing_frame"] == "crop_a"
@@ -412,13 +436,108 @@ def test_p1_a_rollback_that_undoes_nothing_is_counted_in_the_FILE(tmp_path):
 def test_t1_the_tick_line_style_reaches_BOTH_sidecar_files(tmp_path):
     """pipeline_0930_0739: the chosen line style was absent from all 16
     sidecars -- recorded in memory, never carried into registration_marks.
-    The fake curve exposes no LineStyle, so here it is the explicit
-    "unavailable" record; what is pinned is that the FILE carries it."""
+    What is pinned is that the FILE carries it, with the path that chose it."""
     out, _view, _doc, _exports, _diag = _run(tmp_path)
     for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
         rm = _sidecar(path)["registration_marks"]
         assert rm.get("line_style") is not None, path
         assert rm["line_style"] == out["registration"]["marks"]["line_style"]
+        assert rm["line_style"]["path"] == "visible_existing"
+        assert rm["line_style"]["name"] == "<Thin Lines>"
+        assert rm["line_style"]["subcategory_hidden_in_view"] is False
+
+
+# --- capture-state probe Q6: a hidden line-style SUBCATEGORY -----------------
+#
+# The template of 5823803 / 11999340 hides "<Thin Lines>" with OST_Lines
+# visible. T1 picked it anyway, no tick drew, and _lines_category_hidden (the
+# parent) said all was well. Mutations: tick_line_style calling
+# _thinnest_line_style WITHOUT view= turns the first test red; deleting the
+# subcategory fault in export_registered_stage_a_view turns the last two red.
+
+def _hide(*cat_ids):
+    def _setup(view):
+        for cat_id in cat_ids:
+            view.category_hidden[int(cat_id)] = True
+    return _setup
+
+
+def _may_not_draw(path):
+    return [f for f in _sidecar(path)["capture_integrity"]["capture_faults"]
+            if f.get("fault") == "registration_marks_may_not_draw"]
+
+
+def test_q6_a_hidden_thin_lines_subcategory_is_passed_over_in_the_FILE(tmp_path):
+    out, view, _d, _e, _diag = _run(tmp_path, view_setup=_hide(world.THIN_LINES_SUBCAT_ID))
+    style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    # Not <Overhead>: also weight 1, but dashed (Q6 run 20261001T183711).
+    assert style["path"] == "visible_existing" and style["name"] == "Lines"
+    assert [e["name"] for e in style["not_solid"]] == ["<Overhead>"]
+    assert [h["name"] for h in style["hidden"]] == ["<Thin Lines>"]
+    assert _may_not_draw(out["sidecar_path"]) == []
+    assert out["registration"]["success"] is True
+
+
+def test_q6_every_existing_style_hidden_makes_a_temporary_subcategory(tmp_path):
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, doc, _e, _diag = _run(tmp_path, view_setup=_hide(*subs))
+    style = _sidecar(out["annotation_sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "temporary" and style["created"] is True
+    assert style["projection_line_weight"] == 1
+    # A new subcategory is not solid until set (the fake's, like Revit's
+    # default, is not); the ticks must not be dashed.
+    assert style["projection_pattern_solid"] is True
+    assert style["subcategory_id"] == world.TEMP_SUBCAT_ID
+    assert style["subcategory_hidden_in_view"] is False
+    assert _may_not_draw(out["sidecar_path"]) == []
+    # Made inside the capture's group, so its rollback removed it.
+    assert registration.TEMPORARY_TICK_SUBCATEGORY not in doc._fake_subcategories
+
+
+def test_q6_no_visible_style_and_no_temporary_one_is_a_fault_in_the_FILE(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(world._Categories, "NewSubcategory",
+                        lambda self, parent, name: (_ for _ in ()).throw(
+                            RuntimeError("NewSubcategory refused")))
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, _doc, _e, _diag = _run(tmp_path, view_setup=_hide(*subs))
+    style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "none" and "NewSubcategory refused" in style["reason"]
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        assert len(_may_not_draw(path)) == 1, path
+    assert out["registration"]["success"] is False
+
+
+def test_q6_a_temporary_style_whose_solid_pattern_does_not_take_is_a_fault_in_the_FILE(
+        tmp_path, monkeypatch):
+    """Codex, PR #226: SetLinePatternId ignored leaves the new subcategory
+    dashed. The read-back says so; the style is unavailable and the capture
+    faults rather than drawing broken ticks. Mutation: dropping the
+    read-back refusal in _temporary_tick_style turns this red."""
+    monkeypatch.setattr(world._Subcategory, "SetLinePatternId",
+                        lambda self, pattern_id, kind: None)
+    monkeypatch.setattr(world, "DASHED", world.DASHED + (
+        registration.TEMPORARY_TICK_SUBCATEGORY,))
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, _doc, _e, _diag = _run(tmp_path, view_setup=_hide(*subs))
+    style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "none"
+    assert style["temporary"]["projection_pattern_solid"] is False
+    assert "did not read back as Solid" in style["reason"]
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        assert len(_may_not_draw(path)) == 1, path
+    assert out["registration"]["success"] is False
+
+
+def test_q6_a_temporary_subcategory_the_view_hides_is_a_fault(tmp_path):
+    """Whether a template that controls V/G draws a subcategory it has never
+    seen is probe Q6b's question; production READS it, and faults."""
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, _doc, _e, _diag = _run(
+        tmp_path, view_setup=_hide(world.TEMP_SUBCAT_ID, *subs))
+    style = out["registration"]["marks"]["line_style"]
+    assert style["path"] == "temporary" and style["subcategory_hidden_in_view"] is True
+    assert len(_may_not_draw(out["sidecar_path"])) == 1
 
 
 def test_the_annotation_capture_runs_with_anti_aliasing_off_in_the_FILE(tmp_path):
@@ -549,3 +668,56 @@ def test_control_uncapped_ticks_are_unchanged(tmp_path):
     _fpp, arms = _arm_px(out)
     assert out["registration"]["marks"]["layout"]["fpp_ft"] == frame["achieved_fpp_ft"]
     assert min(arms) >= registration.MARK_MIN_ARM_PX - 1e-6, arms
+
+
+# --- Codex, PR #226: a tick that did not TAKE the chosen style ----------------
+#
+# The chosen style's visibility is what the capture checks, so a tick that kept
+# its default -- possibly the hidden one -- passed on the chosen style's word.
+# Each tick's style is now read back after the assignment. Mutation: dropping
+# the read-back (applied = the assignment did not raise) turns "ignored" red;
+# dropping the fault turns both red.
+
+def _one_tick_keeps_its_default(monkeypatch, mode):
+    real = world._Create.NewDetailCurve
+
+    def _new(self, view, line):
+        elem = real(self, view, line)
+        if self.calls != 1:
+            return elem
+        default = elem.LineStyle
+
+        def _set(obj, value):
+            if mode == "raises":
+                raise RuntimeError("LineStyle refused (fake)")
+        elem.__class__ = type("_StickyCurve", (type(elem),),
+                              {"LineStyle": property(lambda obj: default, _set)})
+        return elem
+    monkeypatch.setattr(world._Create, "NewDetailCurve", _new)
+
+
+def _style_faults(path):
+    return [f for f in _sidecar(path)["capture_integrity"]["capture_faults"]
+            if f.get("fault") == "registration_mark_style_not_applied"]
+
+
+@pytest.mark.parametrize("mode", ["ignored", "raises"])
+def test_a_tick_that_keeps_its_default_style_is_a_fault_in_the_FILE(
+        tmp_path, monkeypatch, mode):
+    _one_tick_keeps_its_default(monkeypatch, mode)
+    out, _view, _doc, _e, diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        faults = _style_faults(path)
+        assert len(faults) == 1, path
+    created = out["registration"]["marks"]["created"]
+    assert [m["line_style_applied"] for m in created].count(False) == 1
+    assert out["registration_success"] is False
+    assert any(w.get("callsite") == "tick_line_style_apply" for w in diag.warnings)
+
+
+def test_control_every_tick_takes_the_style_and_nothing_faults(tmp_path):
+    out, _view, _doc, _e, diag = _run(tmp_path)
+    assert _style_faults(out["sidecar_path"]) == []
+    assert all(m["line_style_applied"] is True
+               for m in out["registration"]["marks"]["created"])
+    assert not any(w.get("callsite") == "tick_line_style_apply" for w in diag.warnings)

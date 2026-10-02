@@ -47,6 +47,7 @@ class _Curve:
 def _db():
     fake = types.ModuleType("Autodesk.Revit.DB")
     fake.GraphicsStyleType = types.SimpleNamespace(Projection="Projection")
+    fake.LinePatternElement = types.SimpleNamespace(GetSolidPatternId=lambda: _Id(SOLID))
     saved = sys.modules.get("Autodesk.Revit.DB")
     sys.modules["Autodesk.Revit.DB"] = fake
     try:
@@ -88,3 +89,117 @@ def test_nothing_readable_is_unavailable():
     bad = _Style(1, "Bad", RuntimeError("no weight"))
     style, rec = _pick([bad], current=bad)
     assert style is None and rec["state"] == "unavailable" and rec["reason"]
+
+
+# --- capture-state probe Q6: the style's OWN subcategory must be visible -----
+#
+# In 5823803 and 11999340 the view template hides "<Thin Lines>" -- the
+# weight-1 style T1 always picked -- while OST_Lines stays visible. No tick
+# drew in 31 views, and nothing said so: the only check was the parent.
+
+class _View:
+    def __init__(self, hidden=(), unreadable=()):
+        self._hidden, self._unreadable = set(hidden), set(unreadable)
+
+    def GetCategoryHidden(self, cat_id):
+        if cat_id.IntegerValue in self._unreadable:
+            raise RuntimeError("cannot read")
+        return cat_id.IntegerValue in self._hidden
+
+
+SOLID, DASH = -3000010, 7900
+
+
+class _SubStyle(_Style):
+    """A style whose GraphicsStyleCategory has its OWN id (sid + 100), and a
+    projection line pattern (solid unless ``pattern`` says otherwise)."""
+
+    def __init__(self, sid, name, weight, pattern=SOLID):
+        _Style.__init__(self, sid, name, weight)
+        self.GraphicsStyleCategory = types.SimpleNamespace(
+            Id=_Id(sid + 100), GetLineWeight=self.GetLineWeight,
+            GetLinePatternId=lambda _kind: _Id(pattern))
+
+
+def _pick_in(view, styles, current):
+    with _db():
+        return _thinnest_line_style(_Doc(styles), _Curve(styles, current), view=view)
+
+
+def test_a_hidden_thinnest_style_is_passed_over_for_the_thinnest_VISIBLE_one():
+    lines, thin, wide = (_SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1),
+                         _SubStyle(3, "Wide", 6))
+    style, rec = _pick_in(_View(hidden={102}), [lines, thin, wide], current=lines)
+    assert style is lines and rec["name"] == "Lines"
+    assert rec["hidden"] == [{"id": 2, "name": "<Thin Lines>", "projection_line_weight": 1}]
+
+
+def test_control_nothing_hidden_still_picks_thin_lines():
+    lines, thin = _SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1)
+    style, rec = _pick_in(_View(), [lines, thin], current=lines)
+    assert style is thin and rec["hidden"] == []
+
+
+def test_a_style_whose_hidden_state_will_not_read_is_not_a_candidate():
+    lines, thin = _SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1)
+    style, rec = _pick_in(_View(unreadable={102}), [lines, thin], current=lines)
+    assert style is lines
+    assert rec["hidden_unreadable"][0]["id"] == 2 and "cannot read" in rec[
+        "hidden_unreadable"][0]["error"]
+
+
+def test_every_style_hidden_is_unavailable_and_says_so():
+    lines, thin = _SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1)
+    style, rec = _pick_in(_View(hidden={101, 102}), [lines, thin], current=lines)
+    assert style is None and rec["state"] == "unavailable"
+    assert "hidden" in rec["reason"]
+
+
+
+def test_a_dashed_style_is_passed_over_for_a_solid_one():
+    """Q6 run 20261001T183711: A picked <Overhead> (dashed, weight 1) on
+    5823803; its ticks changed 92 px where the solid temporary one changed
+    141. Control: the same weight, solid, is chosen."""
+    lines = _SubStyle(1, "Lines", 3)
+    overhead = _SubStyle(2, "<Overhead>", 1, pattern=DASH)
+    style, rec = _pick_in(_View(), [lines, overhead], current=lines)
+    assert style is lines
+    assert [e["name"] for e in rec["not_solid"]] == ["<Overhead>"]
+    solid = _SubStyle(2, "<Overhead>", 1)
+    style, _rec = _pick_in(_View(), [lines, solid], current=lines)
+    assert style is solid
+
+
+# --- Codex, PR #226: a failed read reaches Diagnostics -----------------------
+
+class _Diag:
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, **kw):
+        self.warnings.append(kw)
+
+
+def test_each_failed_style_read_is_one_warning_and_a_clean_read_none():
+    """Mutation: dropping a _warn call turns this red."""
+    lines = _SubStyle(1, "Lines", 3)
+    bad_weight = _Style(4, "BadWeight", RuntimeError("no weight"))
+    bad_pattern = _SubStyle(5, "BadPattern", 1)
+
+    def _no_pattern(_kind):
+        raise RuntimeError("no pattern")
+    bad_pattern.GraphicsStyleCategory.GetLinePatternId = _no_pattern
+    styles = [lines, bad_weight, _SubStyle(2, "Thin", 1), bad_pattern]
+    diag = _Diag()
+    with _db():
+        _thinnest_line_style(_Doc(styles), _Curve(styles, lines),
+                             view=_View(unreadable={102}), diag=diag, view_id=9)
+    assert sorted(w["message"].split("its ")[1].split(" would")[0]
+                  for w in diag.warnings) == ["hidden state", "line pattern", "weight"]
+    assert all(w["view_id"] == 9 and w["callsite"] == "tick_line_style"
+               for w in diag.warnings)
+    clean = _Diag()
+    with _db():
+        _thinnest_line_style(_Doc([lines]), _Curve([lines], lines), view=_View(),
+                             diag=clean, view_id=9)
+    assert clean.warnings == []

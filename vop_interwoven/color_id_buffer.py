@@ -210,7 +210,7 @@ def _is_reserved_corner(rgb):
     return False
 
 
-def build_palette(element_count, step=None):
+def build_palette(element_count, step=None, exclude=None):
     """Build deterministic non-near-black, non-near-white colors, hue first.
 
     Generation is HSV-based with HUE as the primary, fastest-spanning
@@ -254,6 +254,11 @@ def build_palette(element_count, step=None):
 
     Reproducibility: same (element_count, step) always yields the same list,
     and a shorter request is always a prefix of a longer one at the same step.
+
+    ``exclude``: an optional predicate on an RGB tuple; a colour it accepts is
+    skipped like a reserved corner (the registered capture's reserved tick
+    colour and its look-alikes -- see stage_a_palette). The capacity above
+    then shrinks by what it skips, which stage_a_palette answers for.
     """
     step = int(step if step is not None else choose_step(element_count))
     target = int(element_count or 0)
@@ -282,7 +287,8 @@ def build_palette(element_count, step=None):
                     _snap_to_lattice(g, step, max_level),
                     _snap_to_lattice(b, step, max_level),
                 )
-                if rgb in seen or _is_reserved_corner(rgb):
+                if rgb in seen or _is_reserved_corner(rgb) or (
+                        exclude is not None and exclude(rgb)):
                     continue
                 seen.add(rgb)
                 colors.append(rgb)
@@ -296,13 +302,47 @@ def build_palette(element_count, step=None):
         for g in range(0, 256, step):
             for b in range(0, 256, step):
                 rgb = (r, g, b)
-                if rgb in seen or _is_reserved_corner(rgb):
+                if rgb in seen or _is_reserved_corner(rgb) or (
+                        exclude is not None and exclude(rgb)):
                     continue
                 seen.add(rgb)
                 colors.append(rgb)
                 if len(colors) >= target:
                     return colors
     return colors
+
+
+def stage_a_palette(element_count, step, reserve_tick_colour=False):
+    """``(palette, step, record)`` for a Stage A pass.
+
+    With ``reserve_tick_colour`` (the registered capture), no colour whose
+    fringe toward white could read as the ticks' MARK_COLOUR is handed out
+    (stage_a_registration.fringe_reads_as_mark). Excluding colours can leave
+    the lattice ``step`` short of ``element_count``; the step is then lowered
+    until it is not, and the record says so. Without it this is
+    ``build_palette(element_count, step)`` unchanged.
+    """
+    record = {"reserved_tick_colour": None, "excluded_count": 0,
+              "step_requested": int(step), "step": int(step)}
+    if not reserve_tick_colour:
+        return build_palette(element_count, step=step), int(step), record
+    from .stage_a_registration import MARK_COLOUR, fringe_reads_as_mark
+    excluded = set()
+
+    def _exclude(rgb):
+        if fringe_reads_as_mark(rgb):
+            excluded.add(rgb)
+            return True
+        return False
+    record["reserved_tick_colour"] = list(MARK_COLOUR)
+    steps = [int(step)] + [s for s in (6, 5, 4, 3, 2, 1) if s < int(step)]
+    for candidate in steps:
+        excluded.clear()
+        palette = build_palette(element_count, step=candidate, exclude=_exclude)
+        if len(palette) >= int(element_count or 0):
+            break
+    record.update(step=candidate, excluded_count=len(excluded))
+    return palette, candidate, record
 
 
 def resolve_all(doc, top_elements):
@@ -2002,21 +2042,26 @@ def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, vi
     basis_by_id = membership_basis_by_id or {}
     out = {}
     source_counts = {"view": 0, "model": 0, "none": 0}
-    basis_counts = {"owner_view": 0, "datum_category": 0, "unknown": 0}
+    basis_counts = {"owner_view": 0, "datum_category": 0,
+                    "view_reference_category": 0, "unknown": 0}
 
     def _bbox_3d_for(basis, bbox, elem_id_int):
         """bbox_3d for ONE element, decided by how it entered this pass."""
-        if basis == "datum_category":
+        if basis in ("datum_category", "view_reference_category"):
+            # A datum and a view marker are both ownerless, placed in the
+            # model, and have a model-space extent.
+            what = ("datum (grid/level)" if basis == "datum_category"
+                    else "view marker")
             if bbox is None:
                 return _gs_unavailable(
-                    "datum (grid/level) has a model-space extent but no bbox "
-                    "could be resolved for it")
+                    "{0} has a model-space extent but no bbox could be resolved "
+                    "for it".format(what))
             aabb = bbox_world_aabb(
                 bbox, diag=diag, view_id=view_id, elem_id=elem_id_int)
             if aabb is None:
                 return _gs_unavailable(
-                    "datum (grid/level) bbox present but its corners could "
-                    "not be resolved to host space")
+                    "{0} bbox present but its corners could not be resolved to "
+                    "host space".format(what))
             return _gs_value(aabb)
         if basis == "owner_view":
             return _gs_not_applicable(_ANNOTATION_BBOX_3D_NOT_APPLICABLE)
@@ -3194,8 +3239,375 @@ def compute_model_crop(model_clip_bounds, bounds_xy):
     return render_bounds, offset
 
 
+def read_crop_uv(view, basis, diag=None, view_id=None):
+    """``(uv, error)``: the view's CropBox as READ, projected to view UV
+    through production's own projection (view_basis.xy_bounds_from_crop_
+    box_all_corners). ``uv`` is None with the reason when it will not read."""
+    try:
+        if basis is None:
+            from .revit.view_basis import make_view_basis as _make_view_basis
+            basis = _make_view_basis(view, diag=diag)
+        from .revit.view_basis import xy_bounds_from_crop_box_all_corners
+        b = xy_bounds_from_crop_box_all_corners(view, basis, diag=diag, view_id=view_id)
+        return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)), None
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="bounds", callsite="read_crop_uv",
+                      message="the view's crop could not be read or projected: "
+                              "{0}: {1}".format(type(ex).__name__, ex),
+                      view_id=view_id)
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+# A crop read back within this fraction of a pixel of the rectangle written
+# is the rectangle written. Read-backs are exact to float precision; a write
+# Revit ignores (a scope box) leaves the crop where it was, far outside this.
+CROP_READ_BACK_TOLERANCE_PX = 0.05
+
+
+def crop_read_back_record(requested_uv, read_uv, read_error, fpp_ft):
+    """PURE. Whether the crop read back is the one asked for.
+
+    ``matches_request`` is None (unmeasured) when either rectangle is
+    missing, never True by default."""
+    record = {"requested_uv": (None if requested_uv is None
+                               else [float(v) for v in requested_uv]),
+              "read_back_uv": None if read_uv is None else [float(v) for v in read_uv],
+              "tolerance_ft": None, "max_deviation_ft": None,
+              "matches_request": None}
+    if read_error is not None:
+        record["read_error"] = read_error
+    if requested_uv is None or read_uv is None:
+        return record
+    tol = CROP_READ_BACK_TOLERANCE_PX * float(fpp_ft) if fpp_ft else 1.0e-4
+    dev = max(abs(float(a) - float(b)) for a, b in zip(requested_uv, read_uv))
+    record.update(tolerance_ft=tol, max_deviation_ft=dev, matches_request=dev <= tol)
+    return record
+
+
+# Revit's image export will not exceed a 10:1 aspect: a view whose drawn extent
+# is longer than that comes back clamped (run 1001-1950: 1-G400, a 1543 x 154
+# annotation export of a 1543 x 1677 model capture). ASPECT_CLAMP_RATIO sits just
+# under 10 because the clamped side is rounded to whole pixels (1543/154 = 10.02).
+EXPORT_ASPECT_CLAMP_RATIO = 9.95
+# The annotation canvas contains the model crop, so on the shared fitted axis
+# its extent is at least the model's; the derived axis can only come out SHORTER
+# than the model's when the fitted extent grew. model_derived / anno_derived is
+# then a lower bound on how many times coarser the annotation's feet-per-pixel
+# is. On the nine views of run 1001-1950 it is at most 2.33 (5100330, a wall
+# section whose annotation reaches far along its length) apart from 1-G400
+# (10.9); 4 separates them. Not measured over the full run: the 1950 bundle has
+# no per-view dimensions.
+ANNOTATION_COARSENING_LIMIT = 4.0
+
+
+def annotation_export_degenerate(actual_w, actual_h, model_px, vertical):
+    """None, or the record of an annotation export that cannot be a render of
+    the view at a usable scale: its aspect is at Revit's 10:1 export clamp, or
+    its derived axis says its feet-per-pixel is at least
+    ``ANNOTATION_COARSENING_LIMIT`` times the model capture's.
+
+    ``model_px`` is the (w, h) the model pass rendered and the annotation pass
+    requested against; ``vertical`` is the fit direction. Dimensions that did
+    not read decide nothing (export_dim_check reports them).
+    """
+    if actual_w is None or actual_h is None or model_px is None:
+        return None
+    w, h = int(actual_w), int(actual_h)
+    if min(w, h) <= 0:
+        return {"reason": "empty_export", "actual_px": [w, h]}
+    aspect = float(max(w, h)) / float(min(w, h))
+    model_derived = int(model_px[0] if vertical else model_px[1])
+    anno_derived = w if vertical else h
+    coarsening = float(model_derived) / float(anno_derived)
+    reasons = []
+    if aspect >= EXPORT_ASPECT_CLAMP_RATIO:
+        reasons.append("aspect_clamp")
+    if coarsening >= ANNOTATION_COARSENING_LIMIT:
+        reasons.append("coarsening")
+    if not reasons:
+        return None
+    return {"reason": "+".join(reasons), "actual_px": [w, h],
+            "model_px": [int(v) for v in model_px],
+            "aspect": round(aspect, 3),
+            "coarsening_lower_bound": round(coarsening, 3),
+            "aspect_clamp_ratio": EXPORT_ASPECT_CLAMP_RATIO,
+            "coarsening_limit": ANNOTATION_COARSENING_LIMIT}
+
+
+def crop_write_fault(crop_write):
+    """PURE. The capture fault a crop record earns, or None.
+
+    * ``crop_write_not_applied`` -- written, and the crop read back is not
+      the rectangle written (a scope box: the write commits and the crop
+      stays where it was), or CropBoxActive reads back False -- the box is
+      right and the export is uncropped;
+    * ``crop_write_unverified`` -- written, and the box or CropBoxActive did
+      not read back;
+    * ``authored_crop_unreadable`` -- an active authored crop that would not
+      read, so the export renders a crop nothing recorded;
+    * ``authored_crop_changed`` -- not written, and the crop read at the
+      export is not the one the lattice was sized on.
+    """
+    if not crop_write:
+        return None
+    read_back = crop_write.get("read_back") or {}
+    if crop_write.get("written"):
+        active = crop_write.get("crop_box_active_read_back", True)
+        if read_back.get("matches_request") is False or active is False:
+            return "crop_write_not_applied"
+        if read_back.get("matches_request") is None or active is not True:
+            return "crop_write_unverified"
+        return None
+    if crop_write.get("source") == "authored_unreadable" or read_back.get(
+            "read_back_uv") is None:
+        return "authored_crop_unreadable"
+    if read_back.get("matches_request") is False:
+        return "authored_crop_changed"
+    return None
+
+
+def resolve_crop_a(view, raster, diag=None, view_id=None):
+    """``(crop_uv, record)``: crop A, the rectangle the registered capture's
+    model pass is sized on (C7), and whether that pass may WRITE it.
+
+    D (capture-state probe, runs 20261001T145758 / 153207): writing back the
+    IDENTICAL CropBox on Plaza 6112047 (a split elevation line the API does
+    not report) added 80 model elements and removed 3 rooms -- 8.8 % of the
+    pixels -- and under a scope box every CropBox write commits and reads
+    back unchanged. So a view whose authored crop is ACTIVE is never
+    written: crop A is that crop AS READ (``source`` "authored_read",
+    ``write`` False), not clamped and not snapped -- the export renders it
+    as it is. Only a crop-INACTIVE view gets the model crop
+    (compute_model_crop of raster.model_clip_bounds in the frame, ``source``
+    "model_crop_a", ``write`` True), as before.
+
+    An active crop that will not READ is not written either (``source``
+    "authored_unreadable"); crop A is then the model crop for sizing only,
+    and the caller faults. An unreadable CropBoxActive keeps the shipped
+    behaviour (write, then read back) and is recorded.
+
+    The one resolution of crop A: the model pass sizes from it and
+    stage_a_registered_capture.mark_fpp_ft sizes the ticks from it, so the
+    two cannot drift apart (CLAUDE.md, defect class 1). Raises ValueError
+    when there is no raster frame to resolve anything in.
+    """
+    from .core.math_utils import Bounds2D
+    frame = getattr(raster, "anno_frame_bounds", None) or getattr(raster, "bounds_xy", None)
+    if frame is None:
+        raise ValueError("no raster frame to resolve crop A in")
+    record = {"authored_crop_active": None}
+    try:
+        record["authored_crop_active"] = bool(view.CropBoxActive)
+    except Exception as ex:
+        record["authored_crop_active_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+        if diag is not None:
+            diag.warn(phase="bounds", callsite="resolve_crop_a",
+                      message="view.CropBoxActive would not read ({0}); crop A is the "
+                              "model crop and is written, then read back".format(
+                                  record["authored_crop_active_error"]),
+                      view_id=view_id)
+    if record["authored_crop_active"] is True:
+        uv, error = read_crop_uv(view, getattr(raster, "view_basis", None),
+                                 diag=diag, view_id=view_id)
+        if uv is not None and uv[2] > uv[0] and uv[3] > uv[1]:
+            record.update(source="authored_read", write=False)
+            return uv, record
+        record["read_error"] = error or "the authored crop reads as empty: {0!r}".format(uv)
+        record.update(source="authored_unreadable", write=False)
+    else:
+        record.update(source="model_crop_a", write=True)
+    render, _offset = compute_model_crop(
+        getattr(raster, "model_clip_bounds", None),
+        Bounds2D(float(frame.xmin), float(frame.ymin), float(frame.xmax), float(frame.ymax)))
+    return (float(render.xmin), float(render.ymin),
+            float(render.xmax), float(render.ymax)), record
+
+
+def _id_int(element_id):
+    """An ElementId as an int, or None when it is absent or will not read."""
+    try:
+        return None if element_id is None else int(element_id.IntegerValue)
+    except Exception:
+        return None
+
+
+def _detach_view_template(doc, view, tx_name, diag=None, view_id=None,
+                          callsite="detach_view_template"):
+    """Detach the view's template for a capture, and READ BACK whether it took.
+
+    ``(record, handle)``. ``record`` goes into the sidecar; ``handle`` is what
+    _reattach_view_template puts back (None when nothing was written).
+
+    DEPENDENT VIEWS (capture-state probe, runs 20261001T145758 / 153207). A
+    dependent view's template is its PRIMARY's: clearing ViewTemplateId on
+    the dependent (13663964, 11999340) COMMITS and changes nothing, and
+    DisplayStyle then raises "cannot be modified". Clearing it on the primary
+    takes effect at once -- the dependent reads -1 -- so when
+    ``view.GetPrimaryViewId()`` is valid the PRIMARY is detached, and the
+    primary is what the restore reattaches.
+
+    The shipped detach ignored Commit()'s status, never read ViewTemplateId
+    back and recorded ``view_template_detached: true`` regardless. Here
+    ``detached`` is the READ-BACK on the view being captured
+    (``read_back_view_template_id == -1``); ``commit_status`` is recorded
+    beside it, not trusted instead of it. ``fault`` is
+    ``view_template_not_detached`` when a template was attached and the
+    read-back does not say it is gone -- the caller makes that a capture
+    fault, because every template-controlled write after it (display style,
+    category visibility, filters) may not take.
+    """
+    from Autodesk.Revit.DB import ElementId, Transaction
+    record = {"orig_view_template_id": None, "primary_view_id": None,
+              "detached_on": None, "target_view_id": None,
+              "target_orig_view_template_id": None, "commit_status": None,
+              "read_back_view_template_id": None, "detached": False, "fault": None}
+    try:
+        orig_id = view.ViewTemplateId
+        record["orig_view_template_id"] = _id_int(orig_id)
+    except Exception as ex:
+        record["orig_view_template_id"] = {
+            "state": "unavailable", "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite=callsite,
+                      message="ViewTemplateId would not read; no detach attempted: "
+                              "{0}".format(ex), view_id=view_id)
+        return record, None
+    target = view
+    try:
+        primary_id = view.GetPrimaryViewId()
+        primary_int = _id_int(primary_id)
+        record["primary_view_id"] = primary_int
+        if primary_int is not None and primary_int != -1:
+            primary = doc.GetElement(primary_id)
+            if primary is None:
+                raise RuntimeError("the primary view {0} did not resolve".format(
+                    primary_int))
+            target = primary
+    except AttributeError as ex:
+        # No GetPrimaryViewId on this object: not a dependent view as far as
+        # the API can say. Recorded, not guessed.
+        record["primary_view_id"] = {"state": "unavailable",
+                                     "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    except Exception as ex:
+        record["primary_view_id"] = {"state": "unavailable",
+                                     "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite=callsite,
+                      message="the primary view could not be read; the template is "
+                              "detached on the view itself: {0}".format(ex),
+                      view_id=view_id)
+    record["detached_on"] = "primary" if target is not view else "view"
+    record["target_view_id"] = _id_int(getattr(target, "Id", None))
+    try:
+        target_orig = target.ViewTemplateId
+    except Exception as ex:
+        target_orig = orig_id
+        record["target_orig_view_template_id"] = {
+            "state": "unavailable", "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    else:
+        record["target_orig_view_template_id"] = _id_int(target_orig)
+    if record["orig_view_template_id"] in (None, -1) and (
+            target is view or _id_int(target_orig) in (None, -1)):
+        record["detached_on"] = None
+        record["read_back_view_template_id"] = record["orig_view_template_id"]
+        return record, None
+
+    handle = None
+    detach_tx = Transaction(doc, tx_name)
+    detach_tx.Start()
+    try:
+        target.ViewTemplateId = ElementId.InvalidElementId
+        record["commit_status"] = str(detach_tx.Commit())
+        handle = {"target": target, "orig": target_orig}
+    except Exception as ex:
+        detach_tx.RollBack()
+        record["error"] = "{0}: {1}".format(type(ex).__name__, ex)
+    try:
+        record["read_back_view_template_id"] = _id_int(view.ViewTemplateId)
+    except Exception as ex:
+        record["read_back_view_template_id"] = {
+            "state": "unavailable", "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    record["detached"] = record["read_back_view_template_id"] == -1
+    if not record["detached"]:
+        record["fault"] = "view_template_not_detached"
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite=callsite,
+                       message="the view template was not detached: ViewTemplateId reads "
+                               "{0} after clearing it on the {1} ({2}); template-"
+                               "controlled settings may stay locked for this "
+                               "capture".format(record["read_back_view_template_id"],
+                                                record["detached_on"],
+                                                record.get("error") or "committed"),
+                       view_id=view_id)
+    return record, handle
+
+
+def _reattach_view_template(handle):
+    """Put back what _detach_view_template cleared, on the view it cleared
+    it on (the PRIMARY for a dependent view). Inside an open Transaction."""
+    handle["target"].ViewTemplateId = handle["orig"]
+
+
+def _reattach_after_failure(doc, handle, diag=None, view_id=None,
+                            callsite="reattach_view_template"):
+    """A pass that raises after its template detach COMMITTED puts the
+    template back in its own Transaction before the raise propagates -- the
+    restore that would otherwise do it is never reached. For a dependent view
+    the detach is on the PRIMARY, so a failure left unrepaired changes every
+    view of it (Codex, PR #226).
+
+    NEVER RAISES: it runs inside an ``except`` whose own exception is the one
+    that must propagate. Every step can fail -- making the Transaction, its
+    Start (a document mid failure-handling refuses one), the write, a Commit
+    that returns RolledBack or Pending without raising -- and each is a
+    Diagnostics error, not a masked original. Returns True only when the
+    commit said Committed AND ViewTemplateId reads back as the template that
+    was cleared."""
+    if handle is None:
+        return False
+    stage = "construct the Transaction"
+    tx = None
+    try:
+        from Autodesk.Revit.DB import Transaction, TransactionStatus
+        tx = Transaction(doc, "VOP Stage A REATTACH view template after failure")
+        stage = "start the Transaction"
+        tx.Start()
+        stage = "write ViewTemplateId"
+        _reattach_view_template(handle)
+        stage = "commit"
+        status = tx.Commit()
+        if status != TransactionStatus.Committed:
+            raise RuntimeError("Commit returned {0}, not Committed".format(status))
+        stage = "read ViewTemplateId back"
+        got = _id_int(handle["target"].ViewTemplateId)
+        want = _id_int(handle["orig"])
+        if got != want:
+            raise RuntimeError("ViewTemplateId reads {0} after the reattach; the "
+                               "template cleared was {1}".format(got, want))
+        return True
+    except Exception as ex:
+        if tx is not None and stage in ("write ViewTemplateId", "commit"):
+            try:
+                if not tx.HasEnded():
+                    tx.RollBack()
+            except Exception as rollback_ex:
+                if diag is not None:
+                    diag.error(phase="color_id_buffer", callsite=callsite,
+                               message="rolling back the failed reattach also failed",
+                               view_id=view_id, exc=rollback_ex)
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite=callsite,
+                       message="the capture failed after detaching the view template "
+                               "AND could not re-attach it (at: {0}); the view (or its "
+                               "primary) is left detached from its template".format(stage),
+                       view_id=view_id, exc=ex)
+        return False
+
+
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None,
-                                elem_cache=None, geometry_out=None):
+                                elem_cache=None, geometry_out=None,
+                                reserve_tick_colour=False):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
 
     Args:
@@ -3286,6 +3698,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     geom = None
     frame_uv = None
     frame_source = "unavailable"
+    # D: crop A's resolution under "crop_a" sizing (resolve_crop_a), which
+    # also decides whether this pass may WRITE the crop. None otherwise.
+    crop_a_record = None
     # C7: "crop_a" (the registered capture) sizes this pass from the model
     # crop A alone -- frame B is neither computed into the lattice nor
     # recorded. "frame_b" is the two-pass fallback's sizing, unchanged.
@@ -3338,10 +3753,20 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     view_id=view_id,
                 )
         if sizing_frame == "crop_a":
-            # A is still clamped into the rectangle above (compute_model_crop
-            # needs one to clamp into); with no narrower model clip it IS that
-            # rectangle, exactly as before. What changes is that the lattice
-            # is A's own: fpp and the cap are decided on A's axes.
+            # The lattice is A's own: fpp and the cap are decided on A's
+            # axes. D: A is the authored crop AS READ when it is active (not
+            # written, not clamped), else the model crop clamped into the
+            # rectangle above -- resolve_crop_a, the same resolution the
+            # registration ticks are sized from.
+            try:
+                crop_uv, crop_a_record = resolve_crop_a(
+                    view, raster, diag=diag, view_id=view_id)
+            except ValueError as ex:
+                crop_uv = None
+                if diag is not None:
+                    diag.warn(phase="color_id_buffer", callsite="pixel_size_crop",
+                              message="crop A could not be resolved: {0}".format(ex),
+                              view_id=view_id)
             frame_uv = crop_uv
             frame_source = "crop_a"
         try:
@@ -3488,18 +3913,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     backoff_floor_px = (
         int(geom["min_axis_px"]) if geom is not None else _PIXEL_SIZE_BACKOFF_FLOOR)
 
-    orig_view_template_id = None
-    try:
-        orig_view_template_id = view.ViewTemplateId
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="capture_view_template",
-                message=str(ex),
-                view_id=view_id,
-            )
-
     # The per-view graphics-state record is read HERE, before the detach below
     # and before any suppression, because it is evidence about the view as
     # authored -- template-applied phase filter, category overrides, filters,
@@ -3532,223 +3945,222 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # restore everything on this view anyway. Detaching first, and reattaching
     # as the very last restore step, means every capture below reads (and
     # every restore step writes back) the view's real instance-level state.
-    view_template_detached = False
-    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
-        detach_tx = Transaction(doc, "VOP Stage A DETACH view template")
-        detach_tx.Start()
+    # C: the primary's template for a dependent view, and the read-back is
+    # the record (_detach_view_template).
+    view_template_detach, view_template_handle = _detach_view_template(
+        doc, view, "VOP Stage A DETACH view template", diag=diag, view_id=view_id,
+        callsite="detach_view_template")
+    view_template_detached = bool(view_template_detach["detached"])
+
+    # The detach above COMMITTED; a raise from here to the suppress
+    # transaction's Start would leave the template detached (Codex, PR #226).
+    # One guard over all of it -- see its handler below suppress_tx.Start().
+    try:
+        filter_state = {}
+        for fid in view.GetFilters():
+            filter_state[fid.IntegerValue] = {
+                "was_enabled": view.GetIsFilterEnabled(fid),
+                "was_visible": view.GetFilterVisibility(fid),
+            }
+        pf_param = view.get_Parameter(BuiltInParameter.VIEW_PHASE_FILTER)
+        orig_phase_filter_id = pf_param.AsElementId().IntegerValue if pf_param is not None else None
+        phase_filter_state = {
+            "orig_phase_filter_id": orig_phase_filter_id,
+            "neutral_phase_filter_id": None,
+            "neutral_phase_filter_created": False,
+        }
+        category_halftone_state = {}
+        # Every DWG/DXF import the model pass resolved, with its classification;
+        # the view-specific ones are hidden for the export and unhidden after.
+        view_specific_imports = []
+        # Deliberately NOT capturing/reusing prior OverrideGraphicSettings objects
+        # here (a "restore to what it was" behavior this module used to have).
+        # Reference SUPPRESS/RESTORE testing always resets element overrides to a
+        # freshly-constructed blank OverrideGraphicSettings() rather than reapplying
+        # a live object captured in an earlier transaction, and never carries a
+        # live API object across a Transaction.Commit()/export boundary. Observed
+        # bug: curtain wall panels silently kept their paint color after restore
+        # (no exception) while their parent Wall correctly cleared — consistent
+        # with a captured-then-reapplied-later OverrideGraphicSettings object not
+        # reliably taking full effect once reused across that boundary. Painted-id
+        # bookkeeping below exists only to know what to reset, not to remember
+        # what it looked like before. Host elements are always reset via
+        # resolved_ids directly (the full painted set, matching the reference
+        # script); LINK elements get no individual override to reset at all --
+        # created_link_category_filter_ids / reused_link_category_filter_ids
+        # instead track every view-id-scoped category filter this run touched,
+        # split by whether restore may doc.Delete it outright (freshly created,
+        # nothing else could reference it yet) or must only RemoveFilter it from
+        # THIS view (found already existing by name -- ParameterFilterElement
+        # objects are document-global, so some other view/template could
+        # reference the same one; see _apply_link_category_filters's docstring).
+        created_link_category_filter_ids = []
+        reused_link_category_filter_ids = []
+        category_hidden_state = _hidden_category_state(doc, view)
+        # A Config parameter (config.py), read by getattr so a caller's partial
+        # config object still reaches the shipped default:
+        #
+        #   color_id_buffer_model_lines_visible
+        #       False (default) -- OST_Lines is hidden with the other view-only
+        #           categories, as shipped.
+        #       True            -- OST_Lines is left VISIBLE in this capture. The
+        #           annotation-pass variant probe draws registration marks as
+        #           detail lines at known view UV and paints them a reserved
+        #           colour, so the SAME marks register BOTH passes. Hiding the
+        #           category happens inside this function's suppress transaction,
+        #           where a caller cannot undo it. Every other detail and model
+        #           line then draws in its native colour, unpainted -- the
+        #           known OST_Lines gap the annotation pass already carries, and
+        #           decoded the same way (exact palette match). Recorded in
+        #           model_lines_visible so a capture says which it was.
+        model_lines_visible = bool(getattr(cfg, "color_id_buffer_model_lines_visible", False))
+        if model_lines_visible:
+            from Autodesk.Revit.DB import BuiltInCategory
+            lines_bic = getattr(BuiltInCategory, "OST_Lines", None)
+            if lines_bic is None:
+                raise RuntimeError("color_id_buffer_model_lines_visible is set but "
+                                   "BuiltInCategory.OST_Lines did not resolve")
+            category_hidden_state.pop(int(lines_bic), None)
+        solid_pattern_id = _get_solid_pattern_id(doc)
+        if solid_pattern_id is None:
+            raise RuntimeError("No solid drafting fill pattern found in project")
+        orig_display_style = getattr(view, "DisplayStyle", None)
+        # Capture only the plain bool, not the ViewDisplayModel object itself — the
+        # curtain-panel restore bug earlier in this module was caused by exactly
+        # this pattern (holding a live Revit API object across the suppress/export/
+        # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
+        # actually need to read or write it.
+        orig_smooth_edges = None
+        # The exception TYPE when the read itself fails, which is the difference
+        # between "AA was already off, nothing to do" and "this capture never
+        # found out whether AA was on". Both used to be recorded as
+        # applied_smooth_edges = "unchanged" -- and because
+        # bool(getattr(dm, "SmoothEdges", None)) can never return None, a failed
+        # read was in fact the ONLY way "unchanged" was ever written. A reader
+        # (tools/decode_stage_a_color_id._capture_reliability) could not tell the
+        # two apart, so a view whose AA state was unknown was reported exactly
+        # like one that needed no change.
+        smooth_edges_read_error = None
+        # No getattr default here. bool(getattr(dm, "SmoothEdges", None)) reads a
+        # host that does not expose the property at all as False -- "AA is
+        # already off, nothing to do" -- which is the same silent coercion the
+        # ShowShadows capture below already refuses via its own sentinel. An
+        # absent property means this capture does not know the view's AA state,
+        # and an unknown state is not an off state.
+        _MISSING_SMOOTH_EDGES = object()
         try:
-            view.ViewTemplateId = ElementId.InvalidElementId
-            detach_tx.Commit()
-            view_template_detached = True
+            _dm = view.GetViewDisplayModel()
+            try:
+                _raw_smooth_edges = getattr(_dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+                if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                    # getattr without a default would have raised exactly this.
+                    smooth_edges_read_error = "AttributeError"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="smooth_edges_capture",
+                            message="ViewDisplayModel has no SmoothEdges attribute on this "
+                                    "Revit host; anti-aliasing cannot be confirmed off and "
+                                    "decoded edges may be blended",
+                            view_id=view_id,
+                        )
+                else:
+                    orig_smooth_edges = bool(_raw_smooth_edges)
+            finally:
+                try:
+                    _dm.Dispose()
+                except Exception:
+                    pass
         except Exception as ex:
-            detach_tx.RollBack()
+            smooth_edges_read_error = type(ex).__name__
             if diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
-                    callsite="detach_view_template",
-                    message="Could not detach view template before Stage A capture; "
-                            "template-controlled settings (phase filter, category "
-                            "visibility, filters, display style) may remain locked "
-                            "for this view: {0}".format(ex),
+                    callsite="smooth_edges_capture",
+                    message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                            "capture proceeds but anti-aliasing cannot be confirmed off "
+                            "and decoded edges may be blended".format(
+                                type(ex).__name__, ex),
                     view_id=view_id,
                 )
 
-    filter_state = {}
-    for fid in view.GetFilters():
-        filter_state[fid.IntegerValue] = {
-            "was_enabled": view.GetIsFilterEnabled(fid),
-            "was_visible": view.GetFilterVisibility(fid),
-        }
-    pf_param = view.get_Parameter(BuiltInParameter.VIEW_PHASE_FILTER)
-    orig_phase_filter_id = pf_param.AsElementId().IntegerValue if pf_param is not None else None
-    phase_filter_state = {
-        "orig_phase_filter_id": orig_phase_filter_id,
-        "neutral_phase_filter_id": None,
-        "neutral_phase_filter_created": False,
-    }
-    category_halftone_state = {}
-    # Every DWG/DXF import the model pass resolved, with its classification;
-    # the view-specific ones are hidden for the export and unhidden after.
-    view_specific_imports = []
-    # Deliberately NOT capturing/reusing prior OverrideGraphicSettings objects
-    # here (a "restore to what it was" behavior this module used to have).
-    # Reference SUPPRESS/RESTORE testing always resets element overrides to a
-    # freshly-constructed blank OverrideGraphicSettings() rather than reapplying
-    # a live object captured in an earlier transaction, and never carries a
-    # live API object across a Transaction.Commit()/export boundary. Observed
-    # bug: curtain wall panels silently kept their paint color after restore
-    # (no exception) while their parent Wall correctly cleared — consistent
-    # with a captured-then-reapplied-later OverrideGraphicSettings object not
-    # reliably taking full effect once reused across that boundary. Painted-id
-    # bookkeeping below exists only to know what to reset, not to remember
-    # what it looked like before. Host elements are always reset via
-    # resolved_ids directly (the full painted set, matching the reference
-    # script); LINK elements get no individual override to reset at all --
-    # created_link_category_filter_ids / reused_link_category_filter_ids
-    # instead track every view-id-scoped category filter this run touched,
-    # split by whether restore may doc.Delete it outright (freshly created,
-    # nothing else could reference it yet) or must only RemoveFilter it from
-    # THIS view (found already existing by name -- ParameterFilterElement
-    # objects are document-global, so some other view/template could
-    # reference the same one; see _apply_link_category_filters's docstring).
-    created_link_category_filter_ids = []
-    reused_link_category_filter_ids = []
-    category_hidden_state = _hidden_category_state(doc, view)
-    # A Config parameter (config.py), read by getattr so a caller's partial
-    # config object still reaches the shipped default:
-    #
-    #   color_id_buffer_model_lines_visible
-    #       False (default) -- OST_Lines is hidden with the other view-only
-    #           categories, as shipped.
-    #       True            -- OST_Lines is left VISIBLE in this capture. The
-    #           annotation-pass variant probe draws registration marks as
-    #           detail lines at known view UV and paints them a reserved
-    #           colour, so the SAME marks register BOTH passes. Hiding the
-    #           category happens inside this function's suppress transaction,
-    #           where a caller cannot undo it. Every other detail and model
-    #           line then draws in its native colour, unpainted -- the
-    #           known OST_Lines gap the annotation pass already carries, and
-    #           decoded the same way (exact palette match). Recorded in
-    #           model_lines_visible so a capture says which it was.
-    model_lines_visible = bool(getattr(cfg, "color_id_buffer_model_lines_visible", False))
-    if model_lines_visible:
-        from Autodesk.Revit.DB import BuiltInCategory
-        lines_bic = getattr(BuiltInCategory, "OST_Lines", None)
-        if lines_bic is None:
-            raise RuntimeError("color_id_buffer_model_lines_visible is set but "
-                               "BuiltInCategory.OST_Lines did not resolve")
-        category_hidden_state.pop(int(lines_bic), None)
-    solid_pattern_id = _get_solid_pattern_id(doc)
-    if solid_pattern_id is None:
-        raise RuntimeError("No solid drafting fill pattern found in project")
-    orig_display_style = getattr(view, "DisplayStyle", None)
-    # Capture only the plain bool, not the ViewDisplayModel object itself — the
-    # curtain-panel restore bug earlier in this module was caused by exactly
-    # this pattern (holding a live Revit API object across the suppress/export/
-    # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
-    # actually need to read or write it.
-    orig_smooth_edges = None
-    # The exception TYPE when the read itself fails, which is the difference
-    # between "AA was already off, nothing to do" and "this capture never
-    # found out whether AA was on". Both used to be recorded as
-    # applied_smooth_edges = "unchanged" -- and because
-    # bool(getattr(dm, "SmoothEdges", None)) can never return None, a failed
-    # read was in fact the ONLY way "unchanged" was ever written. A reader
-    # (tools/decode_stage_a_color_id._capture_reliability) could not tell the
-    # two apart, so a view whose AA state was unknown was reported exactly
-    # like one that needed no change.
-    smooth_edges_read_error = None
-    # No getattr default here. bool(getattr(dm, "SmoothEdges", None)) reads a
-    # host that does not expose the property at all as False -- "AA is
-    # already off, nothing to do" -- which is the same silent coercion the
-    # ShowShadows capture below already refuses via its own sentinel. An
-    # absent property means this capture does not know the view's AA state,
-    # and an unknown state is not an off state.
-    _MISSING_SMOOTH_EDGES = object()
-    try:
-        _dm = view.GetViewDisplayModel()
+        # Shadows were confirmed (empirically) to shift assigned colors in the
+        # exported TIFF, the same class of per-pixel color drift SmoothEdges/
+        # DisplayStyle above exist to eliminate -- same live-API-object-across-
+        # transaction-boundary caution as orig_smooth_edges. Unlike orig_smooth_
+        # edges's bool(getattr(..., None)), a missing ShowShadows attribute
+        # (unsupported on this Revit host) is kept as None rather than coerced
+        # to False: coercing it would make suppression below silently skip AND
+        # the sidecar report "unchanged" as if nothing needed doing, when the
+        # real state is actually unknown and the export may still carry shadow
+        # tinting.
+        _MISSING_SHOW_SHADOWS = object()
+        orig_show_shadows = None
         try:
-            _raw_smooth_edges = getattr(_dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
-            if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
-                # getattr without a default would have raised exactly this.
-                smooth_edges_read_error = "AttributeError"
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="smooth_edges_capture",
-                        message="ViewDisplayModel has no SmoothEdges attribute on this "
-                                "Revit host; anti-aliasing cannot be confirmed off and "
-                                "decoded edges may be blended",
-                        view_id=view_id,
-                    )
-            else:
-                orig_smooth_edges = bool(_raw_smooth_edges)
-        finally:
+            _dm = view.GetViewDisplayModel()
             try:
-                _dm.Dispose()
-            except Exception:
-                pass
-    except Exception as ex:
-        smooth_edges_read_error = type(ex).__name__
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="smooth_edges_capture",
-                message="could not read the view's SmoothEdges state ({0}: {1}); the "
-                        "capture proceeds but anti-aliasing cannot be confirmed off "
-                        "and decoded edges may be blended".format(
-                            type(ex).__name__, ex),
-                view_id=view_id,
-            )
+                _raw_show_shadows = getattr(_dm, "ShowShadows", _MISSING_SHOW_SHADOWS)
+                if _raw_show_shadows is _MISSING_SHOW_SHADOWS:
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="show_shadows_capture",
+                            message="ViewDisplayModel has no ShowShadows attribute on this "
+                                    "Revit host; shadow suppression will be skipped and the "
+                                    "exported TIFF may still carry shadow tinting",
+                            view_id=view_id,
+                        )
+                else:
+                    orig_show_shadows = bool(_raw_show_shadows)
+            finally:
+                try:
+                    _dm.Dispose()
+                except Exception as ex:
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="show_shadows_capture_dispose",
+                            message=str(ex),
+                            view_id=view_id,
+                        )
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="show_shadows_capture",
+                    message=str(ex),
+                    view_id=view_id,
+                )
 
-    # Shadows were confirmed (empirically) to shift assigned colors in the
-    # exported TIFF, the same class of per-pixel color drift SmoothEdges/
-    # DisplayStyle above exist to eliminate -- same live-API-object-across-
-    # transaction-boundary caution as orig_smooth_edges. Unlike orig_smooth_
-    # edges's bool(getattr(..., None)), a missing ShowShadows attribute
-    # (unsupported on this Revit host) is kept as None rather than coerced
-    # to False: coercing it would make suppression below silently skip AND
-    # the sidecar report "unchanged" as if nothing needed doing, when the
-    # real state is actually unknown and the export may still carry shadow
-    # tinting.
-    _MISSING_SHOW_SHADOWS = object()
-    orig_show_shadows = None
-    try:
-        _dm = view.GetViewDisplayModel()
+        # Captured only as (BoundingBoxXYZ, bool) -- same live-API-object-across-
+        # transaction-boundary caution as orig_display_style/orig_smooth_edges
+        # above -- rather than re-derived at restore time.
+        orig_crop_box = None
+        orig_crop_box_active = None
         try:
-            _raw_show_shadows = getattr(_dm, "ShowShadows", _MISSING_SHOW_SHADOWS)
-            if _raw_show_shadows is _MISSING_SHOW_SHADOWS:
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="show_shadows_capture",
-                        message="ViewDisplayModel has no ShowShadows attribute on this "
-                                "Revit host; shadow suppression will be skipped and the "
-                                "exported TIFF may still carry shadow tinting",
-                        view_id=view_id,
-                    )
-            else:
-                orig_show_shadows = bool(_raw_show_shadows)
-        finally:
-            try:
-                _dm.Dispose()
-            except Exception as ex:
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="show_shadows_capture_dispose",
-                        message=str(ex),
-                        view_id=view_id,
-                    )
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="show_shadows_capture",
-                message=str(ex),
-                view_id=view_id,
-            )
+            orig_crop_box = view.CropBox
+            orig_crop_box_active = bool(view.CropBoxActive)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="crop_box_capture",
+                    message=str(ex),
+                    view_id=view_id,
+                )
 
-    # Captured only as (BoundingBoxXYZ, bool) -- same live-API-object-across-
-    # transaction-boundary caution as orig_display_style/orig_smooth_edges
-    # above -- rather than re-derived at restore time.
-    orig_crop_box = None
-    orig_crop_box_active = None
-    try:
-        orig_crop_box = view.CropBox
-        orig_crop_box_active = bool(view.CropBoxActive)
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="crop_box_capture",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    state_out = None
-    suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
-    suppress_tx.Start()
+        state_out = None
+        suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
+        suppress_tx.Start()
+    except Exception:
+        # EVERYTHING from the committed detach to the suppress transaction's
+        # Start: a raise anywhere in it never reaches the restore, so the
+        # template goes back here (Codex, PR #226 -- twice: the first guard
+        # stopped at the solid-pattern lookup, before DisplayStyle and
+        # suppress_tx.Start()).
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="reattach_view_template_after_failure")
+        raise
     try:
         for fid_int, fstate in filter_state.items():
             if fstate["was_enabled"] and fstate["was_visible"]:
@@ -3827,8 +4239,37 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # applied a second time to already-decoded UV points.
         crop_bounds_xy = None
         model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+        # D: what this pass did with the crop, and the crop READ BACK.
+        crop_write = None
+        # Set before the FIRST crop write, so a write that raises half-way
+        # (CropBox taken, CropBoxActive refused) is still restored.
+        crop_write_attempted = False
+        _crop_fpp = geom["achieved_fpp_ft"] if geom is not None else None
         try:
-            if raster is not None and getattr(raster, "bounds_xy", None) is not None:
+            if crop_a_record is not None and not crop_a_record.get("write", True):
+                # D: an ACTIVE authored crop is never written -- not even with
+                # the identical box (Plaza 6112047: 8.8 % of pixels changed).
+                # The export renders it as it is; crop_uv is what it reads.
+                read_uv, read_error = read_crop_uv(
+                    view, getattr(raster, "view_basis", None), diag=diag, view_id=view_id)
+                crop_write = {
+                    "written": False, "source": crop_a_record.get("source"),
+                    "authored_crop_active": crop_a_record.get("authored_crop_active"),
+                    "read_back": crop_read_back_record(
+                        crop_uv, read_uv, read_error, _crop_fpp),
+                }
+                if crop_a_record.get("read_error"):
+                    crop_write["sizing_read_error"] = crop_a_record["read_error"]
+                if read_uv is not None and crop_a_record.get("source") == "authored_read":
+                    crop_bounds_xy = tuple(read_uv)
+                    if getattr(raster, "bounds_xy", None) is not None:
+                        model_crop_offset_uv = (
+                            read_uv[0] - float(raster.bounds_xy.xmin),
+                            read_uv[1] - float(raster.bounds_xy.ymin),
+                            read_uv[2] - float(raster.bounds_xy.xmax),
+                            read_uv[3] - float(raster.bounds_xy.ymax),
+                        )
+            elif raster is not None and getattr(raster, "bounds_xy", None) is not None:
                 render_bounds, model_crop_offset_uv = compute_model_crop(
                     getattr(raster, "model_clip_bounds", None), raster.bounds_xy
                 )
@@ -3868,9 +4309,28 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
                 new_crop_box = _crop_box_from_uv_bounds(view, basis, b.xmin, b.ymin, b.xmax, b.ymax)
                 if new_crop_box is not None:
+                    crop_write_attempted = True
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
                     crop_bounds_xy = (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
+                    # D: READ BACK. Under a scope box the write commits and
+                    # the crop does not move; that is a fault, not a crop.
+                    read_uv, read_error = read_crop_uv(view, basis, diag=diag,
+                                                       view_id=view_id)
+                    crop_write = {
+                        "written": True,
+                        "source": (crop_a_record or {}).get("source", "model_crop"),
+                        "authored_crop_active": (crop_a_record or {}).get(
+                            "authored_crop_active", orig_crop_box_active),
+                        "read_back": crop_read_back_record(
+                            crop_bounds_xy, read_uv, read_error, _crop_fpp),
+                    }
+                    try:
+                        crop_write["crop_box_active_read_back"] = bool(view.CropBoxActive)
+                    except Exception as ex:
+                        crop_write["crop_box_active_read_back"] = None
+                        crop_write["crop_box_active_read_error"] = "{0}: {1}".format(
+                            type(ex).__name__, ex)
                 else:
                     model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
                     if diag is not None:
@@ -4272,7 +4732,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         global_threshold = int(getattr(cfg, "color_id_buffer_global_assignment_threshold", 32767))
         step = choose_step(global_threshold if total_count <= global_threshold else total_count)
         # TODO(Stage B+): add bbox pre-filter / multi-pass color batching if one view exceeds palette capacity.
-        palette = build_palette(total_count, step=step)
+        # reserve_tick_colour: the registered capture's ticks are MARK_COLOUR
+        # in both passes, so no element or link category may take a colour
+        # whose fringe reads as theirs (stage_a_palette).
+        palette, step, palette_reservation = stage_a_palette(
+            total_count, step, reserve_tick_colour=reserve_tick_colour)
         color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_host)}
         # Shared stepped allocation: link-category filter colors are sliced from
         # the same palette as HOST element colors (no independent RNG), so no
@@ -4404,6 +4868,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         suppress_tx.Commit()
     except Exception:
         suppress_tx.RollBack()
+        # RollBack undoes the suppress transaction, not the committed detach.
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="reattach_view_template_after_failure")
         raise
 
     actual_pixel_size = pixel_size
@@ -4503,7 +4970,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             )
             _restore_step("restore_show_shadows", _restore_show_shadows)
 
-        if orig_crop_box is not None:
+        # Only a crop this pass WROTE is put back: restoring one it did not
+        # write would be the identity write D exists to avoid.
+        if orig_crop_box is not None and crop_write_attempted:
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
                 view.CropBoxActive = orig_crop_box_active
@@ -4608,10 +5077,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # as the detach at the top of this function), and once reattached
         # Revit reasserts whatever the template dictates for the settings it
         # controls anyway.
-        if view_template_detached and orig_view_template_id is not None:
-            def _restore_view_template():
-                view.ViewTemplateId = orig_view_template_id
-            _restore_step("restore_view_template", _restore_view_template)
+        if view_template_handle is not None:
+            _restore_step("restore_view_template",
+                          lambda: _reattach_view_template(view_template_handle))
 
         try:
             restore_tx.Commit()
@@ -4676,10 +5144,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
         "backoff_floor_px": backoff_floor_px,
         "backoff_max_retries": MAX_MISMATCH_RETRIES,
-        # The rectangle actually set as view.CropBox (pre-C5 "bounds_xy").
-        # None when no crop could be applied: the TIFF's extent is then
-        # FitToPage's and must not be read from this record.
+        # The crop the export renders by (pre-C5 "bounds_xy"): the rectangle
+        # this pass set as view.CropBox, or -- D, an active authored crop,
+        # never written -- the crop as READ. None when neither applies: the
+        # TIFF's extent is then FitToPage's and must not be read from this
+        # record. Which one, and the read-back, is "crop_write".
         "crop_uv": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+        "crop_write": crop_write,
     }
     if sizing_frame != "crop_a":
         # Frame B's paper extent (the frame-B fallback only; C7).
@@ -4704,7 +5175,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "verified_against_revit": False,
         })
         crop_snapped_uv = [float(v) for v in geom["crop_snapped_uv"]]
-        if crop_snapped_uv != frame_record["crop_uv"]:
+        # Only a crop this pass wrote was snapped: an authored crop left as
+        # found (D) renders unsnapped, so its snapped lattice rectangle is
+        # not something the export rendered and is not recorded as one.
+        if crop_snapped_uv != frame_record["crop_uv"] and (
+                (crop_write or {}).get("written") is not False):
             frame_record["crop_snapped_uv"] = crop_snapped_uv
     elif geom is not None and frame_uv is not None:
         # Stage A step 2's frame-derived lattice. THREE-VALUED as a block: a
@@ -4838,11 +5313,18 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "phase_swap_element_set_audit": phase_swap_element_set_audit,
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
+        # The registered capture's reserved tick colour, and how many palette
+        # colours were withheld as its look-alikes (stage_a_palette).
+        "palette_reservation": palette_reservation,
         "tiff_path": tiff_path,
+        # The READ-BACK (C), not the attempt; view_template_detach says on
+        # which view it was cleared and what Revit then reported.
         "view_template_detached": view_template_detached,
         "orig_view_template_id": (
-            orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
-        ),
+            view_template_detach["orig_view_template_id"]
+            if not isinstance(view_template_detach["orig_view_template_id"], dict)
+            else None),
+        "view_template_detach": view_template_detach,
     }
 
     # A dimension mismatch that survived the halving backoff is a failed
@@ -4889,6 +5371,20 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # known, so the file carries the faults (defect class 4; the model
     # sidecar used to be written before they were computed).
     model_faults = []
+    if view_template_detach.get("fault"):
+        model_faults.append({"fault": view_template_detach["fault"],
+                             "detail": view_template_detach})
+        if failure_reason is None:
+            failure_reason = view_template_detach["fault"]
+    crop_fault = crop_write_fault(crop_write)
+    if crop_fault is not None:
+        model_faults.append({"fault": crop_fault, "detail": crop_write})
+        if failure_reason is None:
+            failure_reason = crop_fault
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite="crop_read_back",
+                       message="view failed: {0}: {1}".format(crop_fault, crop_write),
+                       view_id=view_id)
     if unsuppressed_imports:
         model_faults.append({"fault": "view_specific_import_not_suppressed",
                              "detail": [r.get("element_id") for r in unsuppressed_imports]})
@@ -5169,7 +5665,9 @@ def _verify_annotation_overrides_restored(view, painted_ids, diag=None, view_id=
 
 def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                            raster=None, elements=None,
-                                           authored_check_exclude_ids=None):
+                                           authored_check_exclude_ids=None,
+                                           reserve_tick_colour=False,
+                                           mark_ids=None):
     """Export one view's ANNOTATION color ID buffer, over frame B.
 
     Args:
@@ -5398,7 +5896,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         split_stage_a_pass_membership(
             elements, capture_view_id_int=view_id, diag=diag,
             basis_out=membership_basis_by_id,
-            unreadable_imports_out=unreadable_imports))
+            unreadable_imports_out=unreadable_imports,
+            capture_view_name=getattr(view, "Name", None)))
     membership = stage_a_pass_membership_summary(
         _model_members, anno_elements, unresolved, basis_counts,
         unreadable_imports=unreadable_imports)
@@ -5424,8 +5923,25 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # ---- this pass's OWN palette (see the section comment) -------------
     global_threshold = int(getattr(cfg, "color_id_buffer_global_assignment_threshold", 32767))
     step = choose_step(global_threshold if count_anno <= global_threshold else count_anno)
-    palette = build_palette(count_anno, step=step)
-    color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_anno)}
+    # The registered capture's ticks (``mark_ids``) are painted MARK_COLOUR,
+    # as in the model pass, and take no palette entry; with
+    # reserve_tick_colour no element takes a colour whose fringe reads as
+    # theirs. Both are the reserved tick colour (Greg, 2026-10-02): the ticks
+    # are found by ONE colour in both captures, never by a palette colour that
+    # text anti-aliasing can also produce (run 1001-1950).
+    _mark_ints = set(int(i) for i in (mark_ids or ()))
+    element_ids = [eid for eid in resolved_ids if eid.IntegerValue not in _mark_ints]
+    painted_mark_ids = [eid.IntegerValue for eid in resolved_ids
+                        if eid.IntegerValue in _mark_ints]
+    palette, step, palette_reservation = stage_a_palette(
+        len(element_ids), step, reserve_tick_colour=reserve_tick_colour)
+    color_map = {element_ids[i].IntegerValue: palette[i]
+                 for i in range(len(element_ids))}
+    if painted_mark_ids:
+        from .stage_a_registration import MARK_COLOUR as _MARK_COLOUR
+        for _mid in painted_mark_ids:
+            color_map[_mid] = tuple(_MARK_COLOUR)
+    palette_reservation["mark_ids_painted"] = sorted(painted_mark_ids)
 
     # ---- bbox records (Stage A step 4) ---------------------------------
     #
@@ -5519,165 +6035,152 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         raise RuntimeError("No solid drafting fill pattern found in project")
 
     # ---- captured state, for restore -----------------------------------
-    orig_view_template_id = None
-    try:
-        orig_view_template_id = view.ViewTemplateId
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="annotation_capture_view_template",
-                message=str(ex),
-                view_id=view_id,
-            )
+    # C: the primary's template for a dependent view; the read-back is the
+    # record (_detach_view_template).
+    view_template_detach, view_template_handle = _detach_view_template(
+        doc, view, "VOP Stage A ANNO DETACH view template", diag=diag,
+        view_id=view_id, callsite="annotation_detach_view_template")
+    view_template_detached = bool(view_template_detach["detached"])
 
-    view_template_detached = False
-    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
-        detach_tx = Transaction(doc, "VOP Stage A ANNO DETACH view template")
-        detach_tx.Start()
+    # The detach above COMMITTED; a raise from here to the suppress
+    # transaction's Start would leave the template detached -- for a
+    # dependent view, on its PRIMARY (Codex, PR #226). One guard over all of
+    # it.
+    try:
+        filter_state = {}
         try:
-            view.ViewTemplateId = ElementId.InvalidElementId
-            detach_tx.Commit()
-            view_template_detached = True
-        except Exception as ex:
-            detach_tx.RollBack()
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_detach_view_template",
-                    message="Could not detach view template before the annotation pass; "
-                            "template-controlled settings may remain locked: {0}".format(ex),
-                    view_id=view_id,
-                )
-
-    filter_state = {}
-    try:
-        for fid in view.GetFilters():
-            filter_state[fid.IntegerValue] = {
-                "was_enabled": view.GetIsFilterEnabled(fid),
-                "was_visible": view.GetFilterVisibility(fid),
-            }
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="annotation_capture_filters",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    # NOTE: annotation categories the view itself hides are NOT unhidden here.
-    # "If the view hides it, the capture does not unhide it" is a LOCKED
-    # decision, and this pass hides model categories only -- it never touches
-    # an annotation category's visibility in either direction.
-    model_category_hidden_state = _model_category_hidden_state(
-        doc, view, diag=diag, view_id=view_id)
-    # Only categories whose halftone write SUCCEEDED, so restore touches exactly
-    # what this pass changed.
-    category_halftone_state = {}
-    # Every category considered, three-valued: "applied" / "not_overridable" /
-    # "failed". A category absent from category_halftone_state is not the same
-    # fact as one that was never looked at, and this is what says which.
-    category_halftone_outcomes = {}
-
-    orig_crop_box = None
-    orig_crop_box_active = None
-    try:
-        orig_crop_box = view.CropBox
-        orig_crop_box_active = bool(view.CropBoxActive)
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="annotation_capture_crop_box",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    orig_display_style = getattr(view, "DisplayStyle", None)
-
-    # SmoothEdges, captured the way export_color_id_buffer_view captures it
-    # and for the same reason: the plain bool only, never the live
-    # ViewDisplayModel held across a transaction boundary. Three-valued by
-    # construction -- a missing attribute is an UNKNOWN AA state, not an off
-    # one, so it is recorded as a read error rather than coerced to False.
-    # Captured only when the caller asked for the change; otherwise the
-    # sidecar says "not_attempted", which is a different fact from the model
-    # pass's "read_failed".
-    def _dispose_view_display_model(dm, callsite):
-        """Dispose a ViewDisplayModel, RECORDING a failure rather than
-        discarding it (Refactor Rule #1). The model pass spells this as a bare
-        ``except Exception: pass`` in three places; copying that idiom into
-        this pass would have added three more discarded handlers to the
-        repository's ground-truth population. A leaked ViewDisplayModel is not
-        a capture failure, so nothing here raises -- but a host on which
-        Dispose raises every time is a fact worth having once."""
-        try:
-            dm.Dispose()
+            for fid in view.GetFilters():
+                filter_state[fid.IntegerValue] = {
+                    "was_enabled": view.GetIsFilterEnabled(fid),
+                    "was_visible": view.GetFilterVisibility(fid),
+                }
         except Exception as ex:
             if diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
-                    callsite=callsite,
-                    message="could not dispose the ViewDisplayModel ({0}: {1}); the "
-                            "capture is unaffected".format(type(ex).__name__, ex),
+                    callsite="annotation_capture_filters",
+                    message=str(ex),
                     view_id=view_id,
                 )
 
-    orig_smooth_edges = None
-    smooth_edges_read_error = None
-    _MISSING_SMOOTH_EDGES = object()
-    if anno_smooth_edges_off:
+        # NOTE: annotation categories the view itself hides are NOT unhidden here.
+        # "If the view hides it, the capture does not unhide it" is a LOCKED
+        # decision, and this pass hides model categories only -- it never touches
+        # an annotation category's visibility in either direction.
+        model_category_hidden_state = _model_category_hidden_state(
+            doc, view, diag=diag, view_id=view_id)
+        # Only categories whose halftone write SUCCEEDED, so restore touches exactly
+        # what this pass changed.
+        category_halftone_state = {}
+        # Every category considered, three-valued: "applied" / "not_overridable" /
+        # "failed". A category absent from category_halftone_state is not the same
+        # fact as one that was never looked at, and this is what says which.
+        category_halftone_outcomes = {}
+
+        orig_crop_box = None
+        orig_crop_box_active = None
         try:
-            _dm = view.GetViewDisplayModel()
+            orig_crop_box = view.CropBox
+            orig_crop_box_active = bool(view.CropBoxActive)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_capture_crop_box",
+                    message=str(ex),
+                    view_id=view_id,
+                )
+
+        orig_display_style = getattr(view, "DisplayStyle", None)
+
+        # SmoothEdges, captured the way export_color_id_buffer_view captures it
+        # and for the same reason: the plain bool only, never the live
+        # ViewDisplayModel held across a transaction boundary. Three-valued by
+        # construction -- a missing attribute is an UNKNOWN AA state, not an off
+        # one, so it is recorded as a read error rather than coerced to False.
+        # Captured only when the caller asked for the change; otherwise the
+        # sidecar says "not_attempted", which is a different fact from the model
+        # pass's "read_failed".
+        def _dispose_view_display_model(dm, callsite):
+            """Dispose a ViewDisplayModel, RECORDING a failure rather than
+            discarding it (Refactor Rule #1). The model pass spells this as a bare
+            ``except Exception: pass`` in three places; copying that idiom into
+            this pass would have added three more discarded handlers to the
+            repository's ground-truth population. A leaked ViewDisplayModel is not
+            a capture failure, so nothing here raises -- but a host on which
+            Dispose raises every time is a fact worth having once."""
             try:
-                _raw_smooth_edges = getattr(
-                    _dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
-                if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
-                    smooth_edges_read_error = "AttributeError"
-                    if diag is not None:
-                        diag.warn(
-                            phase="color_id_buffer",
-                            callsite="annotation_smooth_edges_capture",
-                            message="ViewDisplayModel has no SmoothEdges attribute on "
-                                    "this Revit host; anti-aliasing cannot be confirmed "
-                                    "off for the annotation pass and decoded edges may "
-                                    "be blended",
-                            view_id=view_id,
-                        )
-                else:
-                    orig_smooth_edges = bool(_raw_smooth_edges)
-            finally:
-                _dispose_view_display_model(
-                    _dm, "annotation_smooth_edges_capture_dispose")
-        except Exception as ex:
-            smooth_edges_read_error = type(ex).__name__
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_smooth_edges_capture",
-                    message="could not read the view's SmoothEdges state ({0}: {1}); the "
-                            "annotation capture proceeds but anti-aliasing cannot be "
-                            "confirmed off".format(type(ex).__name__, ex),
-                    view_id=view_id,
-                )
+                dm.Dispose()
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite=callsite,
+                        message="could not dispose the ViewDisplayModel ({0}: {1}); the "
+                                "capture is unaffected".format(type(ex).__name__, ex),
+                        view_id=view_id,
+                    )
 
-    state_out = None
-    painted_ids = []
-    authored_overrides = {
-        "status": "unavailable",
-        "reason": "the suppression transaction did not reach the override scan",
-    }
-    crop_bounds_xy = None
-    applied_display_style = "unchanged"
-    # "not_attempted" is this pass's shipped state: it has never touched
-    # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
-    # cannot tell those apart cannot tell an AA-off capture from one that
-    # never asked.
-    applied_smooth_edges = "not_attempted"
+        orig_smooth_edges = None
+        smooth_edges_read_error = None
+        _MISSING_SMOOTH_EDGES = object()
+        if anno_smooth_edges_off:
+            try:
+                _dm = view.GetViewDisplayModel()
+                try:
+                    _raw_smooth_edges = getattr(
+                        _dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+                    if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                        smooth_edges_read_error = "AttributeError"
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="annotation_smooth_edges_capture",
+                                message="ViewDisplayModel has no SmoothEdges attribute on "
+                                        "this Revit host; anti-aliasing cannot be confirmed "
+                                        "off for the annotation pass and decoded edges may "
+                                        "be blended",
+                                view_id=view_id,
+                            )
+                    else:
+                        orig_smooth_edges = bool(_raw_smooth_edges)
+                finally:
+                    _dispose_view_display_model(
+                        _dm, "annotation_smooth_edges_capture_dispose")
+            except Exception as ex:
+                smooth_edges_read_error = type(ex).__name__
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_smooth_edges_capture",
+                        message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                                "annotation capture proceeds but anti-aliasing cannot be "
+                                "confirmed off".format(type(ex).__name__, ex),
+                        view_id=view_id,
+                    )
 
-    suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
-    suppress_tx.Start()
+        state_out = None
+        painted_ids = []
+        authored_overrides = {
+            "status": "unavailable",
+            "reason": "the suppression transaction did not reach the override scan",
+        }
+        crop_bounds_xy = None
+        # D: the crop write's read-back (None when this pass writes no crop).
+        crop_write = None
+        applied_display_style = "unchanged"
+        # "not_attempted" is this pass's shipped state: it has never touched
+        # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
+        # cannot tell those apart cannot tell an AA-off capture from one that
+        # never asked.
+        applied_smooth_edges = "not_attempted"
+
+        suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
+        suppress_tx.Start()
+    except Exception:
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="annotation_reattach_view_template")
+        raise
     try:
         # Both loops are the "hide_categories" mode's work. Under "external"
         # the caller's own suppression is what makes this capture annotation-
@@ -5715,6 +6218,19 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
                     crop_bounds_xy = tuple(float(v) for v in crop_to_write_uv)
+                    # D: READ BACK; a write that does not take is a fault.
+                    read_uv, read_error = read_crop_uv(view, basis, diag=diag,
+                                                       view_id=view_id)
+                    crop_write = {"written": True, "source": crop_applied,
+                                  "read_back": crop_read_back_record(
+                                      crop_bounds_xy, read_uv, read_error,
+                                      geom.get("achieved_fpp_ft"))}
+                    try:
+                        crop_write["crop_box_active_read_back"] = bool(view.CropBoxActive)
+                    except Exception as ex:
+                        crop_write["crop_box_active_read_back"] = None
+                        crop_write["crop_box_active_read_error"] = "{0}: {1}".format(
+                            type(ex).__name__, ex)
                 elif diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
@@ -5942,24 +6458,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # ONLY committed state at this point, which is why re-attaching it is
         # the whole recovery rather than a partial one.
         suppress_tx.RollBack()
-        if view_template_detached and orig_view_template_id is not None:
-            reattach_tx = Transaction(doc, "VOP Stage A ANNO REATTACH view template")
-            reattach_tx.Start()
-            try:
-                view.ViewTemplateId = orig_view_template_id
-                reattach_tx.Commit()
-            except Exception as ex:
-                reattach_tx.RollBack()
-                if diag is not None:
-                    diag.error(
-                        phase="color_id_buffer",
-                        callsite="annotation_reattach_view_template",
-                        message="the annotation pass failed during suppression AND could "
-                                "not re-attach the view template it had detached; this "
-                                "view is left detached from its template",
-                        view_id=view_id,
-                        exc=ex,
-                    )
+        _reattach_after_failure(doc, view_template_handle, diag=diag, view_id=view_id,
+                                callsite="annotation_reattach_view_template")
         raise
 
     actual_pixel_size = pixel_size
@@ -6113,10 +6613,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
                 _restore_step("annotation_restore_filter_enabled", _restore_filter)
 
-        if view_template_detached and orig_view_template_id is not None:
-            def _restore_view_template():
-                view.ViewTemplateId = orig_view_template_id
-            _restore_step("annotation_restore_view_template", _restore_view_template)
+        if view_template_handle is not None:
+            _restore_step("annotation_restore_view_template",
+                          lambda: _reattach_view_template(view_template_handle))
 
         try:
             restore_tx.Commit()
@@ -6193,6 +6692,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             # view, so the mode alone does not say what this capture did.
             "crop_applied": crop_applied,
             "authored_crop_active": authored_crop_active,
+            # D: the crop this pass wrote, READ BACK; None when it wrote none.
+            "crop_write": crop_write,
             "rendered_uv_reason": (
                 None if crop_bounds_xy is not None else (
                     "the view's authored crop was left as found and no rectangle "
@@ -6208,10 +6709,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "requested_px_source": requested_px_source,
         },
         "membership": membership,
+        # ELEMENTS only: the registered capture's ticks are not in it -- they
+        # are MARK_COLOUR, named under palette_reservation.mark_ids_painted.
         "color_assignment_map": {
             str(eid): list(color_map[eid]) for eid in color_map
+            if eid not in _mark_ints
         },
-        "color_assignment_count": count_anno,
+        "color_assignment_count": len(element_ids),
         # M1: what this pass collected and did NOT paint because the view
         # does not show it -- counts per category, never per element.
         "not_painted": not_painted,
@@ -6227,6 +6731,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # view with no annotations.
         "annotation_bbox_status": annotation_bbox_status,
         "palette_step": step,
+        "palette_reservation": palette_reservation,
         "paint_failures": paint_failures,
         "paint_failed_element_ids": paint_failed_element_ids,
         # The model category state this pass READ. Under the "external"
@@ -6267,11 +6772,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # is a failed capture however good the TIFF is.
         "restore_failures": restore_failures,
         "tiff_path": tiff_path,
+        # The READ-BACK (C), not the attempt.
         "view_template_detached": view_template_detached,
         "orig_view_template_id": (
-            orig_view_template_id.IntegerValue
-            if orig_view_template_id is not None else None
-        ),
+            view_template_detach["orig_view_template_id"]
+            if not isinstance(view_template_detach["orig_view_template_id"], dict)
+            else None),
+        "view_template_detach": view_template_detach,
         # UNCONFIRMED (no Revit run in this session), and load-bearing for
         # this pass specifically:
         #  - Element color overrides are confirmed to work on SOME annotation
@@ -6326,11 +6833,23 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     def _fault(name, detail):
         capture_faults.append({"fault": name, "detail": detail})
 
+    if view_template_detach.get("fault"):
+        # Most upstream of all: every template-controlled write after the
+        # detach (display style, category visibility, filters) may not have
+        # taken (probe: DisplayStyle "cannot be modified" on a dependent).
+        _fault(view_template_detach["fault"], view_template_detach)
+
     if membership_error is not None:
         # An empty annotation TIFF from a collector that threw is
         # indistinguishable, downstream, from a view that genuinely has no
         # annotations. It is not the same fact.
         _fault("annotation_collection_failed", membership_error)
+
+    anno_crop_fault = crop_write_fault(crop_write)
+    if anno_crop_fault is not None:
+        # The crop handed to Revit is not the crop the view has: the export
+        # renders whatever the view kept (a scope box), not this lattice.
+        _fault(anno_crop_fault, crop_write)
 
     if write_crop_here and crop_bounds_xy is None:
         # Under "untouched" there is no frame to have failed to apply: the
@@ -6380,6 +6899,22 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     if dim_report.get("dim_check") == "mismatch":
         _fault("export_dim_mismatch", dim_report.get("dim_read_error"))
+
+    # Item 3 (Greg, 2026-10-02): a degenerate view (user error in Revit) is
+    # expected to fail, but it must be FLAGGED, not left to a refused
+    # registration downstream to be noticed.
+    degenerate = annotation_export_degenerate(
+        dim_report.get("actual_w"), dim_report.get("actual_h"),
+        frame_px if crop_applied == "frame_b" else geom.get("crop_px"), vertical)
+    if degenerate is not None:
+        _fault("annotation_export_degenerate", dict(
+            degenerate,
+            message="the annotation export is {0[0]} x {0[1]} px against a "
+                    "{1[0]} x {1[1]} model capture ({2}): not a render of the view "
+                    "at a usable scale; check the view's annotation crop and "
+                    "extents in Revit".format(degenerate["actual_px"],
+                                              degenerate["model_px"],
+                                              degenerate["reason"])))
 
     if override_restore_check.get("still_set_count"):
         # A view left painted is a failed capture even though the TIFF is
@@ -6441,7 +6976,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "sidecar_path": json_path,
         "output_dir": out_dir,
         "frame": state_out["frame"],
-        "color_assignment_count": count_anno,
+        "color_assignment_count": state_out["color_assignment_count"],
         "timings": {
             "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
             # P2, read by the registered capture into its timings_ms.
