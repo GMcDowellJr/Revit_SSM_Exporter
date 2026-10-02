@@ -667,6 +667,29 @@ def still_hidden(doc, view, element_ids):
     return hidden, unreadable
 
 
+def line_ids_in_view(doc, view):
+    """Sorted ids of the OST_Lines elements FilteredElementCollector(doc,
+    view.Id) returns -- the lines the view DRAWS (a hidden category's
+    elements are not returned). Raises when it cannot be read."""
+    from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
+    lines_id = int(BuiltInCategory.OST_Lines)
+    ids = []
+    for elem in FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType():
+        cat_id = getattr(getattr(getattr(elem, "Category", None), "Id", None),
+                         "IntegerValue", None)
+        if cat_id is not None and int(cat_id) == lines_id:
+            elem_id = _element_id_int(getattr(elem, "Id", None))
+            if elem_id is not None:
+                ids.append(elem_id)
+    return sorted(ids)
+
+
+def set_lines_category_hidden(view, hidden):
+    """view.SetCategoryHidden(OST_Lines, hidden). Inside an open Transaction."""
+    from Autodesk.Revit.DB import BuiltInCategory, ElementId
+    view.SetCategoryHidden(ElementId(int(BuiltInCategory.OST_Lines)), bool(hidden))
+
+
 def _lines_category_hidden(view):
     """Whether the view hides OST_Lines, three-valued. The marks are detail
     lines: a view that hides Lines draws none of them, in either pass."""

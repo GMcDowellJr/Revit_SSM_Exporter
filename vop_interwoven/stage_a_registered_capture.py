@@ -256,8 +256,8 @@ def mark_fpp_ft(view, raster, cfg):
 # What total holds beyond their sum -- the membership collection, detail-line
 # hide/show, link-category discovery, the view-state and mark read-backs --
 # is reported as ``unaccounted``, not hidden.
-TIMING_PARTITION = ("authored_override_scan", "mark_layout", "marks_create",
-                    "model_pass", "suppression", "annotation_pass", "rollback",
+TIMING_PARTITION = ("authored_override_scan", "lines_unhide", "mark_layout",
+                    "marks_create", "model_pass", "suppression", "annotation_pass", "rollback",
                     "restore_element_overrides", "view_membership_readback")
 
 
@@ -300,6 +300,99 @@ def view_membership_verdict(before, after, limit=200):
             "added": added[:limit], "removed": removed[:limit]}
 
 
+def unhide_lines_for_ticks(doc, view, Transaction, TransactionStatus, diag=None,
+                           view_id=None, fault=None):
+    """B: make a view that hides OST_Lines draw the ticks, as authored
+    otherwise. Inside the capture's TransactionGroup; the rollback is the
+    restore. Returns the record (``state`` "not_needed" when the view does
+    not hide Lines). ``fault(name, message)`` is called for each failure:
+
+    * ``lines_unhide_failed`` -- the template would not detach, or Lines
+      would not unhide (read back): the ticks will not draw, and
+      ``registration_marks_may_not_draw`` follows from the marks' own read;
+    * ``revealed_lines_not_hidden`` -- a line unhiding revealed could not be
+      hidden: it would draw in both captures, where the author hid it.
+    """
+    from . import stage_a_registration as registration
+    from .color_id_buffer import _detach_view_template
+
+    hidden, error = registration._lines_category_hidden(view)
+    record = {"lines_category_hidden_before": hidden}
+    if error is not None:
+        record["lines_category_hidden_error"] = error
+    if hidden is not True:
+        record["state"] = "not_needed"
+        return record
+
+    def _fail(name, message):
+        record["state"] = "failed"
+        record["reason"] = message
+        if fault is not None:
+            fault(name, message)
+        return record
+
+    detach, _handle = _detach_view_template(
+        doc, view, "VOP Stage A detach template to unhide Lines", diag=diag,
+        view_id=view_id, callsite="registered_lines_detach")
+    record["template_detach"] = detach
+    if detach.get("fault"):
+        return _fail("lines_unhide_failed",
+                     "the view hides OST_Lines and its template would not detach "
+                     "(ViewTemplateId reads {0}), so Lines cannot be unhidden".format(
+                         detach.get("read_back_view_template_id")))
+    try:
+        before = registration.line_ids_in_view(doc, view)
+    except Exception as ex:
+        return _fail("lines_unhide_failed",
+                     "the view's lines could not be read before the unhide: "
+                     "{0}: {1}".format(type(ex).__name__, ex))
+    tx = Transaction(doc, "VOP Stage A unhide Lines for the ticks")
+    tx.Start()
+    try:
+        registration.set_lines_category_hidden(view, False)
+        if tx.Commit() != TransactionStatus.Committed:
+            raise RuntimeError("the unhide Transaction did not commit")
+    except Exception as ex:
+        tx.RollBack()
+        return _fail("lines_unhide_failed", "OST_Lines would not unhide: {0}: {1}".format(
+            type(ex).__name__, ex))
+    after_hidden, after_error = registration._lines_category_hidden(view)
+    record["lines_category_hidden_after"] = after_hidden
+    if after_hidden is not False:
+        return _fail("lines_unhide_failed",
+                     "OST_Lines reads {0} after the unhide{1}".format(
+                         after_hidden, " ({0})".format(after_error) if after_error else ""))
+    try:
+        revealed = sorted(set(registration.line_ids_in_view(doc, view)) - set(before))
+    except Exception as ex:
+        return _fail("revealed_lines_not_hidden",
+                     "the view's lines could not be read after the unhide, so the "
+                     "lines it revealed are unknown: {0}: {1}".format(type(ex).__name__, ex))
+    record.update(lines_before=len(before), revealed=len(revealed))
+    if revealed:
+        tx = Transaction(doc, "VOP Stage A hide the lines the unhide revealed")
+        tx.Start()
+        try:
+            hide = registration.hide_in_view(doc, view, revealed)
+            if tx.Commit() != TransactionStatus.Committed:
+                raise RuntimeError("the hide Transaction did not commit")
+        except Exception as ex:
+            tx.RollBack()
+            return _fail("revealed_lines_not_hidden", "{0}: {1}".format(
+                type(ex).__name__, ex))
+        still, unreadable = registration.still_hidden(doc, view, hide["hidden"])
+        record["revealed_hidden"] = len(still)
+        missed = sorted(set(revealed) - set(still))
+        if hide["error"] or missed or unreadable:
+            record["revealed_not_hidden"] = missed[:200]
+            return _fail("revealed_lines_not_hidden",
+                         "{0} of {1} revealed line(s) do not read hidden ({2}; {3} "
+                         "unreadable); they draw where the author hid them".format(
+                             len(missed), len(revealed), hide["error"], len(unreadable)))
+    record["state"] = "value"
+    return record
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -319,6 +412,8 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # How many annotation bboxes the ticks were kept clear of, and the
         # cost of reading them. Per-tick placement rides on each mark.
         "mark_avoidance": record.get("mark_avoidance"),
+        # B: whether the capture unhid OST_Lines for the ticks, and how.
+        "lines_unhidden": record.get("lines_unhidden"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
@@ -426,6 +521,20 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         record["_authored_before"] = _non_blank_override_ids(view, model_member_ids)
         record["timings_ms"]["authored_override_scan"] = round(
             (time.time() - _t) * 1000.0, 3)
+
+        # ---- 0b: B -- a view that hides OST_Lines -------------------------
+        # The ticks are detail lines: no line style draws while the view
+        # hides OST_Lines (Q6 run 20261001T183711, 4284900: 0 px changed by
+        # the ticks in every variant, the template detached or not). So the
+        # capture unhides Lines -- which needs the template detached first
+        # ("Category cannot be hidden" otherwise) -- and hides, one by one,
+        # every line that unhiding REVEALED, so both captures still show
+        # the view as authored. All inside the group: the rollback undoes it.
+        _t = time.time()
+        record["lines_unhidden"] = unhide_lines_for_ticks(
+            doc, view, Transaction, TransactionStatus, diag=diag, view_id=view_id,
+            fault=_fault)
+        record["timings_ms"]["lines_unhide"] = round((time.time() - _t) * 1000.0, 3)
 
         # ---- 1: registration marks -----------------------------------------
         _t = time.time()

@@ -113,7 +113,11 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   The view's other detail lines are hidden for the model pass only. Ticks are
   32 px arms in the thinnest SOLID line style the curve allows whose own
   subcategory the view does not hide (else a temporary weight-1 solid Lines
-  subcategory, rolled back; `line_style.path` records which), sized on the model
+  subcategory, rolled back; `line_style.path` records which). A view that
+  hides OST_Lines itself gets its template detached and Lines unhidden for the
+  capture, with every line that revealed hidden one by one
+  (`registration_marks.lines_unhidden`); failing that, `lines_unhide_failed`.
+  Ticks are sized on the model
   pass's own achieved lattice (`mark_fpp_ft()`, so a capped view keeps 32 px),
   and moved within their corner/edge band to clear annotation bboxes; each
   segment records `placement` (original / moved / blocked). The annotation
