@@ -97,3 +97,66 @@ def test_a_marker_is_painted_in_the_annotation_FILE_and_the_crop_element_is_not(
     # The annotation export painted the marker in its own colour, not white.
     assert exports[1]["overrides"].get(1006) not in (None, (255, 255, 255))
     assert out["registration"]["success"] is True
+
+
+# --- Codex, PR #226: a marker whose Name will not read ----------------------
+#
+# It may be the capture view's own crop region, and painting that colours the
+# whole crop. It is left in the model pass under its own basis, counted, and
+# warned once per split. Mutation: falling through to annotation (the old
+# behaviour) turns the first two red; dropping the warn turns the third red.
+
+class _NamelessElem(_Elem):
+    @property
+    def Name(self):
+        raise RuntimeError("name unavailable")
+
+    @Name.setter
+    def Name(self, _value):
+        pass
+
+
+class _Diag(object):
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, **kw):
+        self.warnings.append(kw)
+
+
+def test_a_marker_whose_name_will_not_read_is_not_painted():
+    rec = _place(_NamelessElem(4, VIEWERS, None))
+    assert (rec["pass"], rec["basis"]) == (STAGE_A_PASS_MODEL,
+                                           "view_reference_name_unreadable")
+    assert "name unavailable" in rec["reason"]
+    # Control: with no capture view name to compare, the name decides
+    # nothing, and the marker is painted.
+    rec = _place(_NamelessElem(4, VIEWERS, None), view_name=None)
+    assert (rec["pass"], rec["basis"]) == (STAGE_A_PASS_ANNOTATION,
+                                           "view_reference_category")
+
+
+def test_the_split_counts_and_warns_once_for_unreadable_names():
+    elems = [_NamelessElem(4, VIEWERS, None), _NamelessElem(5, VIEWERS, None),
+             _Elem(1, VIEWERS, "Section 3")]
+    diag = _Diag()
+    model, anno, _u, basis = split_stage_a_pass_membership(
+        elems, capture_view_id_int=CAPTURE_VIEW_ID, diag=diag,
+        datum_category_ids=set(), view_reference_category_ids={VIEWERS},
+        capture_view_name="Level 1")
+    assert sorted(e.Id.IntegerValue for e in model) == [4, 5]
+    assert [e.Id.IntegerValue for e in anno] == [1]
+    assert basis["view_reference_name_unreadable"] == 2
+    warned = [w for w in diag.warnings if w["callsite"].endswith(
+        "view_reference_name_unreadable")]
+    assert len(warned) == 1 and warned[0]["view_id"] == CAPTURE_VIEW_ID
+    assert warned[0]["message"].startswith("2 view marker(s)")
+
+
+def test_control_readable_names_warn_nothing():
+    diag = _Diag()
+    split_stage_a_pass_membership(
+        [_Elem(1, VIEWERS, "Section 3"), _Elem(2, VIEWERS, "Level 1")],
+        capture_view_id_int=CAPTURE_VIEW_ID, diag=diag, datum_category_ids=set(),
+        view_reference_category_ids={VIEWERS}, capture_view_name="Level 1")
+    assert diag.warnings == []

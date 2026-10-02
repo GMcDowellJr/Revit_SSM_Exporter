@@ -2052,6 +2052,10 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
       ``own_view_reference`` -- such a marker NAMED like the capture view
                             (``capture_view_name``): its own crop region or
                             marker, not one drawn in it; model pass
+      ``view_reference_name_unreadable`` -- such a marker whose Name would
+                            not read, with a capture view name to compare:
+                            it may be the view's own, so it is not painted;
+                            model pass, ``reason`` says why
       ``no_owner_view``  -- ownerless and none of the above; model pass
 
     Returns a three-valued record. ``state`` is ``"value"`` when OwnerViewId
@@ -2148,10 +2152,15 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
             try:
                 name = elem.Name
             except Exception as ex:
-                # A name that will not read cannot be the capture view's own;
-                # the marker is painted, and the failed read recorded.
                 record["reason"] = "Name read failed ({0}: {1})".format(
                     type(ex).__name__, ex)
+                if capture_view_name is not None:
+                    # Codex, PR #226: an unreadable name may be the capture
+                    # view's own crop region; painting that would colour the
+                    # whole crop. Not painted, counted, and warned per split.
+                    record["pass"] = STAGE_A_PASS_MODEL
+                    record["basis"] = "view_reference_name_unreadable"
+                    return record
             if capture_view_name is not None and name is not None \
                     and str(name) == str(capture_view_name):
                 record["pass"] = STAGE_A_PASS_MODEL
@@ -2247,8 +2256,10 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     # reason, in ``unreadable_imports_out`` and warned below.
     basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0,
                     "view_reference_category": 0, "own_view_reference": 0,
+                    "view_reference_name_unreadable": 0,
                     "import_not_owned_by_view": 0, "import_owner_unreadable": 0}
     unreadable_imports = []
+    unreadable_names = []
     # Seeded with EVERY datum category that resolved, so a category present
     # in the set but matching nothing reads as 0 rather than being absent.
     # That distinction is the whole measurement: "OST_GridHeads": 0 beside
@@ -2270,11 +2281,15 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             key = datum_names.get(record["category_id"],
                                   str(record["category_id"]))
             datum_category_counts[key] = datum_category_counts.get(key, 0) + 1
-        if record["basis"] in ("view_reference_category", "own_view_reference"):
+        if record["basis"] in ("view_reference_category", "own_view_reference",
+                               "view_reference_name_unreadable"):
             key = view_reference_names.get(record["category_id"],
                                            str(record["category_id"]))
             view_reference_category_counts[key] = (
                 view_reference_category_counts.get(key, 0) + 1)
+        if record["basis"] == "view_reference_name_unreadable":
+            unreadable_names.append({"element_id": _stage_a_element_id_int(elem),
+                                     "reason": record["reason"]})
         if record["basis"] == "import_owner_unreadable":
             unreadable_imports.append({"element_id": _stage_a_element_id_int(elem),
                                        "state": record["state"],
@@ -2300,6 +2315,17 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             message="{0} import(s) have no readable OwnerViewId; placed in the MODEL "
                     "pass (D2). First reason: {1}".format(
                         len(unreadable_imports), unreadable_imports[0]["reason"]),
+            view_id=capture_view_id_int,
+        )
+    if unreadable_names and diag is not None:
+        diag.warn(
+            phase="annotation",
+            callsite="split_stage_a_pass_membership.view_reference_name_unreadable",
+            message="{0} view marker(s) have no readable Name, so none can be told "
+                    "from the capture view's own; placed in the MODEL pass and left "
+                    "unpainted. First: element {1}, {2}".format(
+                        len(unreadable_names), unreadable_names[0]["element_id"],
+                        unreadable_names[0]["reason"]),
             view_id=capture_view_id_int,
         )
     if unresolved and diag is not None:
