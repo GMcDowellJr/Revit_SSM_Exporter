@@ -3245,6 +3245,56 @@ def crop_read_back_record(requested_uv, read_uv, read_error, fpp_ft):
     return record
 
 
+# Revit's image export will not exceed a 10:1 aspect: a view whose drawn extent
+# is longer than that comes back clamped (run 1001-1950: 1-G400, a 1543 x 154
+# annotation export of a 1543 x 1677 model capture). ASPECT_CLAMP_RATIO sits just
+# under 10 because the clamped side is rounded to whole pixels (1543/154 = 10.02).
+EXPORT_ASPECT_CLAMP_RATIO = 9.95
+# The annotation canvas contains the model crop, so on the shared fitted axis
+# its extent is at least the model's; the derived axis can only come out SHORTER
+# than the model's when the fitted extent grew. model_derived / anno_derived is
+# then a lower bound on how many times coarser the annotation's feet-per-pixel
+# is. On the nine views of run 1001-1950 it is at most 2.33 (5100330, a wall
+# section whose annotation reaches far along its length) apart from 1-G400
+# (10.9); 4 separates them. Not measured over the full run: the 1950 bundle has
+# no per-view dimensions.
+ANNOTATION_COARSENING_LIMIT = 4.0
+
+
+def annotation_export_degenerate(actual_w, actual_h, model_px, vertical):
+    """None, or the record of an annotation export that cannot be a render of
+    the view at a usable scale: its aspect is at Revit's 10:1 export clamp, or
+    its derived axis says its feet-per-pixel is at least
+    ``ANNOTATION_COARSENING_LIMIT`` times the model capture's.
+
+    ``model_px`` is the (w, h) the model pass rendered and the annotation pass
+    requested against; ``vertical`` is the fit direction. Dimensions that did
+    not read decide nothing (export_dim_check reports them).
+    """
+    if actual_w is None or actual_h is None or model_px is None:
+        return None
+    w, h = int(actual_w), int(actual_h)
+    if min(w, h) <= 0:
+        return {"reason": "empty_export", "actual_px": [w, h]}
+    aspect = float(max(w, h)) / float(min(w, h))
+    model_derived = int(model_px[0] if vertical else model_px[1])
+    anno_derived = w if vertical else h
+    coarsening = float(model_derived) / float(anno_derived)
+    reasons = []
+    if aspect >= EXPORT_ASPECT_CLAMP_RATIO:
+        reasons.append("aspect_clamp")
+    if coarsening >= ANNOTATION_COARSENING_LIMIT:
+        reasons.append("coarsening")
+    if not reasons:
+        return None
+    return {"reason": "+".join(reasons), "actual_px": [w, h],
+            "model_px": [int(v) for v in model_px],
+            "aspect": round(aspect, 3),
+            "coarsening_lower_bound": round(coarsening, 3),
+            "aspect_clamp_ratio": EXPORT_ASPECT_CLAMP_RATIO,
+            "coarsening_limit": ANNOTATION_COARSENING_LIMIT}
+
+
 def crop_write_fault(crop_write):
     """PURE. The capture fault a crop record earns, or None.
 
@@ -6741,6 +6791,22 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     if dim_report.get("dim_check") == "mismatch":
         _fault("export_dim_mismatch", dim_report.get("dim_read_error"))
+
+    # Item 3 (Greg, 2026-10-02): a degenerate view (user error in Revit) is
+    # expected to fail, but it must be FLAGGED, not left to a refused
+    # registration downstream to be noticed.
+    degenerate = annotation_export_degenerate(
+        dim_report.get("actual_w"), dim_report.get("actual_h"),
+        frame_px if crop_applied == "frame_b" else geom.get("crop_px"), vertical)
+    if degenerate is not None:
+        _fault("annotation_export_degenerate", dict(
+            degenerate,
+            message="the annotation export is {0[0]} x {0[1]} px against a "
+                    "{1[0]} x {1[1]} model capture ({2}): not a render of the view "
+                    "at a usable scale; check the view's annotation crop and "
+                    "extents in Revit".format(degenerate["actual_px"],
+                                              degenerate["model_px"],
+                                              degenerate["reason"])))
 
     if override_restore_check.get("still_set_count"):
         # A view left painted is a failed capture even though the TIFF is
