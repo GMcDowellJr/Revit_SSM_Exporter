@@ -128,11 +128,11 @@ def test_both_passes_run_registered_and_the_view_comes_back(tmp_path):
     assert all(model_export["overrides"][i] == registration.MARK_COLOUR
                for i in mark_ids)
     assert WHITE not in model_export["overrides"].values()
-    # ANNOTATION export: every model member white, the marks in the pass's
-    # own palette colours.
+    # ANNOTATION export: every model member white, the marks in the reserved
+    # tick colour too (2026-10-02; before, each took a palette colour).
     for eid in (1001, 1002, 1003):
         assert anno_export["overrides"][eid] == WHITE, eid
-    assert all(anno_export["overrides"][i] not in (WHITE, registration.MARK_COLOUR)
+    assert all(anno_export["overrides"][i] == registration.MARK_COLOUR
                for i in mark_ids)
     # The rollback put everything back, and the read-back says so.
     assert reg["restore"]["rolled_back"] is True
@@ -162,9 +162,28 @@ def test_the_FILES_carry_the_registration_record_with_its_restore_verdict(tmp_pa
         assert record["restore"]["rolled_back"] is True
         assert record["annotation_crop_mode"] == "authored_else_crop_a"
         assert len(record["marks"]) == 12
-    assert {tuple(m["rgb"]) for m in model["marks"]} == {registration.MARK_COLOUR}
-    colours = _sidecar(out["annotation_sidecar_path"])["color_assignment_map"]
-    assert all(m["rgb"] == colours[str(m["id"])] for m in anno["marks"])
+        # The reserved tick colour: ONE colour, in both captures.
+        assert record["colour_mode"] == "shared"
+        assert {tuple(m["rgb"]) for m in record["marks"]} == {registration.MARK_COLOUR}
+    anno_side = _sidecar(out["annotation_sidecar_path"])
+    # The ticks are not elements: no palette entry, named where they are.
+    assert not set(str(m["id"]) for m in anno["marks"]) & set(
+        anno_side["color_assignment_map"])
+    assert anno_side["palette_reservation"]["mark_ids_painted"] == sorted(
+        m["id"] for m in anno["marks"])
+
+
+def test_neither_palette_hands_out_a_tick_look_alike_in_the_FILE(tmp_path):
+    """Mutation: the registered capture not passing reserve_tick_colour turns
+    this red (reserved_tick_colour None)."""
+    out, _view, _doc, _e, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        side = _sidecar(path)
+        assert side["palette_reservation"]["reserved_tick_colour"] == list(
+            registration.MARK_COLOUR), path
+        for key in ("color_assignment_map", "link_category_color_map"):
+            for rgb in (side.get(key) or {}).values():
+                assert not registration.fringe_reads_as_mark(tuple(rgb)), (path, rgb)
 
 
 def test_a_rollback_that_undoes_nothing_is_a_fault_in_the_FILE(tmp_path):

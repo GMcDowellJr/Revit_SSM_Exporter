@@ -433,6 +433,11 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
                           if shared_colour is not None else
                           "this capture's color_assignment_map: the marks are "
                           "view-owned, so the annotation pass painted them"),
+        # "shared": every tick is MARK_COLOUR, in BOTH captures since the
+        # reserved tick colour (2026-10-02); a reader locates them by that one
+        # colour. An annotation record without this key is the older shape,
+        # one palette colour per tick (tools/registration_marks.mark_colours).
+        "colour_mode": "shared" if shared_colour is not None else "per_id",
         "must_be_subtracted": True,
         "is_documentation_content": False,
         "annotation_crop_mode": "authored_else_crop_a",
@@ -644,7 +649,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         _t = time.time()
         model_out = export_color_id_buffer_view(
             doc, view, elements, model_cfg, diag=diag, raster=raster,
-            elem_cache=elem_cache, geometry_out=geom)
+            elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True)
         record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
         _pass_timings("model", model_out)
         if detail_lines["hidden"]:
@@ -709,6 +714,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # that cannot turn it off, not the plan. pipeline_0930_0739's
         # annotation sidecars read applied_smooth_edges "not_attempted".
         anno_cfg.color_id_buffer_anno_smooth_edges_off = True
+        _mark_ids = [m.get("id") for m in (record.get("marks") or {}).get("created") or []
+                     if m.get("id") is not None]
         _t = time.time()
         try:
             # The ticks are the capture's own lines, drawn with its own line
@@ -716,9 +723,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             # was exactly the 12 ticks).
             anno_out = export_annotation_color_id_buffer_view(
                 doc, view, anno_cfg, geom, diag=diag, raster=raster,
-                authored_check_exclude_ids=[
-                    m.get("id") for m in (record.get("marks") or {}).get("created") or []
-                    if m.get("id") is not None])
+                authored_check_exclude_ids=_mark_ids,
+                # The reserved tick colour (Greg, 2026-10-02): the ticks are
+                # MARK_COLOUR here as in the model pass, and neither palette
+                # hands out a look-alike.
+                reserve_tick_colour=True, mark_ids=_mark_ids)
         except Exception as ex:
             _fault("annotation_pass_raised", "the annotation pass raised", ex)
             anno_out = {"view_id": view_id, "success": False,
@@ -841,11 +850,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 _registration_payload("model", record,
                                       shared_colour=registration.MARK_COLOUR))
         if anno_out and anno_out.get("sidecar_path"):
-            colours = ((anno_out.get("metadata") or {}).get("color_assignment_map")
-                       or {})
             record["sidecar_writes"]["annotation"] = registration.annotate_sidecar(
                 anno_out["sidecar_path"], "registration_marks",
-                _registration_payload("annotation", record, colours_by_id=colours))
+                _registration_payload("annotation", record,
+                                      shared_colour=registration.MARK_COLOUR))
         # P1: the integrity record, completed with the rollback verdict and
         # the faults above -- still after the read-back, so it is final. A
         # write failure (registration_marks above, or a completion here) is a

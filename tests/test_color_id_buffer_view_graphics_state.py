@@ -608,6 +608,9 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # BACK -- on which view it was cleared (the primary for a dependent
         # view) and what ViewTemplateId then read.
         "view_template_detach",
+        # The reserved tick colour (2026-10-02): MARK_COLOUR and how many
+        # palette colours were withheld as its look-alikes.
+        "palette_reservation",
     }
 
 

@@ -705,14 +705,18 @@ def recorded_marks(sidecar):
 def mark_colours(payload):
     """``(colour_by_id, shared_colour, refusal)`` for a payload, as
     ``locate_mark_pixels`` takes them. The MODEL pass paints every tick one
-    reserved colour; the ANNOTATION pass paints each its own palette colour.
-    A model record whose ticks disagree on the colour is refused."""
+    reserved colour, and since the reserved tick colour (2026-10-02) so does
+    the ANNOTATION pass: its record says ``colour_mode: "shared"``. An
+    annotation record without it is the older shape, each tick its own
+    palette colour. A shared record whose ticks disagree on the colour is
+    refused."""
     marks = payload.get("marks") or []
-    if payload.get("pass") == "model":
+    if payload.get("pass") == "model" or payload.get("colour_mode") == "shared":
         colours = set(tuple(int(c) for c in m["rgb"]) for m in marks if m.get("rgb"))
         if len(colours) != 1:
-            return None, None, "the model record names {0} tick colours; it " \
-                               "must name exactly one".format(len(colours))
+            return None, None, "the {0} record names {1} tick colours; it " \
+                               "must name exactly one".format(
+                                   payload.get("pass"), len(colours))
         return None, colours.pop(), None
     by_id = {}
     for mark in marks:

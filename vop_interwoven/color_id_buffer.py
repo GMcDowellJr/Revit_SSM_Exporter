@@ -210,7 +210,7 @@ def _is_reserved_corner(rgb):
     return False
 
 
-def build_palette(element_count, step=None):
+def build_palette(element_count, step=None, exclude=None):
     """Build deterministic non-near-black, non-near-white colors, hue first.
 
     Generation is HSV-based with HUE as the primary, fastest-spanning
@@ -254,6 +254,11 @@ def build_palette(element_count, step=None):
 
     Reproducibility: same (element_count, step) always yields the same list,
     and a shorter request is always a prefix of a longer one at the same step.
+
+    ``exclude``: an optional predicate on an RGB tuple; a colour it accepts is
+    skipped like a reserved corner (the registered capture's reserved tick
+    colour and its look-alikes -- see stage_a_palette). The capacity above
+    then shrinks by what it skips, which stage_a_palette answers for.
     """
     step = int(step if step is not None else choose_step(element_count))
     target = int(element_count or 0)
@@ -282,7 +287,8 @@ def build_palette(element_count, step=None):
                     _snap_to_lattice(g, step, max_level),
                     _snap_to_lattice(b, step, max_level),
                 )
-                if rgb in seen or _is_reserved_corner(rgb):
+                if rgb in seen or _is_reserved_corner(rgb) or (
+                        exclude is not None and exclude(rgb)):
                     continue
                 seen.add(rgb)
                 colors.append(rgb)
@@ -296,13 +302,47 @@ def build_palette(element_count, step=None):
         for g in range(0, 256, step):
             for b in range(0, 256, step):
                 rgb = (r, g, b)
-                if rgb in seen or _is_reserved_corner(rgb):
+                if rgb in seen or _is_reserved_corner(rgb) or (
+                        exclude is not None and exclude(rgb)):
                     continue
                 seen.add(rgb)
                 colors.append(rgb)
                 if len(colors) >= target:
                     return colors
     return colors
+
+
+def stage_a_palette(element_count, step, reserve_tick_colour=False):
+    """``(palette, step, record)`` for a Stage A pass.
+
+    With ``reserve_tick_colour`` (the registered capture), no colour whose
+    fringe toward white could read as the ticks' MARK_COLOUR is handed out
+    (stage_a_registration.fringe_reads_as_mark). Excluding colours can leave
+    the lattice ``step`` short of ``element_count``; the step is then lowered
+    until it is not, and the record says so. Without it this is
+    ``build_palette(element_count, step)`` unchanged.
+    """
+    record = {"reserved_tick_colour": None, "excluded_count": 0,
+              "step_requested": int(step), "step": int(step)}
+    if not reserve_tick_colour:
+        return build_palette(element_count, step=step), int(step), record
+    from .stage_a_registration import MARK_COLOUR, fringe_reads_as_mark
+    excluded = set()
+
+    def _exclude(rgb):
+        if fringe_reads_as_mark(rgb):
+            excluded.add(rgb)
+            return True
+        return False
+    record["reserved_tick_colour"] = list(MARK_COLOUR)
+    steps = [int(step)] + [s for s in (6, 5, 4, 3, 2, 1) if s < int(step)]
+    for candidate in steps:
+        excluded.clear()
+        palette = build_palette(element_count, step=candidate, exclude=_exclude)
+        if len(palette) >= int(element_count or 0):
+            break
+    record.update(step=candidate, excluded_count=len(excluded))
+    return palette, candidate, record
 
 
 def resolve_all(doc, top_elements):
@@ -3538,7 +3578,8 @@ def _reattach_after_failure(doc, handle, diag=None, view_id=None,
 
 
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None,
-                                elem_cache=None, geometry_out=None):
+                                elem_cache=None, geometry_out=None,
+                                reserve_tick_colour=False):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
 
     Args:
@@ -4657,7 +4698,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         global_threshold = int(getattr(cfg, "color_id_buffer_global_assignment_threshold", 32767))
         step = choose_step(global_threshold if total_count <= global_threshold else total_count)
         # TODO(Stage B+): add bbox pre-filter / multi-pass color batching if one view exceeds palette capacity.
-        palette = build_palette(total_count, step=step)
+        # reserve_tick_colour: the registered capture's ticks are MARK_COLOUR
+        # in both passes, so no element or link category may take a colour
+        # whose fringe reads as theirs (stage_a_palette).
+        palette, step, palette_reservation = stage_a_palette(
+            total_count, step, reserve_tick_colour=reserve_tick_colour)
         color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_host)}
         # Shared stepped allocation: link-category filter colors are sliced from
         # the same palette as HOST element colors (no independent RNG), so no
@@ -5234,6 +5279,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "phase_swap_element_set_audit": phase_swap_element_set_audit,
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
+        # The registered capture's reserved tick colour, and how many palette
+        # colours were withheld as its look-alikes (stage_a_palette).
+        "palette_reservation": palette_reservation,
         "tiff_path": tiff_path,
         # The READ-BACK (C), not the attempt; view_template_detach says on
         # which view it was cleared and what Revit then reported.
@@ -5583,7 +5631,9 @@ def _verify_annotation_overrides_restored(view, painted_ids, diag=None, view_id=
 
 def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                            raster=None, elements=None,
-                                           authored_check_exclude_ids=None):
+                                           authored_check_exclude_ids=None,
+                                           reserve_tick_colour=False,
+                                           mark_ids=None):
     """Export one view's ANNOTATION color ID buffer, over frame B.
 
     Args:
@@ -5839,8 +5889,25 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # ---- this pass's OWN palette (see the section comment) -------------
     global_threshold = int(getattr(cfg, "color_id_buffer_global_assignment_threshold", 32767))
     step = choose_step(global_threshold if count_anno <= global_threshold else count_anno)
-    palette = build_palette(count_anno, step=step)
-    color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_anno)}
+    # The registered capture's ticks (``mark_ids``) are painted MARK_COLOUR,
+    # as in the model pass, and take no palette entry; with
+    # reserve_tick_colour no element takes a colour whose fringe reads as
+    # theirs. Both are the reserved tick colour (Greg, 2026-10-02): the ticks
+    # are found by ONE colour in both captures, never by a palette colour that
+    # text anti-aliasing can also produce (run 1001-1950).
+    _mark_ints = set(int(i) for i in (mark_ids or ()))
+    element_ids = [eid for eid in resolved_ids if eid.IntegerValue not in _mark_ints]
+    painted_mark_ids = [eid.IntegerValue for eid in resolved_ids
+                        if eid.IntegerValue in _mark_ints]
+    palette, step, palette_reservation = stage_a_palette(
+        len(element_ids), step, reserve_tick_colour=reserve_tick_colour)
+    color_map = {element_ids[i].IntegerValue: palette[i]
+                 for i in range(len(element_ids))}
+    if painted_mark_ids:
+        from .stage_a_registration import MARK_COLOUR as _MARK_COLOUR
+        for _mid in painted_mark_ids:
+            color_map[_mid] = tuple(_MARK_COLOUR)
+    palette_reservation["mark_ids_painted"] = sorted(painted_mark_ids)
 
     # ---- bbox records (Stage A step 4) ---------------------------------
     #
@@ -6605,10 +6672,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "requested_px_source": requested_px_source,
         },
         "membership": membership,
+        # ELEMENTS only: the registered capture's ticks are not in it -- they
+        # are MARK_COLOUR, named under palette_reservation.mark_ids_painted.
         "color_assignment_map": {
             str(eid): list(color_map[eid]) for eid in color_map
+            if eid not in _mark_ints
         },
-        "color_assignment_count": count_anno,
+        "color_assignment_count": len(element_ids),
         # M1: what this pass collected and did NOT paint because the view
         # does not show it -- counts per category, never per element.
         "not_painted": not_painted,
@@ -6624,6 +6694,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # view with no annotations.
         "annotation_bbox_status": annotation_bbox_status,
         "palette_step": step,
+        "palette_reservation": palette_reservation,
         "paint_failures": paint_failures,
         "paint_failed_element_ids": paint_failed_element_ids,
         # The model category state this pass READ. Under the "external"
@@ -6868,7 +6939,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "sidecar_path": json_path,
         "output_dir": out_dir,
         "frame": state_out["frame"],
-        "color_assignment_count": count_anno,
+        "color_assignment_count": state_out["color_assignment_count"],
         "timings": {
             "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
             # P2, read by the registered capture into its timings_ms.

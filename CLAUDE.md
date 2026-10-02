@@ -124,6 +124,12 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   pass runs with smooth edges off; tick-blend handling in
   `tools/registration_marks.py` is the fallback. Revit anti-aliases TEXT
   regardless, so text edges stay off-palette.
+- **The ticks have a reserved colour** (2026-10-02): MARK_COLOUR in BOTH
+  captures (`colour_mode: "shared"`; an annotation record without it is the
+  older per-tick shape), and neither palette hands out a colour whose fringe
+  toward white the locator could take for a tick's
+  (`stage_a_registration.fringe_reads_as_mark`, recorded as
+  `palette_reservation`). The ticks are not in `color_assignment_map`.
 - **The annotation pass keeps the authored crop.** A crop-inactive view gets
   the model pass's crop A. Model content is suppressed by membership: white
   element overrides and white link filters.

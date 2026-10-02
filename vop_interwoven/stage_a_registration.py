@@ -62,6 +62,54 @@ def _xyz_tuple(point):
 # by image thirds. Sizes are in MODEL-LATTICE pixels, via achieved_fpp_ft.
 MARK_COLOUR = (139, 251, 11)
 MARK_INSET_PX = 24.0
+# THE RESERVED TICK COLOUR (Greg, 2026-10-02). Both captures paint every tick
+# MARK_COLOUR, and neither palette hands out a colour whose anti-aliased
+# fringe toward white could read as one of the ticks': run 1001-1950 refused
+# four views on look-alike pixels of the ticks' own colours (text fringes, and
+# specks of the exact colour), with anti-aliasing OFF. These three mirror the
+# acceptance test of tools/registration_marks.py (BLEND_TOLERANCE,
+# BLEND_MIN_COVERAGE), widened by a margin for the export's rounding to whole
+# levels; tests/test_stage_a_reserved_tick_colour.py runs the tool's own test
+# over every colour this lets through, so the two cannot drift apart.
+TICK_BLEND_TOLERANCE = 3.0
+TICK_BLEND_MIN_COVERAGE = 0.1
+TICK_BLEND_EXCLUSION_MARGIN = 1.5
+_TICK_BLEND_SAMPLES = 512
+
+
+def fringe_reads_as_mark(rgb, mark=MARK_COLOUR):
+    """True when some blend of ``rgb`` toward white, ``t*rgb + (1-t)*255`` for
+    ``t`` in (0, 1], lies within the tick locator's tolerance (plus margin) of
+    ``mark``'s own line to white at a coverage it accepts -- so a palette
+    element painted ``rgb`` could be taken for a tick's fringe. ``rgb`` equal
+    to ``mark`` is True. Such a colour is withheld from the palette."""
+    dc = [255.0 - float(c) for c in rgb]
+    dm = [255.0 - float(c) for c in mark]
+    norm_m = sum(v * v for v in dm)
+    norm_c = sum(v * v for v in dc)
+    if norm_m <= 0.0 or norm_c <= 0.0:
+        return False
+    limit = TICK_BLEND_TOLERANCE + TICK_BLEND_EXCLUSION_MARGIN
+    # Quick reject: at the lowest coverage accepted, the mark's line is
+    # TICK_BLEND_MIN_COVERAGE * |dm| from white, and no point of rgb's line is
+    # nearer to it (Euclidean) than that times sin(angle); the Chebyshev
+    # distance the locator uses is at least that over sqrt(3).
+    dot = sum(a * b for a, b in zip(dc, dm))
+    cos2 = (dot * dot) / (norm_c * norm_m) if dot > 0 else 0.0
+    sin = (max(0.0, 1.0 - cos2)) ** 0.5
+    if TICK_BLEND_MIN_COVERAGE * (norm_m ** 0.5) * sin / (3.0 ** 0.5) > limit:
+        return False
+    for i in range(1, _TICK_BLEND_SAMPLES + 1):
+        t = float(i) / _TICK_BLEND_SAMPLES
+        p = [t * v for v in dc]
+        s = sum(a * b for a, b in zip(p, dm)) / norm_m
+        if s < TICK_BLEND_MIN_COVERAGE - 0.01 or s > 1.0 + 1e-9:
+            continue
+        if max(abs(s * b - a) for a, b in zip(p, dm)) <= limit:
+            return True
+    return False
+
+
 MARK_GAP_PX = 8.0
 # T1 (2026-09-29): ticks at their minimum size. 96 px arms were probe-era
 # generosity; 32 px is the smallest arm registration_marks is proven to
