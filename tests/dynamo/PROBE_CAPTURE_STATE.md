@@ -376,13 +376,25 @@ with its read-back. **UNVERIFIED in Revit**, like round 2 was.
   attached; then detached, S10. Twins S4 and S6. Answers: does a temporary
   subcategory draw under a template that controls V/G, and after detaching?
 - `lines_unhidden` (B, not in production) -- S8: template detached,
-  OST_Lines unhidden, then every OST_Lines element the view collector
-  returns hidden one by one (`stage_a_registration.hide_in_view`),
-  unmarked; S9 marked. The analyzer's `q6_authored` row is S8 against S6:
-  **0 changed pixels** means the view still shows as authored. S9 against
-  S8 is whether the ticks draw. Only meaningful on a view whose template
-  hides OST_Lines -- none of the three defaults does; add one under
-  `q6_extra_views`. On the others it is a control.
+  OST_Lines unhidden, then ONLY the OST_Lines elements the unhide made
+  visible (collected after it, not before it) hidden one by one
+  (`stage_a_registration.hide_in_view`), unmarked; S9 marked. Refused
+  (`detach_failed`) when the detach does not take: with the template
+  attached `SetCategoryHidden(OST_Lines)` raises "Category cannot be
+  hidden". The analyzer's `q6_authored` row is S8 against S6, with each
+  write's `state` and `took_effect`: **0 changed pixels** means the view
+  still shows as authored. S9 against S8 is whether the ticks draw. Only
+  meaningful on a view whose template hides OST_Lines -- none of the three
+  defaults does; add one under `q6_extra_views`. On the others nothing is
+  revealed, so nothing is hidden and S8 is a true control.
+
+**Probe `2026-10-02.3` / analyzer `1.2.1`** (after run 20261001T175557, which
+imported a checkout without A and C): Q6 is REFUSED (`production_mismatch`)
+when the imported production lacks `tick_line_style`,
+`_temporary_tick_style`, `TEMPORARY_TICK_SUBCATEGORY` or
+`_detach_view_template`, naming the missing symbols and the checkout's root;
+`production_imports` records `module_files` and `missing_for_q6`. IN[9] must
+point at a checkout of PR #226's branch or later.
 
 ## How to run
 

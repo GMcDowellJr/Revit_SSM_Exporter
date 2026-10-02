@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.capture_state.analysis.v1"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.2.1"
 ANALYSIS_NAME = "probe_capture_state_analysis.json"
 PROBE_GLOB = "probe_capture_state_*.json"
 
@@ -632,7 +632,11 @@ def q6_authored_rows(report, pixels):
                 continue
             step, twin = steps.get(name) or {}, steps.get(twin_name) or {}
             row = {"view_id": view.get("view_id"), "step": name, "twin": twin_name,
-                   "writes": dict((k, (w or {}).get("took_effect"))
+                   # took_effect AND the write's state: run 20261001T175557's
+                   # unhide raised ("Category cannot be hidden") and read back
+                   # "took effect" only because Lines was never hidden.
+                   "writes": dict((k, {"state": (w or {}).get("state"),
+                                       "took_effect": (w or {}).get("took_effect")})
                                   for k, w in (step.get("writes") or {}).items()
                                   if isinstance(w, dict)),
                    "changed_px": None, "reason": None}

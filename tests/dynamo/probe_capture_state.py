@@ -56,7 +56,7 @@ import traceback
 
 
 PROBE_NAME = "capture_state"
-PROBE_VERSION = "2026-10-02.2"
+PROBE_VERSION = "2026-10-02.3"
 SCHEMA = "vop.probe.capture_state.v1"
 
 DEFAULT_Q1_VIEW = 6112047
@@ -1499,14 +1499,48 @@ def import_production(params):
         except Exception as ex:
             return ({"state": "raised", "root": root,
                      "error": "{0}: {1}".format(type(ex).__name__, ex)}, None)
-        return ({"state": "value", "root": root},
-                {"view_basis": view_basis, "registration": stage_a_registration,
-                 "capture": stage_a_registered_capture,
-                 "color_id_buffer": color_id_buffer,
-                 "split_membership": split_stage_a_pass_membership, "Config": Config})
+        modules = {"view_basis": view_basis, "registration": stage_a_registration,
+                   "capture": stage_a_registered_capture,
+                   "color_id_buffer": color_id_buffer,
+                   "split_membership": split_stage_a_pass_membership, "Config": Config}
+        return ({"state": "value", "root": root,
+                 "module_files": dict((k, getattr(m, "__file__", None))
+                                      for k, m in sorted(modules.items())
+                                      if hasattr(m, "__file__")),
+                 "missing_for_q6": q6_missing_symbols(modules)}, modules)
     return ({"state": "unavailable",
              "error": "no vop_interwoven package found; set IN[9] repo_root",
              "searched": searched[:40]}, None)
+
+
+# What Q6 needs from the production checkout: A's tick style and C's detach.
+# Run 20261001T175557 imported a checkout without them -- every Q6b step that
+# needed them raised, and S1/S3 measured the OLD tick style while looking like
+# a measurement of A. A checkout without these is refused, by name.
+Q6_PRODUCTION_SYMBOLS = (("registration", "tick_line_style"),
+                         ("registration", "_temporary_tick_style"),
+                         ("registration", "TEMPORARY_TICK_SUBCATEGORY"),
+                         ("color_id_buffer", "_detach_view_template"))
+Q6_PRODUCTION_BRANCH = "claude/stage-a-capture-state-fixes-m4wb64 (PR #226) or later"
+
+
+def q6_missing_symbols(modules):
+    """PURE. ``"<module>.<name>"`` for each Q6_PRODUCTION_SYMBOLS entry the
+    imported production does not have."""
+    return ["{0}.{1}".format(mod, name) for mod, name in Q6_PRODUCTION_SYMBOLS
+            if not hasattr(modules.get(mod), name)]
+
+
+def _q6_production_mismatch(ctx):
+    """The refusal text when the imported production lacks what Q6 needs,
+    else None."""
+    missing = (ctx.production_record or {}).get("missing_for_q6") or []
+    if not missing:
+        return None
+    return ("the production checkout at {0} lacks {1}; Q6 measures production's "
+            "tick style and detach, so it needs {2}".format(
+                (ctx.production_record or {}).get("root"), ", ".join(missing),
+                Q6_PRODUCTION_BRANCH))
 
 
 def _production_refusal(ctx):
@@ -2012,14 +2046,23 @@ def unhide_lines_category(ctx, view, name):
                     False, _hidden)
 
 
-def hide_existing_lines(ctx, view, name):
-    """Every OST_Lines element the view collector returns NOW (after the
-    category is unhidden), hidden one by one with production's hide_in_view.
-    attempted = the ids it hid; read back = which of them read hidden."""
+def line_ids_in_view(ctx, view):
+    """The OST_Lines elements FilteredElementCollector(doc, view.Id) returns."""
     from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
+    return sorted(element_id_int(e.Id) for e in FilteredElementCollector(ctx.doc, view.Id)
+                  .OfCategory(BuiltInCategory.OST_Lines).WhereElementIsNotElementType())
+
+
+def hide_existing_lines(ctx, view, name, shown_before):
+    """The OST_Lines elements the view returns NOW but did not return before
+    the unhide (``shown_before``) -- the lines unhiding made visible -- hidden
+    one by one with production's hide_in_view. Lines the view already showed
+    are left alone: hiding them changes the view as authored (run
+    20261001T175557 hid all 6 of 9948's and changed 367 px). attempted = the
+    ids it hid; read back = which of them read hidden."""
     registration = ctx.production["registration"]
-    ids = sorted(element_id_int(e.Id) for e in FilteredElementCollector(ctx.doc, view.Id)
-                 .OfCategory(BuiltInCategory.OST_Lines).WhereElementIsNotElementType())
+    now = line_ids_in_view(ctx, view)
+    ids = sorted(set(now) - set(shown_before))
     holder = {}
 
     def _apply():
@@ -2033,7 +2076,9 @@ def hide_existing_lines(ctx, view, name):
     rec = tx_write(ctx.doc, name, _apply, None, _read_back,
                    lambda _a, value: value == sorted((holder.get("record") or {}).get("hidden") or []))
     rec["attempted"] = sorted((holder.get("record") or {}).get("hidden") or [])
-    rec["line_ids_in_view"] = len(ids)
+    rec["line_ids_before_unhide"] = len(shown_before)
+    rec["line_ids_after_unhide"] = len(now)
+    rec["line_ids_revealed"] = len(ids)
     rec["hide_record"] = dict((k, v) for k, v in (holder.get("record") or {}).items()
                               if k != "hidden")
     return rec
@@ -2116,6 +2161,12 @@ def run_q6_view(ctx, view, baseline):
         out["steps"] = [{"step": s, "refused": "production_unavailable",
                          "refused_reason": out["refused"]} for s in Q6_STEPS]
         return out
+    mismatch = _q6_production_mismatch(ctx)
+    if mismatch is not None:
+        out["refused"] = mismatch
+        out["steps"] = [{"step": s, "refused": "production_mismatch",
+                         "refused_reason": mismatch} for s in Q6_STEPS]
+        return out
 
     def _no_crop():
         out["steps"].append(_q6_export(ctx, view, "S0"))
@@ -2154,9 +2205,22 @@ def run_q6_view(ctx, view, baseline):
         out["steps"].append(rec)
 
     def _lines_unhidden():
-        writes = {"detach": production_detach(ctx, view, "Q6 S8 detach"),
+        detach = production_detach(ctx, view, "Q6 S8 detach")
+        if detach.get("took_effect") is not True:
+            # With the template attached SetCategoryHidden(OST_Lines) raises
+            # "Category cannot be hidden" (run 20261001T175557), so S8 would
+            # be the attached view, not B.
+            reason = "the template detach did not take effect ({0}); B needs it".format(
+                detach.get("error") or detach.get("read_back"))
+            for name in ("S8", "S9"):
+                out["steps"].append({"step": name, "refused": "detach_failed",
+                                     "refused_reason": reason, "writes": {"detach": detach}})
+            return
+        shown_before = line_ids_in_view(ctx, view)
+        writes = {"detach": detach,
                   "unhide_lines": unhide_lines_category(ctx, view, "Q6 S8 unhide Lines")}
-        writes["hide_existing_lines"] = hide_existing_lines(ctx, view, "Q6 S8 hide lines")
+        writes["hide_existing_lines"] = hide_existing_lines(
+            ctx, view, "Q6 S8 hide lines", shown_before)
         out["steps"].append(_q6_export(ctx, view, "S8", writes))
         out["steps"].append(_q6_production_marks(ctx, view, "S9", "Q6 S9"))
 

@@ -702,7 +702,7 @@ def test_a_round_1_probe_json_still_analyzes_with_empty_round_2_sections(tmp_pat
     q3 = [{"view_id": 11, "role": "test", "steps": [s1]}]
     _probe(tmp_path, [e1], {"Q3_S1_11.tiff": _flat(200, 100)}, q3=q3)
     rec = _run(tmp_path)
-    assert rec["status"] == "value" and rec["tool_version"] == "1.2.0"
+    assert rec["status"] == "value" and rec["tool_version"] == "1.2.1"
     assert (rec["writes"], rec["commit_without_effect"]) == ([], [])
     assert (rec["q1b"], rec["q3b"], rec["q5b"], rec["q6"]) == ([], [], [], [])
     assert rec["q6_authored"] == []
@@ -730,8 +730,9 @@ def _q6b_case(tmp_path, s8_paint=(), s9_draw=True):
     steps = [
         {"step": "S6", "export": e6},
         {"step": "S8", "export": e8, "writes": {
-            "detach": {"took_effect": True}, "unhide_lines": {"took_effect": True},
-            "hide_existing_lines": {"took_effect": True}}},
+            "detach": {"state": "value", "took_effect": True},
+            "unhide_lines": {"state": "raised", "took_effect": True},
+            "hide_existing_lines": {"state": "value", "took_effect": True}}},
         {"step": "S9", "export": e9, "mark_rows": [row], "marks_record": {"colour": MARK},
          "crop_uv_at_export": crop, "crop_box_active_at_export": active}]
     images = {"Q6_S6_9948.tiff": s6_img, "Q6_S8_9948.tiff": s8_img,
@@ -755,11 +756,39 @@ def test_q6b_a_view_that_still_shows_as_authored_changes_no_pixel(tmp_path):
     rec = _q6b_case(tmp_path)
     (row,) = rec["q6_authored"]
     assert (row["step"], row["twin"], row["changed_px"]) == ("S8", "S6", 0)
-    assert row["writes"] == {"detach": True, "unhide_lines": True,
-                             "hide_existing_lines": True}
+    # A write that RAISED is shown raised, even when its read-back matched.
+    assert row["writes"] == {
+        "detach": {"state": "value", "took_effect": True},
+        "unhide_lines": {"state": "raised", "took_effect": True},
+        "hide_existing_lines": {"state": "value", "took_effect": True}}
 
 
 def test_q6b_lines_that_reappear_are_counted(tmp_path):
     """Control: unhiding Lines brought 2 px of linework back."""
     rec = _q6b_case(tmp_path, s8_paint=[(10, 10), (11, 10)])
     assert rec["q6_authored"][0]["changed_px"] == 2
+
+
+
+# --- probe 2026-10-02.3: Q6 refuses a production checkout without A and C --
+
+def test_q6_names_the_production_symbols_a_checkout_lacks():
+    """Run 20261001T175557 imported a checkout without A and C: the Q6b steps
+    raised and S1/S3 measured the OLD tick style. The probe now refuses Q6 on
+    such a checkout, naming what is missing. Control: this checkout has all."""
+    import types
+    from tests.dynamo import probe_capture_state as probe
+    from vop_interwoven import color_id_buffer, stage_a_registration
+    modules = {"registration": stage_a_registration, "color_id_buffer": color_id_buffer}
+    assert probe.q6_missing_symbols(modules) == []
+    old = {"registration": types.SimpleNamespace(),
+           "color_id_buffer": types.SimpleNamespace()}
+    assert probe.q6_missing_symbols(old) == [
+        "registration.tick_line_style", "registration._temporary_tick_style",
+        "registration.TEMPORARY_TICK_SUBCATEGORY", "color_id_buffer._detach_view_template"]
+    ctx = types.SimpleNamespace(production_record={
+        "root": "C:/repo", "missing_for_q6": ["registration.tick_line_style"]})
+    reason = probe._q6_production_mismatch(ctx)
+    assert "C:/repo" in reason and "registration.tick_line_style" in reason
+    assert probe._q6_production_mismatch(types.SimpleNamespace(
+        production_record={"root": "x", "missing_for_q6": []})) is None
