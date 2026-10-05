@@ -185,7 +185,11 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   rounds off the image; RCP GENERAL NOTES lost all four horizontal corner
   ticks and would not register), while the export's extent still matched the
   frame to 0.52 px -- Revit sizes it from the lines' geometry, not from
-  surviving pixels. Every element is view-owned, so the annotation pass
+  surviving pixels. Run 1005_1018 (`e998b46`, same views) confirmed the
+  fix: both views 12/12 ticks in both captures, ticks within 0.56 px of the
+  recorded lattice, identity annotation->model transform, no faults, 0 px of
+  non-tick ink in either model capture (legend components hidden), and both
+  grid with no flags. Every element is view-owned, so the annotation pass
   paints all of it. `OST_LegendComponents` (Model-typed) is on
   `VIEW_ONLY_MODEL_BIC_NAMES`, hidden in the model pass only.
   `tools/stage_a_grid.py` reads `split_crop.state "no_crop_region"` as
