@@ -24,6 +24,37 @@ RUN_META_FILENAME = "run_meta.json"
 EXPORTER_VERSION = "vop_interwoven"
 
 
+def output_date_str(date_override, now=None):
+    """The date part of every dated per-run filename (views_core_<d>.csv,
+    views_diagnostics_<d>.json, vop_view_element_map_<d>.json).
+
+    A datetime, or a string that parses as one ("2026-10-01", "20261001",
+    ISO "2026-10-01T12:34:56"), names the files by its date, YYYY-MM-DD --
+    never the raw string, whose colons Windows refuses in a filename. A
+    string that does not parse is a tag ("PR_221") and names the files as
+    given. Nothing means today. ONE function, so the streaming exporter and
+    the pipeline cannot name one run's files differently again -- the
+    pipeline used to fall back to today on a tag.
+    """
+    from datetime import datetime
+    if isinstance(date_override, datetime):
+        return date_override.strftime("%Y-%m-%d")
+    if isinstance(date_override, str) and date_override.strip():
+        s = date_override.strip()
+        parsers = [lambda v: datetime.strptime(v, "%Y-%m-%d")]
+        if len(s) == 8 and s.isdigit():
+            parsers.append(lambda v: datetime.strptime(v, "%Y%m%d"))
+        if hasattr(datetime, "fromisoformat"):   # absent on IronPython 2
+            parsers.append(datetime.fromisoformat)
+        for parse in parsers:
+            try:
+                return parse(s).strftime("%Y-%m-%d")
+            except ValueError:
+                continue   # not this shape; the next parser, else a tag
+        return s
+    return (now or datetime.now()).strftime("%Y-%m-%d")
+
+
 def _value(v):
     return {"state": "value", "value": v}
 
