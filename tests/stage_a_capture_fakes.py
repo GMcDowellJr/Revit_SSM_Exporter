@@ -296,6 +296,7 @@ class FakeBuiltInCategory(object):
     """
     OST_DetailComponents = -2000083
     OST_Lines = -2000051
+    OST_LegendComponents = -2000575
     # Datum categories. Stage A step 3 resolves these off the enum rather
     # than hardcoding them, so a fake that lacks them makes every datum read
     # as ordinary model geometry -- the pre-2026-09-21 gap -- and the test

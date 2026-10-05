@@ -52,6 +52,10 @@ NEAR_WHITE_RESERVED_THRESHOLD = 224
 VIEW_ONLY_MODEL_BIC_NAMES = (
     "OST_DetailComponents",  # Detail Items: 2D symbols placed per-view, no 3D form
     "OST_Lines",             # Model Lines & Detail Lines share this category; neither has fill/area
+    # Legend Components: exist only in Legend views, owned by the view, and
+    # report CategoryType.Model (recorded in collection_policy). Without this
+    # entry the model pass of a legend would leave them visible and unpainted.
+    "OST_LegendComponents",
 )
 
 # Vetted colorable categories -- the FROZEN capture of
@@ -972,7 +976,7 @@ def _model_categories_in_linked_doc(linked_doc, is_colorable):
         Areas, MEP Spaces and Point Clouds are all in collection_policy's
         _EXCLUDED_BIC_NAMES_GLOBAL and all report CategoryType.Model, while
         _hidden_category_state() hides only CategoryType.Annotation plus the
-        two VIEW_ONLY_MODEL_BIC_NAMES entries. Nothing collects them, nothing
+        VIEW_ONLY_MODEL_BIC_NAMES entries. Nothing collects them, nothing
         paints them, nothing hides them. (Confirmed by reading those two
         lists against each other, not assumed.)
 
@@ -5495,7 +5499,7 @@ def _model_category_hidden_state(doc, view, diag=None, view_id=None):
     a gap: this hides every category Revit classifies as CategoryType.Model
     EXCEPT the VIEW_ONLY_MODEL_BIC_NAMES entries, which carry a Model label
     but no 3D presence and are annotation content in every sense that matters
-    here (detail items, detail lines).
+    here (detail items, detail lines, legend components).
 
     Between the two functions every Model and Annotation category is hidden in
     exactly one pass, which is what makes "the model TIFF holds no annotation
