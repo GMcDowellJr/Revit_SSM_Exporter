@@ -7,10 +7,13 @@ definition, used by every analysis-layer product:
   * CELL SIZE is the requested paper cell -- ``cell_size_paper_in`` from the
     run's run_meta.json config, times the view scale, over 12. Never adaptive,
     never guessed: missing either input is a refusal.
-  * ORIGIN is crop A's lower-left corner (``frame.crop_uv``'s minimum). Cell
-    (i, j) covers u in [u0 + i*cell, u0 + (i+1)*cell) and v likewise, with j
-    running UP. Annotation ink left of or below crop A gets NEGATIVE indices
-    -- expected, and kept signed.
+  * ORIGIN is anchored to VIEW UV, not to crop A (D-A9, Greg 2026-10-05):
+    per axis ``origin = floor(crop_min / cell) * cell``, so every cell
+    boundary is a whole multiple of the cell from view UV (0, 0) and a crop
+    edit no longer renumbers the cells. Cell (i, j) covers u in
+    [u0 + i*cell, u0 + (i+1)*cell) and v likewise, with j running UP. Crop A
+    starts inside cell 0 (``crop_a_offset_cells``); annotation ink left of or
+    below it gets NEGATIVE indices -- expected, and kept signed.
   * EXTENT is the union of the model image and the registered annotation
     canvas (``<view>_anno.registered.json``), in whole cells. The annotation
     canvas is usually larger but need not be.
@@ -27,7 +30,8 @@ definition, used by every analysis-layer product:
 
 Outputs, per view, in ``--out`` (default ``<run>/analysis_grid/``):
 ``<view>.grid.npz`` (per-cell pixel counts by channel, ink counts, and the
-``occupancy`` class per cell; row 0 is the LOWEST j), then ``<view>.grid.json``
+``occupancy`` class per cell; row 0 is the LOWEST j; plus the ``ec_*`` element
+x cell rows, A1), then ``<view>.grid.json``
 naming the npz's hash -- the record is written last (CLAUDE.md, defect class
 4) -- and ``<view>.grid.png``, the occupancy in vop_raster's colours.
 
@@ -59,8 +63,8 @@ from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa
 
 Image.MAX_IMAGE_PIXELS = None
 
-SCHEMA = "vop.stage_a.analysis_grid.v1"
-TOOL_VERSION = "1.1.0"
+SCHEMA = "vop.stage_a.analysis_grid.v2"
+TOOL_VERSION = "2.0.0"
 
 # Greg, 2026-09-30: 2 and 8 px per cell "for starters", expressed as what they
 # are -- a cell must hold whole pixels to be measured at all, and a mapping
@@ -308,18 +312,43 @@ def pixel_to_uv(spec, model_x, model_y):
     return ((model_x - m["b_u"]) / m["a_u"], (model_y - m["b_v"]) / m["a_v"])
 
 
-def crop_a_cell_ranges(spec, crop, w, h):
-    """The cells crop A covers: those holding a model pixel CENTRE that lies
-    inside ``crop`` -- the same pixel-centre rule every count uses. Not the
-    image's own extent: an aspect-clamped capture pads the image outside the
-    crop, and those pad pixels are not inside crop A."""
+def _crop_axes(spec, crop, w, h):
+    """Model-pixel columns and rows, their centres' u and v, and whether each
+    centre lies inside ``crop`` on its axis (edges inclusive)."""
     m = spec["mapping"]
     cols = np.arange(w, dtype=np.float64)
     rows = np.arange(h, dtype=np.float64)
     u = (cols + 0.5 - m["b_u"]) / m["a_u"]
     v = (rows + 0.5 - m["b_v"]) / m["a_v"]
-    in_u = cols[(u >= crop[0]) & (u <= crop[2])]
-    in_v = rows[(v >= crop[1]) & (v <= crop[3])]
+    return (cols, rows, u, v, (u >= crop[0]) & (u <= crop[2]),
+            (v >= crop[1]) & (v <= crop[3]))
+
+
+def crop_a_pixel_mask(spec, crop, w, h):
+    """Model pixels whose CENTRE lies inside crop A -- and, for a split crop,
+    inside one of the bands the view shows (``split_bands_uv``, edges
+    inclusive as in inside_crop_a). Counted per cell as ``crop_a_px``, which
+    makes an edge cell's partial coverage measurable where ``inside_crop_a``
+    only says the cell holds at least one such centre."""
+    _cols, _rows, u, v, col_in, row_in = _crop_axes(spec, crop, w, h)
+    mask = row_in[:, None] & col_in[None, :]
+    bands = spec.get("split_bands_uv")
+    if bands:
+        shown = np.zeros_like(mask)
+        for u0, v0, u1, v1 in bands:
+            shown |= (((v >= v0) & (v <= v1))[:, None]
+                      & ((u >= u0) & (u <= u1))[None, :])
+        mask &= shown
+    return mask
+
+
+def crop_a_cell_ranges(spec, crop, w, h):
+    """The cells crop A covers: those holding a model pixel CENTRE that lies
+    inside ``crop`` -- the same pixel-centre rule every count uses. Not the
+    image's own extent: an aspect-clamped capture pads the image outside the
+    crop, and those pad pixels are not inside crop A."""
+    cols, rows, _u, _v, col_in, row_in = _crop_axes(spec, crop, w, h)
+    in_u, in_v = cols[col_in], rows[row_in]
     if not len(in_u) or not len(in_v):
         raise GridRefusal("no model pixel centre lies inside crop A")
     mi = cells_of_columns(spec, in_u)
@@ -356,6 +385,29 @@ def split_crop_bands(sidecar):
     return [[float(c) for c in band] for band in bands]
 
 
+LATTICE_ANCHOR = "view_uv"
+ORIGIN_RULE = "origin_uv[k] = floor(crop_min_uv[k] / cell_ft) * cell_ft, per axis"
+# A crop minimum within this RELATIVE distance of a whole number of cells is
+# that whole number: floor() of 2.9999999999 would otherwise move the origin
+# a whole cell for a float artefact of the crop read-back.
+ORIGIN_SNAP_REL = 1e-9
+
+
+def lattice_origin(crop_min_uv, cell_ft):
+    """PURE. D-A9 (Greg, 2026-10-05): the cell lattice is anchored to VIEW UV.
+    Per axis, the largest whole multiple of ``cell_ft`` at or below crop A's
+    minimum (ORIGIN_RULE), so cell boundaries fall on multiples of the cell
+    from view UV (0, 0) whatever the crop."""
+    out = []
+    for value in crop_min_uv:
+        k = float(value) / float(cell_ft)
+        nearest = round(k)
+        if abs(k - nearest) <= ORIGIN_SNAP_REL * max(1.0, abs(k)):
+            k = nearest
+        out.append(math.floor(k) * float(cell_ft))
+    return out
+
+
 def build_spec(sidecar, rgb, run_config, lattice=None):
     """The GridSpec for one view, or raises GridRefusal."""
     frame = frame_record(sidecar)
@@ -382,10 +434,14 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
     h, w = rgb.shape[:2]
     spec = {"cell_ft": cell_ft, "cell_size_paper_in": float(cell_in),
             "view_scale": float(scale),
-            "origin_uv": [float(crop[0]), float(crop[1])],
+            "origin_uv": lattice_origin((crop[0], crop[1]), cell_ft),
+            "lattice_anchor": LATTICE_ANCHOR, "origin_rule": ORIGIN_RULE,
+            "crop_uv": [float(c) for c in crop],
             "mapping": mapping, "uv_basis": basis,
             "px_per_cell_u": px_u, "px_per_cell_v": px_v,
             "model_image_px": [w, h]}
+    spec["crop_a_offset_cells"] = [(float(crop[k]) - spec["origin_uv"][k]) / cell_ft
+                                   for k in (0, 1)]
     # Extent over model pixel CENTRES: the model image and, when present,
     # the registered annotation canvas (both on the model lattice).
     x0, y0, x1, y1 = 0, 0, w, h
@@ -461,6 +517,13 @@ def model_channel_masks(sidecar, rgb):
     """Per-pixel channel masks for the model image, in the decoder's S1
     precedence (element, tick, white, black, link, residual), so their image
     totals equal its ``pixel_stats``."""
+    return model_pixels(sidecar, rgb)[0]
+
+
+def model_pixels(sidecar, rgb):
+    """``(masks, id_array, packed, decode_map)``: model_channel_masks' masks,
+    with the decoded element id of every pixel (0 = none), the packed colours
+    and the decode map they came from (the ticks' ids removed)."""
     decode_map, _block, mark_mask = dsc._registration_mark_exclusion(rgb, sidecar)
     id_array, _stats = dsc.decode_ids(rgb, decode_map)
     packed = _pack(rgb)
@@ -478,11 +541,12 @@ def model_channel_masks(sidecar, rgb):
     rest = rest & ~white & ~black
     link = rest & np.isin(packed, _colour_set(sidecar.get("link_category_color_map") or {}))
     edge = ink_mask(packed)
-    return {"host": element & ~dwg, "dwg": dwg, "link": link,
-            "host_ink": element & ~dwg & edge, "dwg_ink": dwg & edge,
-            "link_ink": link & edge, "tick": tick,
-            "white": white, "black": black, "residual": rest & ~link,
-            "total": np.ones(packed.shape, dtype=bool)}
+    masks = {"host": element & ~dwg, "dwg": dwg, "link": link,
+             "host_ink": element & ~dwg & edge, "dwg_ink": dwg & edge,
+             "link_ink": link & edge, "tick": tick,
+             "white": white, "black": black, "residual": rest & ~link,
+             "total": np.ones(packed.shape, dtype=bool)}
+    return masks, id_array, packed, decode_map
 
 
 def _bbox_corners(entry):
@@ -501,18 +565,24 @@ def _bbox_corners(entry):
 
 
 def assign_black(black, bbox_map, excluded_ids, spec, canvas_origin,
-                 pad=BLACK_BBOX_PAD_PX):
+                 pad=BLACK_BBOX_PAD_PX, return_ids=False):
     """``(assigned mask, record)``: each black pixel to the smallest
     annotation bounding box containing its centre (padded by ``pad`` px).
     Pixels in no box stay unassigned; pixels in several are counted as
-    ambiguous and go to the smallest."""
+    ambiguous and go to the smallest.
+
+    ``return_ids``: also return, third, the element id each black pixel was
+    assigned to (int64, ``black.shape``, 0 where none) -- the ``best_id``
+    already computed, for the element x cell accounting. The mask and the
+    record are the same either way."""
     ys, xs = np.nonzero(black)
     record = {"total": int(len(xs)), "pad_px": pad, "rule": "smallest containing "
               "annotation bbox"}
     mask = np.zeros(black.shape, dtype=bool)
+    ids_out = np.zeros(black.shape, dtype=np.int64) if return_ids else None
     if not len(xs):
         record.update(assigned=0, ambiguous=0, unassigned=0, by_element={})
-        return mask, record
+        return (mask, record, ids_out) if return_ids else (mask, record)
     m = spec["mapping"]
     px = xs + float(canvas_origin[0]) + 0.5
     py = ys + float(canvas_origin[1]) + 0.5
@@ -540,13 +610,15 @@ def assign_black(black, bbox_map, excluded_ids, spec, canvas_origin,
         best_id[better] = eid
     assigned = hits > 0
     mask[ys[assigned], xs[assigned]] = True
+    if return_ids:
+        ids_out[ys[assigned], xs[assigned]] = best_id[assigned]
     ids, counts = np.unique(best_id[assigned], return_counts=True)
     if not_ids:
         record["skipped_non_id_keys"] = not_ids[:20]
     record.update(assigned=int(assigned.sum()), ambiguous=int((hits > 1).sum()),
                   unassigned=int((~assigned).sum()),
                   by_element=dict((str(int(i)), int(c)) for i, c in zip(ids, counts)))
-    return mask, record
+    return (mask, record, ids_out) if return_ids else (mask, record)
 
 
 def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)):
@@ -556,6 +628,14 @@ def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin
     ``element`` is every annotation-element pixel, ``element_ink`` its ink,
     ``filled_region`` the pixels of filled regions (counted by area),
     ``black_assigned`` the black pixels inside an annotation bbox."""
+    return anno_pixels(anno_sidecar, rgb, excluded_ids, spec, canvas_origin)[:2]
+
+
+def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)):
+    """``(masks, info, ids, black_ids, colour_map)``: anno_channel_masks'
+    masks and info, with each pixel's decoded element id and each black
+    pixel's assigned element id (0 = none), and the colour map decoded (the
+    excluded ids removed)."""
     excluded = set(int(e) for e in excluded_ids or ())
     colour_map = dict((k, v) for k, v in (anno_sidecar.get("color_assignment_map") or {}).items()
                       if int(k) not in excluded)
@@ -576,10 +656,11 @@ def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin
     white = rest & (packed == 0xFFFFFF)
     black = rest & (packed == 0)
     if spec is not None:
-        black_assigned, black_record = assign_black(black, bbox_map, excluded, spec,
-                                                    canvas_origin)
+        black_assigned, black_record, black_ids = assign_black(
+            black, bbox_map, excluded, spec, canvas_origin, return_ids=True)
     else:
         black_assigned = np.zeros_like(black)
+        black_ids = np.zeros(black.shape, dtype=np.int64)
         black_record = {"total": int(black.sum()), "assigned": 0,
                         "reason": "no grid mapping to place the bboxes"}
     masks = {"element": element, "element_ink": element & ink_mask(packed),
@@ -594,7 +675,7 @@ def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin
         info["filled_region"]["reason"] = (
             "this capture records no element_class, so filled regions cannot be "
             "told from detail components and are counted by ink")
-    return masks, info
+    return masks, info, ids, black_ids, colour_map
 
 
 def count_cells(spec, masks, col_offset=0, row_offset=0):
@@ -641,6 +722,20 @@ def occupancy_summary(occ, inside):
             "outside_crop_a": _counts(~inside)}
 
 
+def crop_a_coverage(arrays):
+    """PURE. How crop A's pixels fall in the cells: ``px`` model pixel centres
+    inside crop A; ``cells_with_px`` cells holding at least one (the
+    ``inside_crop_a`` population, by pixel centre); ``cells_partial`` those
+    cells where some of the cell's model pixels lie OUTSIDE crop A (the
+    lattice is anchored to view UV, so crop A's edges fall inside cells)."""
+    crop_px, total = arrays["crop_a_px"], arrays["model_total"]
+    with_px = crop_px > 0
+    return {"px": int(crop_px.sum()), "cells_with_px": int(with_px.sum()),
+            "cells_partial": int((with_px & (crop_px < total)).sum()),
+            "rule": "crop_a_px: model pixel centres inside crop A (and its "
+                    "split bands); cells_partial: 0 < crop_a_px < model_total"}
+
+
 def inside_crop_a(spec):
     """The cells the view SHOWS: crop A's cells, and for a split crop only
     those whose centre lies in one of its bands (``split_bands_uv``)."""
@@ -660,6 +755,303 @@ def inside_crop_a(spec):
                       & ((u >= u0) & (u <= u1))[None, :])
         mask &= shown
     return mask
+
+
+# --- the element x cell accounting (A1) -----------------------------------------
+#
+# The primary granular record: for every (key, cell) pair with any pixel, how
+# many of the key's pixels, ink pixels, assigned black pixels and model ink
+# pixels under annotation fall in the cell. A KEY is one model element (host
+# or DWG), one linked category (link pixels are colour-per-category; per-
+# element link identity is not captured, ledger M1) or one annotation
+# element. Unattributed pixels are not keys: they stay in the dense channels.
+# Presence, dominant type and every threshold are derivations of these
+# counts, never stored in their place (D-A3).
+
+EC_FIELDS = ("ec_px", "ec_ink_px", "ec_black_px", "ec_model_ink_under_px")
+EC_RULES = {
+    "ec_px": "the key's pixels in the cell",
+    "ec_ink_px": "the key's ink pixels (item 3: a 4-neighbour of a different "
+                 "colour); a filled region's ink, not its area",
+    "ec_black_px": "annotation keys: black pixels assigned to the element "
+                   "(smallest containing bbox); 0 for model keys",
+    "ec_model_ink_under_px": "annotation key: model ink pixels under the "
+                             "element's own pixels and its assigned black; model "
+                             "key: the key's ink pixels under ANY annotation "
+                             "(element | black_assigned)",
+}
+
+
+def _plain_str(value):
+    return value if isinstance(value, str) else None
+
+
+def model_keys(sidecar, decode_map):
+    """``(keys, element_ids, link_colours)``: one key per element id the model
+    decode map can decode, then one per linked category. A key's ``source``
+    and ``category`` are the near_face_w_map host entry's, as recorded; an
+    element with no entry, or a source recorded as a failure state, gets
+    null, never an inferred value. ``element_class`` is null for model keys:
+    the capture does not record it."""
+    host_map = (sidecar.get("near_face_w_map") or {}).get("host") or {}
+    ids = sorted(set(int(k) for k in decode_map
+                     if str(k).lstrip("-").isdigit()
+                     and int(k) != dsc.BACKGROUND_ELEMENT_ID))
+    keys = []
+    for eid in ids:
+        entry = host_map.get(str(eid))
+        entry = entry if isinstance(entry, dict) else {}
+        source = _plain_str(entry.get("source"))
+        keys.append({"layer": "model", "element_id": eid, "link_category": None,
+                     "source": source if source in ("HOST", "DWG") else None,
+                     "category": _plain_str(entry.get("category")),
+                     "element_class": None})
+    link_map = sidecar.get("link_category_color_map") or {}
+    colours, seen = [], {}
+    for name in sorted(link_map):
+        c = link_map[name]
+        packed = (int(c[0]) << 16) | (int(c[1]) << 8) | int(c[2])
+        if packed in seen:
+            raise GridRefusal("linked categories {0!r} and {1!r} share the colour {2}: "
+                              "their pixels cannot be told apart".format(
+                                  seen[packed], name, list(c)))
+        seen[packed] = name
+        colours.append(packed)
+        keys.append({"layer": "model", "element_id": None, "link_category": str(name),
+                     "source": "LINK", "category": str(name), "element_class": None})
+    return keys, np.array(ids, dtype=np.int64), np.array(colours, dtype=np.int64)
+
+
+def annotation_keys(anno_sidecar, colour_map, black_by_element):
+    """``(keys, element_ids, info)``: one key per element in the annotation
+    colour map (the excluded ids already removed), fields from
+    annotation_bbox_map. An element absent from the bbox map keeps null
+    category and element_class and is counted, never dropped. An element that
+    received black pixels but is not in the colour map (painted nothing, but
+    its bbox holds black) gets a key too, counted separately, so its black
+    pixels are not lost."""
+    bbox_map = anno_sidecar.get("annotation_bbox_map") or {}
+    painted = set(int(k) for k in colour_map)
+    black_only = sorted(set(int(k) for k in black_by_element) - painted)
+    keys, absent = [], 0
+    ids = sorted(painted | set(black_only))     # sorted: _key_index searches it
+    for eid in ids:
+        entry = bbox_map.get(str(eid))
+        if not isinstance(entry, dict):
+            absent += 1
+            entry = {}
+        keys.append({"layer": "annotation", "element_id": eid, "link_category": None,
+                     "source": None, "category": _plain_str(entry.get("category")),
+                     "element_class": _plain_str(entry.get("element_class"))})
+    return keys, np.array(ids, dtype=np.int64), {
+        "keys_absent_from_bbox_map": absent,
+        "keys_black_only": len(black_only)}
+
+
+def _key_index(values, table, base):
+    """Each value's position in the sorted ``table`` plus ``base``; -1 where
+    the value is not in it."""
+    out = np.full(values.shape, -1, dtype=np.int64)
+    if not len(table):
+        return out
+    pos = np.clip(np.searchsorted(table, values), 0, len(table) - 1)
+    hit = table[pos] == values
+    out[hit] = pos[hit] + base
+    return out
+
+
+def _sparse(spec, keys, mask, col_offset=0, row_offset=0, step=512):
+    """``(codes, counts)`` of the pixels where ``mask`` holds, by
+    ``key * n_cells + cell``, each code once, ascending."""
+    n = spec["cells_w"] * spec["cells_h"]
+    h, w = mask.shape
+    i = cells_of_columns(spec, np.arange(w) + col_offset) - spec["i_range"][0]
+    parts_c, parts_n = [], []
+    for r0 in range(0, h, step):
+        r1 = min(h, r0 + step)
+        j = cells_of_rows(spec, np.arange(r0, r1) + row_offset) - spec["j_range"][0]
+        flat = j[:, None] * spec["cells_w"] + i[None, :]
+        m = mask[r0:r1]
+        code = keys[r0:r1][m] * n + flat[m]
+        if len(code):
+            c, k = np.unique(code, return_counts=True)
+            parts_c.append(c)
+            parts_n.append(k)
+    if not parts_c:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+    codes = np.concatenate(parts_c)
+    counts = np.concatenate(parts_n)
+    uniq, inv = np.unique(codes, return_inverse=True)
+    return uniq, np.bincount(inv, weights=counts).astype(np.int64)
+
+
+def merge_sparse(spec, parts):
+    """The ec_ arrays from ``{field: (codes, counts)}``: one row per code any
+    field holds, zeros where a field has none."""
+    n = spec["cells_w"] * spec["cells_h"]
+    all_codes = [c for c, _k in parts.values() if len(c)]
+    codes = (np.unique(np.concatenate(all_codes)) if all_codes
+             else np.zeros(0, dtype=np.int64))
+    out = {"ec_key": (codes // n).astype(np.int32)}
+    flat = codes % n
+    out["ec_i"] = (flat % spec["cells_w"] + spec["i_range"][0]).astype(np.int32)
+    out["ec_j"] = (flat // spec["cells_w"] + spec["j_range"][0]).astype(np.int32)
+    for field in EC_FIELDS:
+        values = np.zeros(len(codes), dtype=np.int64)
+        c, k = parts.get(field, (np.zeros(0, dtype=np.int64),) * 2)
+        if len(c):
+            values[np.searchsorted(codes, c)] = k
+        if values.size and values.max() > np.iinfo(np.int32).max:
+            raise GridRefusal("{0} exceeds int32 in one (key, cell)".format(field))
+        out[field] = values.astype(np.int32)
+    return out
+
+
+def ec_dense(spec, ec, rows, field):
+    """PURE. ``field`` summed over the ec_ rows selected by the boolean
+    ``rows``, as a dense (cells_h, cells_w) array."""
+    out = np.zeros((spec["cells_h"], spec["cells_w"]), dtype=np.int64)
+    np.add.at(out, (ec["ec_j"][rows] - spec["j_range"][0],
+                    ec["ec_i"][rows] - spec["i_range"][0]),
+              ec[field][rows].astype(np.int64))
+    return out
+
+
+def ec_invariants(spec, ec, keys, arrays):
+    """The accounting checked against the dense channels, every check with
+    its numbers. Raises GridRefusal naming each one that does not hold.
+
+    Annotation keys' ``ec_model_ink_under_px`` sums to EXACTLY
+    ``model_ink_under_anno``, not merely at least it: element pixels and
+    black pixels are disjoint (black is ``~element``) and each black pixel
+    has at most one assigned element, so every covered pixel has exactly one
+    annotation owner."""
+    layer = np.array([k["layer"] for k in keys] or ["model"])[ec["ec_key"]] \
+        if len(ec["ec_key"]) else np.zeros(0, dtype="<U10")
+    model_rows = layer == "model"
+    anno_rows = layer == "annotation"
+    is_link = np.array([k["source"] == "LINK" for k in keys] or [False])
+    is_dwg = np.array([k["source"] == "DWG" for k in keys] or [False])
+    link_rows = model_rows & is_link[ec["ec_key"]] if len(ec["ec_key"]) else model_rows
+    dwg_rows = model_rows & is_dwg[ec["ec_key"]] if len(ec["ec_key"]) else model_rows
+    elem_rows = model_rows & ~link_rows
+    zero = np.zeros((spec["cells_h"], spec["cells_w"]), dtype=np.int64)
+    checks = [
+        ("model element px == model_host + model_dwg", elem_rows, "ec_px",
+         arrays["model_host"] + arrays["model_dwg"]),
+        ("model DWG-source px == model_dwg", dwg_rows, "ec_px", arrays["model_dwg"]),
+        ("model link px == model_link", link_rows, "ec_px", arrays["model_link"]),
+        ("model element ink == model_host_ink + model_dwg_ink", elem_rows, "ec_ink_px",
+         arrays["model_host_ink"] + arrays["model_dwg_ink"]),
+        ("model DWG-source ink == model_dwg_ink", dwg_rows, "ec_ink_px",
+         arrays["model_dwg_ink"]),
+        ("model link ink == model_link_ink", link_rows, "ec_ink_px",
+         arrays["model_link_ink"]),
+        ("model black == 0", model_rows, "ec_black_px", zero),
+        ("model ink under annotation == model_ink_under_anno", model_rows,
+         "ec_model_ink_under_px", arrays.get("model_ink_under_anno", zero)),
+    ]
+    if "anno_element" in arrays:
+        checks += [
+            ("annotation px == anno_element", anno_rows, "ec_px", arrays["anno_element"]),
+            ("annotation ink == anno_element_ink", anno_rows, "ec_ink_px",
+             arrays["anno_element_ink"]),
+            ("annotation black == anno_black_assigned", anno_rows, "ec_black_px",
+             arrays["anno_black_assigned"]),
+            ("annotation model ink under == model_ink_under_anno", anno_rows,
+             "ec_model_ink_under_px", arrays["model_ink_under_anno"]),
+        ]
+    elif anno_rows.any():
+        raise GridRefusal("annotation keys hold rows but no annotation was gridded")
+    out, broken = [], []
+    for name, rows, field, dense in checks:
+        got = ec_dense(spec, ec, rows, field)
+        bad = got != dense
+        rec = {"check": name, "ec_total": int(got.sum()), "dense_total": int(dense.sum()),
+               "cells_differing": int(bad.sum())}
+        out.append(rec)
+        if rec["cells_differing"] or rec["ec_total"] != rec["dense_total"]:
+            broken.append(rec)
+    if broken:
+        raise GridRefusal("the element x cell accounting does not reproduce the dense "
+                          "channels: " + "; ".join(
+                              "{check}: ec {ec_total} vs dense {dense_total}, "
+                              "{cells_differing} cells differ".format(**b) for b in broken))
+    return out
+
+
+def element_cell_accounting(spec, model, anno=None):
+    """``(ec arrays, keys, info)``.
+
+    ``model``: ``{"sidecar", "ids", "packed", "decode_map", "masks", "cover"}``
+    -- the model image's decoded ids, packed colours and channel masks, and
+    ``cover`` (element | black_assigned on the model image's window, or None
+    with no registered annotation).
+    ``anno``: ``{"sidecar", "ids", "black_ids", "colour_map", "masks",
+    "origin", "black_by_element"}`` for the registered canvas, or None."""
+    keys, elem_ids, link_colours = model_keys(model["sidecar"], model["decode_map"])
+    masks = model["masks"]
+    n_elem = len(elem_ids)
+    mkey = _key_index(model["ids"].astype(np.int64), elem_ids, 0)
+    mkey[~(masks["host"] | masks["dwg"])] = -1
+    lkey = _key_index(model["packed"], np.sort(link_colours), 0)
+    if len(link_colours):
+        # Back from colour order to the keys' (name) order.
+        order = np.argsort(link_colours)
+        remap = np.full(len(link_colours), -1, dtype=np.int64)
+        remap[np.arange(len(link_colours))] = order + n_elem
+        lkey = np.where(lkey >= 0, remap[np.clip(lkey, 0, None)], -1)
+    lkey[~masks["link"]] = -1
+    mkey = np.where(lkey >= 0, lkey, mkey)
+    del lkey
+    model_ink = masks["host_ink"] | masks["dwg_ink"] | masks["link_ink"]
+    keyed = mkey >= 0
+    parts = {"ec_px": _sparse(spec, mkey, keyed),
+             "ec_ink_px": _sparse(spec, mkey, keyed & model_ink)}
+    if model.get("cover") is not None:
+        parts["ec_model_ink_under_px"] = _sparse(spec, mkey, keyed & model_ink
+                                                 & model["cover"])
+    info = {"model_keys": len(keys), "link_keys": len(link_colours),
+            "model_keys_null_source": sum(1 for k in keys[:n_elem] if k["source"] is None),
+            "model_keys_null_category": sum(1 for k in keys if k["category"] is None)}
+    if anno is not None:
+        base = len(keys)
+        akeys, a_ids, a_info = annotation_keys(anno["sidecar"], anno["colour_map"],
+                                               anno["black_by_element"])
+        keys = keys + akeys
+        info.update(a_info, annotation_keys=len(akeys),
+                    annotation_keys_null_category=sum(1 for k in akeys
+                                                      if k["category"] is None),
+                    annotation_keys_null_element_class=sum(
+                        1 for k in akeys if k["element_class"] is None))
+        am = anno["masks"]
+        ox, oy = anno["origin"]
+        akey = _key_index(anno["ids"].astype(np.int64), a_ids, base)
+        akey[~am["element"]] = -1
+        bkey = _key_index(anno["black_ids"], a_ids, base)
+        bkey[~am["black_assigned"]] = -1
+        anno_parts = {"ec_px": _sparse(spec, akey, akey >= 0, ox, oy),
+                      "ec_ink_px": _sparse(spec, akey, (akey >= 0) & am["element_ink"],
+                                           ox, oy),
+                      "ec_black_px": _sparse(spec, bkey, bkey >= 0, ox, oy)}
+        # Each covered canvas pixel has ONE annotation owner: its element, or
+        # the element its black pixel was assigned to.
+        owner = np.where(akey >= 0, akey, bkey)
+        del akey, bkey
+        h, w = model_ink.shape
+        window = owner[-oy:-oy + h, -ox:-ox + w]
+        anno_parts["ec_model_ink_under_px"] = _sparse(spec, window,
+                                                      (window >= 0) & model_ink)
+        del owner, window
+        for field, (c, k) in anno_parts.items():
+            if field in parts:
+                pc, pk = parts[field]
+                parts[field] = (np.concatenate([pc, c]), np.concatenate([pk, k]))
+            else:
+                parts[field] = (c, k)
+    ec = merge_sparse(spec, parts)
+    info["rows"] = int(len(ec["ec_key"]))
+    return ec, keys, info
 
 
 # --- the picture ---------------------------------------------------------------
@@ -807,12 +1199,16 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                     registered, reg_path, model_sidecar_path,
                     record["model_tiff_sha256"])
         spec = build_spec(sidecar, rgb, run_config, lattice=lattice)
-        model_masks = model_channel_masks(sidecar, rgb)
+        model_masks, model_ids, model_packed, decode_map = model_pixels(sidecar, rgb)
         h, w = rgb.shape[:2]
         del rgb
         arrays = dict(("model_" + k, v) for k, v in count_cells(spec, model_masks).items())
+        arrays["crop_a_px"] = count_cells(spec, {"crop_a_px": crop_a_pixel_mask(
+            spec, spec["crop_uv"], w, h)})["crop_a_px"]
         model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
-        del model_masks
+        model_in = {"sidecar": sidecar, "ids": model_ids, "packed": model_packed,
+                    "decode_map": decode_map, "masks": model_masks, "cover": None}
+        anno_in = None
         if registered is not None:
             anno_tiff = _resolve_recorded(registered["registered_tiff"], reg_path.parent,
                                           "the registered annotation TIFF")
@@ -837,7 +1233,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                                   "mapping to place the annotation bboxes")
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
-            anno_masks, anno_info = anno_channel_masks(
+            anno_masks, anno_info, anno_ids, black_ids, anno_colours = anno_pixels(
                 anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
                 spec=dict(spec, mapping=placement), canvas_origin=(ox, oy))
             del anno_rgb
@@ -852,7 +1248,12 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             arrays.update(count_cells(spec, {
                 "model_ink_under_anno": model_ink & cover,
                 "model_ink_under_filled_region": model_ink & filled}))
-            del anno_masks, cover, filled
+            model_in["cover"] = cover
+            anno_in = {"sidecar": anno_sidecar, "ids": anno_ids, "black_ids": black_ids,
+                       "colour_map": anno_colours, "masks": anno_masks,
+                       "origin": (ox, oy),
+                       "black_by_element": anno_info["black"].get("by_element") or {}}
+            del filled
             record["black"] = anno_info["black"]
             record["filled_region"] = anno_info["filled_region"]
             ink_px = int(model_ink.sum())
@@ -868,16 +1269,22 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             record["registered_annotation"] = {
                 "record": str(reg_path), "record_sha256": sha256_file(reg_path),
                 "tiff_sha256": registered.get("registered_tiff_sha256")}
+        # A1: the element x cell accounting, checked against the dense
+        # channels BEFORE anything is written; a mismatch refuses the view.
+        ec, ec_keys, ec_info = element_cell_accounting(spec, model_in, anno_in)
+        del model_in, anno_in, model_masks, model_ids, model_packed
+        ec_info["invariants"] = ec_invariants(spec, ec, ec_keys, arrays)
         arrays["inside_crop_a"] = inside_crop_a(spec)
         arrays["occupancy"] = occupancy(arrays)
         npz_path = out_dir / (stem + ".grid.npz")
-        np.savez_compressed(npz_path, **arrays)
+        np.savez_compressed(npz_path, **dict(arrays, **ec))
         png_path = out_dir / (stem + ".grid.png")
         render_png(spec, arrays, png_path, px_per_cell=png_px_per_cell)
         record.update({
             "status": "value", "grid": spec,
             "image_totals": dict((k, int(v.sum())) for k, v in arrays.items()
                                  if k not in ("inside_crop_a", "occupancy")),
+            "crop_a_coverage": crop_a_coverage(arrays),
             "occupancy": dict(occupancy_summary(arrays["occupancy"],
                                                 arrays["inside_crop_a"]),
                               codes=OCCUPANCY_CODES,
@@ -885,9 +1292,16 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                                    "different colour; occupied at >= {0} ink px per "
                                    "layer".format(OCCUPANCY_MIN_INK_PX)),
             "npz": npz_path.name, "npz_sha256": sha256_file(npz_path),
+            "npz_bytes": npz_path.stat().st_size,
             "png": png_path.name,
-            "layout": "arrays are (cells_h, cells_w); row 0 is j_range[0] (the "
-                      "LOWEST v), column 0 is i_range[0]"})
+            "ec_keys": ec_keys, "ec_rows": ec_info["rows"],
+            "element_cell": dict(ec_info, fields=EC_RULES,
+                                 layout="ec_* are 1-D, one entry per (key, cell) "
+                                        "row with any nonzero field; ec_key indexes "
+                                        "ec_keys; ec_i, ec_j are signed cell indices"),
+            "layout": "dense arrays are (cells_h, cells_w); row 0 is j_range[0] (the "
+                      "LOWEST v), column 0 is i_range[0]. ec_* arrays are the "
+                      "element x cell rows (see element_cell)"})
     except GridRefusal as ex:
         record.update({"status": "refused", "reason": str(ex)})
     with open(json_path, "w", encoding="utf-8") as handle:
@@ -916,12 +1330,14 @@ def main(argv=None):
         return 2
     out = Path(args.out) if args.out else folder.parent / "analysis_grid"
     worst = 0
+    sizes = []
     for path in paths:
         rec = grid_view(path, out, png_px_per_cell=args.png_px_per_cell)
         if rec["status"] != "value":
             worst = 1
             print("REFUSED {0}: {1}".format(path.name, rec.get("reason")))
             continue
+        sizes.append((rec["ec_rows"], rec["npz_bytes"], len(rec["ec_keys"]), path.stem))
         g = rec["grid"]
         print("{0:<40} {1:>5} x {2:<5} cells  {3:5.2f} px/cell  basis {4:<12} "
               "unc {5}  {6}".format(
@@ -930,6 +1346,13 @@ def main(argv=None):
                   "-" if g["uv_basis"]["uncertainty_px"] is None else
                   "{0:.2f}px".format(g["uv_basis"]["uncertainty_px"]),
                   ",".join(g["flags"])))
+    if sizes:
+        # No size threshold: the numbers are printed for a person to judge.
+        print("largest element x cell tables (ec_rows, npz bytes, keys), of {0} "
+              "gridded views:".format(len(sizes)))
+        for rows, size, keys, stem in sorted(sizes, reverse=True)[:5]:
+            print("  {0:>10} rows  {1:>12} bytes  {2:>7} keys  {3}".format(
+                rows, size, keys, stem))
     return worst
 
 

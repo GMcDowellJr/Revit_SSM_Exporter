@@ -1,0 +1,87 @@
+{
+  "schema": "vop.stage_a.class_map.v1",
+  "version": "1.1",
+  "applies_to": "a KIND: (layer, source, category, element_class) of a grid ec_keys entry. Rules are tried in order; the first whose every condition holds assigns the class. A condition lists accepted values; category matches are exact strings as Revit's Category.Name recorded them (English; Category.Name is localized, so a non-English project's categories fall to the default and are listed as unmapped rather than guessed).",
+  "notes": [
+    "Every rule records basis 'stated' (named in the A2 brief, 2026-10-05), 'observed' (seen in a real run's inventory) or 'inferred' (an API class name or category string the brief did not give). The inferred ones are to be checked against stage_a_kinds.py inventory on real runs.",
+    "1.1 (2026-10-05): Dimension subclasses (LinearDimension observed on run 1005_1018) map to dimension.",
+    "filled_region: masking and filled regions share the FilledRegion class; IsMasking is NOT captured, so the class does not say which.",
+    "dimension: the reference linkage of a dimension is not captured, so nothing here says a dimension is model-linked.",
+    "keynote_unknown_kind: the keynote's kind (element / material / user) is not captured.",
+    "import_view_owned: a view-owned DWG is on the ANNOTATION layer under Stage A (decision D1); the geometry path counted it as Model + Ext. It is reported as its own class and its own legacy bucket, folded into neither. The disposition is Greg's and is open."
+  ],
+  "annotation_class": {
+    "classes": ["tag", "keynote_unknown_kind", "dimension", "text", "detail_line",
+                "generic_annotation", "filled_region", "detail_component",
+                "import_view_owned", "datum", "view_reference", "revision_cloud",
+                "unmapped"],
+    "default": "unmapped",
+    "rules": [
+      {"when": {"category": ["Keynote Tags"]}, "class": "keynote_unknown_kind", "basis": "inferred",
+       "note": "stated: keynote tags -> keynote_unknown_kind. Inferred: the category name. Before the tag rule because a keynote is an IndependentTag."},
+      {"when": {"element_class": ["IndependentTag", "RoomTag", "SpaceTag", "AreaTag"]}, "class": "tag", "basis": "stated"},
+      {"when": {"element_class": ["Dimension"]}, "class": "dimension", "basis": "stated"},
+      {"when": {"element_class": ["LinearDimension"]}, "class": "dimension", "basis": "observed",
+       "note": "Observed on run 20261005T101900_e998b46 (1005_1018): Revit reports linear dimensions as the Dimension subclass LinearDimension (18 keys, 6 views, category Dimensions), which the exact-class rule above missed."},
+      {"when": {"element_class": ["AngularDimension", "ArcLengthDimension", "RadialDimension", "DiameterDimension"]},
+       "class": "dimension", "basis": "inferred",
+       "note": "Inferred: the other Dimension subclasses in the Revit API, by the same reasoning as LinearDimension."},
+      {"when": {"element_class": ["SpotDimension"]}, "class": "dimension", "basis": "inferred",
+       "note": "stated: spot dimensions are dimensions. Inferred: the API class name SpotDimension."},
+      {"when": {"element_class": ["TextNote"]}, "class": "text", "basis": "stated"},
+      {"when": {"element_class": ["DetailLine", "DetailArc", "DetailEllipse", "DetailNurbSpline", "DetailCurve"]},
+       "class": "detail_line", "basis": "inferred",
+       "note": "stated: detail curves. Inferred: the API class names."},
+      {"when": {"element_class": ["AnnotationSymbol"]}, "class": "generic_annotation", "basis": "stated"},
+      {"when": {"element_class": ["FilledRegion"]}, "class": "filled_region", "basis": "stated"},
+      {"when": {"element_class": ["ImportInstance"]}, "class": "import_view_owned", "basis": "stated"},
+      {"when": {"element_class": ["Grid", "Level"]}, "class": "datum", "basis": "stated"},
+      {"when": {"element_class": ["RevisionCloud"]}, "class": "revision_cloud", "basis": "stated"},
+      {"when": {"element_class": ["ElevationMarker"]}, "class": "view_reference", "basis": "inferred",
+       "note": "Inferred: the API class of an elevation marker."},
+      {"when": {"category": ["Views", "Elevation Marks", "Section Marks", "Section Heads",
+                             "Callout Heads", "Reference Viewer", "Elevations", "Sections", "Callouts"]},
+       "class": "view_reference", "basis": "inferred",
+       "note": "Inferred: the category names of section, callout and reference viewers (OST_Viewers, OST_SectionMarks, OST_CalloutHeads, OST_ReferenceViewer). Their API class is the generic Element, so category is the only handle."},
+      {"when": {"element_class": ["FamilyInstance"], "category": ["Detail Items"]},
+       "class": "detail_component", "basis": "stated"}
+    ]
+  },
+  "legacy_bucket": {
+    "source": "vop_interwoven/revit/annotation.py classify_annotation / classify_keynote, normalised by final_state_scanner._normalize_anno_type (ANNO_BUCKETS)",
+    "classes": ["TEXT", "TAG", "DIM", "DETAIL", "LINES", "REGION", "OTHER", "IMPORT_VIEW_OWNED"],
+    "default": "OTHER",
+    "not_in_v1": ["IMPORT_VIEW_OWNED"],
+    "rules": [
+      {"when": {"element_class": ["ImportInstance"]}, "class": "IMPORT_VIEW_OWNED", "basis": "stated",
+       "note": "Not a v1 bucket: the geometry path counted a view-owned DWG as Model + Ext, not annotation (A5)."},
+      {"when": {"element_class": ["FilledRegion"]}, "class": "REGION", "basis": "stated",
+       "note": "classify_annotation: isinstance(elem, FilledRegion) first."},
+      {"when": {"category": ["Text Notes"]}, "class": "TEXT", "basis": "inferred",
+       "note": "OST_TextNotes; inferred: its Category.Name."},
+      {"when": {"category": ["Dimensions"]}, "class": "DIM", "basis": "inferred",
+       "note": "OST_Dimensions only: spot dimensions have their own categories and fell to OTHER."},
+      {"when": {"category": ["Room Tags", "Space Tags", "Area Tags", "Door Tags", "Window Tags",
+                             "Wall Tags", "Generic Annotations"]}, "class": "TAG", "basis": "inferred",
+       "note": "classify_annotation's tag list (OST_RoomTags, OST_SpaceTags, OST_AreaTags, OST_DoorTags, OST_WindowTags, OST_WallTags, OST_MEPSpaceTags, OST_GenericAnnotation); inferred: their Category.Name. Any other tag category fell to OTHER."},
+      {"when": {"category": ["Lines"]}, "class": "LINES", "basis": "inferred"},
+      {"when": {"category": ["Detail Items"]}, "class": "DETAIL", "basis": "inferred"},
+      {"when": {"category": ["Keynote Tags"]}, "class": "TAG", "basis": "inferred",
+       "note": "classify_keynote returns TAG unless the keynote has an empty key (TEXT); the key is not captured, so its default."}
+    ]
+  },
+  "model_class": {
+    "source": "vop_interwoven/metrics/final_state_scanner.py _default_model_class_resolver (DEFAULT_MODEL_CLASSES), category branch",
+    "classes": ["WALL", "DOOR", "STAIR", "COLUMN", "LIGHT", "OTHER"],
+    "default": "OTHER",
+    "applies_to_sources": ["HOST", "DWG", "LINK", null],
+    "note": "Substring on the upper-cased category, in this order. The resolver's explicit meta['class'] branch has no Stage A input (no class is captured), so only the category branch applies.",
+    "rules": [
+      {"when": {"category_upper_contains": "WALL"}, "class": "WALL", "basis": "stated"},
+      {"when": {"category_upper_contains": "DOOR"}, "class": "DOOR", "basis": "stated"},
+      {"when": {"category_upper_contains": "STAIR"}, "class": "STAIR", "basis": "stated"},
+      {"when": {"category_upper_contains": "COLUMN"}, "class": "COLUMN", "basis": "stated"},
+      {"when": {"category_upper_contains": "LIGHT"}, "class": "LIGHT", "basis": "stated"}
+    ]
+  }
+}

@@ -62,6 +62,18 @@ required for more than one): ``grid_rollup.csv``, then
 written last (CLAUDE.md, defect class 4). An empty CSV cell means "not
 applicable for this row status", never zero.
 
+1.1.0 (A8) APPENDS columns; every 1.0.0 column keeps its place and meaning.
+From the grid record: ``ec_rows``, ``ec_keys`` and crop A's coverage. From
+``<view>.kinds.json`` (``stage_a_kinds.py derive``): ``kinds_state`` (value,
+absent, refused, stale, class_map_differs, unreadable) and, only when it is
+``value``, the per-class totals (``anno_class_*``, ``model_class_*``: px,
+ink_px, cells_with_ink over all cells), the legacy AnnoFinalCells_*
+partition and the legacy channel shape (inside crop A), and
+``class_map_sha256``. The summary adds unmapped kinds with their px, keys
+with a null category, and views refused by an accounting invariant. The
+columns and their legacy relations are described in
+``tools/maps/stage_a_metrics_manifest.v2.json``.
+
 The roll-up reports states; it does not judge the run. Every count in the
 summary sits beside its denominator.
 
@@ -84,9 +96,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
+from tools import stage_a_kinds as kinds  # noqa: E402
 
 SCHEMA = "vop.stage_a.grid_rollup.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
@@ -125,6 +138,32 @@ COLUMNS = [
     "model_ink_px", "under_annotation_px", "under_filled_region_px",
     "fraction_under_annotation",
 ]
+
+# 1.1.0 (A8): appended, so every column above keeps its place and meaning.
+# Classes are the class map's (v1 by default): its sha256 is a column, and a
+# derivation made under another map leaves the class columns empty.
+_CLASS_MAP, _CLASS_MAP_SHA, _CLASS_MAP_PATH = kinds.load_class_map()
+CLASS_FIELDS = ("px", "ink_px", "cells_with_ink")
+ANNO_CLASS_COLUMNS = ["anno_class_{0}_{1}".format(c, f)
+                      for c in _CLASS_MAP["annotation_class"]["classes"] for f in CLASS_FIELDS]
+MODEL_CLASS_COLUMNS = ["model_class_{0}_{1}".format(c, f)
+                       for c in _CLASS_MAP["model_class"]["classes"] for f in CLASS_FIELDS]
+LEGACY_PARTITION_COLUMNS = (["legacy_AnnoFinalCells_" + b
+                             for b in _CLASS_MAP["legacy_bucket"]["classes"]]
+                            + ["legacy_AnnoPresentFinal", "legacy_anno_partition_ties"])
+LEGACY_SHAPE_COLUMNS = (["legacy_" + n for n in kinds.LEGACY_PARTITION_8]
+                        + ["legacy_TotalCells", "legacy_ExtFinalCells_Any",
+                           "legacy_ExtFinalCells_Only", "legacy_ExtFinalCells_DWG",
+                           "legacy_ExtFinalCells_RVT", "legacy_ExtFinalCells_DWG_RVT"])
+KINDS_STATES = ("value", "absent", "refused", "stale", "class_map_differs", "unreadable")
+COLUMNS += (
+    # the element x cell accounting and crop A's coverage (grid record)
+    ["ec_rows", "ec_keys", "crop_a_px", "crop_a_cells_with_px", "crop_a_cells_partial",
+     "crop_a_cells_partial_fraction",
+     # the derivation (<view>.kinds.json)
+     "kinds_state", "kinds_reason", "class_map_sha256"]
+    + ANNO_CLASS_COLUMNS + MODEL_CLASS_COLUMNS
+    + LEGACY_PARTITION_COLUMNS + LEGACY_SHAPE_COLUMNS)
 
 
 def _err(ex):
@@ -463,6 +502,139 @@ def grid_columns(record):
     return cols
 
 
+def kinds_record_path(grid_dir, stem):
+    return Path(grid_dir) / (stem + ".kinds.json")
+
+
+def kinds_columns(grid_dir, stem, grid_json):
+    """``(columns, kinds record or None)`` for a ``gridded`` row: the
+    derivation's state and, when it is a ``value`` made from THIS grid record
+    under THIS class map, its class totals, legacy partition and legacy
+    channel shape. Anything else leaves those columns empty and says why."""
+    cols = {"class_map_sha256": None}
+    path = kinds_record_path(grid_dir, stem)
+    if not path.exists():
+        cols.update(kinds_state="absent", kinds_reason="no {0}; run stage_a_kinds.py "
+                    "derive".format(path.name))
+        return cols, None
+    try:
+        rec = _load_json(path)
+        if not isinstance(rec, dict):
+            raise ValueError("the kinds record is not an object")
+    except (OSError, ValueError) as ex:
+        cols.update(kinds_state="unreadable", kinds_reason=_err(ex))
+        return cols, None
+    cols["class_map_sha256"] = (rec.get("class_map") or {}).get("sha256")
+    if rec.get("status") != "value":
+        cols.update(kinds_state="refused", kinds_reason=rec.get("reason"))
+        return cols, rec
+    stale = []
+    if rec.get("grid_json_sha256") != grid.sha256_file(grid_json):
+        stale.append("grid_json_sha256 does not match the grid record on disk")
+    npz = path.parent / str(rec.get("npz"))
+    if not npz.exists() or grid.sha256_file(npz) != rec.get("npz_sha256"):
+        stale.append("the kinds npz is missing or does not match its record")
+    if stale:
+        cols.update(kinds_state="stale", kinds_reason="; ".join(stale))
+        return cols, rec
+    if cols["class_map_sha256"] != _CLASS_MAP_SHA:
+        cols.update(kinds_state="class_map_differs",
+                    kinds_reason="derived under class map {0}, not {1} ({2})".format(
+                        str(cols["class_map_sha256"])[:12], _CLASS_MAP_SHA[:12],
+                        _CLASS_MAP_PATH.name))
+        return cols, rec
+    cols.update(kinds_state="value", kinds_reason=None)
+    fams = rec.get("families") or {}
+    with_ink = (rec.get("derived") or {}).get("cells_with_ink") or {}
+    for family, prefix in (("annotation_class", "anno_class_"), ("model_class", "model_class_")):
+        fam = fams.get(family) or {}
+        if fam.get("state") != "value":
+            continue          # e.g. no registered annotation: not applicable, empty
+        for cls, totals in (fam.get("totals") or {}).items():
+            cols[prefix + cls + "_px"] = totals.get("px")
+            cols[prefix + cls + "_ink_px"] = totals.get("ink_px")
+            cols[prefix + cls + "_cells_with_ink"] = (
+                (with_ink.get(family) or {}).get(cls) or {}).get("all_cells")
+    part = ((rec.get("derived") or {}).get("legacy_anno_partition") or {}).get("inside_crop_a")
+    if isinstance(part, dict):
+        for b in _CLASS_MAP["legacy_bucket"]["classes"]:
+            cols["legacy_AnnoFinalCells_" + b] = part.get("AnnoFinalCells_" + b)
+        cols["legacy_AnnoPresentFinal"] = part.get("AnnoPresentFinal")
+        cols["legacy_anno_partition_ties"] = part.get("ties")
+    shape = (rec.get("channel_shape_legacy") or {}).get("inside_crop_a")
+    if isinstance(shape, dict):
+        for column in LEGACY_SHAPE_COLUMNS:
+            cols[column] = shape.get(column[len("legacy_"):])
+    return cols, rec
+
+
+def element_cell_columns(record):
+    """The grid record's own A1 and crop-A coverage numbers (empty for a grid
+    made before them)."""
+    cov = record.get("crop_a_coverage") or {}
+    with_px, partial = cov.get("cells_with_px"), cov.get("cells_partial")
+    return {"ec_rows": record.get("ec_rows"),
+            "ec_keys": len(record["ec_keys"]) if "ec_keys" in record else None,
+            "crop_a_px": cov.get("px"), "crop_a_cells_with_px": with_px,
+            "crop_a_cells_partial": partial,
+            "crop_a_cells_partial_fraction": (partial / float(with_px)
+                                              if with_px else None)}
+
+
+def row_keys(grid_json):
+    """For the summary: each ec key of a gridded view as ``(layer, kind,
+    annotation class, px, ink_px)``, or the reason the accounting cannot be
+    read (a grid made before A1, an npz that does not match its record)."""
+    try:
+        rec, arr = kinds.load_grid(grid_json)
+    except kinds.KindsRefusal as ex:
+        return str(ex)
+    keys = rec["ec_keys"]
+    px = kinds._key_sums(arr, len(keys), "ec_px")
+    ink = kinds._key_sums(arr, len(keys), "ec_ink_px")
+    return [(k["layer"], kinds.kind_of(k),
+             kinds.classify(k, _CLASS_MAP, "annotation_class")[0]
+             if k["layer"] == "annotation" else None, int(px[n]), int(ink[n]))
+            for n, k in enumerate(keys)]
+
+
+def keys_summary(gridded):
+    """Unmapped annotation kinds with their pixels, and keys with a null
+    category, over the gridded rows whose accounting can be read."""
+    unmapped, null_cat, totals, unread = {}, {}, {}, []
+    for r in gridded:
+        keys = r.get("_keys")
+        if not isinstance(keys, list):
+            unread.append(dict(_view_ref(r), reason=keys))
+            continue
+        for layer, kind, cls, px, ink in keys:
+            totals[layer] = totals.get(layer, 0) + 1
+            if kind[2] is None:
+                null_cat[layer] = null_cat.get(layer, 0) + 1
+            if cls == "unmapped":
+                entry = unmapped.setdefault(kind, {"views": set(), "keys": 0, "px": 0,
+                                                   "ink_px": 0})
+                entry["views"].add((r["run_id"], r["view_stem"]))
+                entry["keys"] += 1
+                entry["px"] += px
+                entry["ink_px"] += ink
+    return {
+        "unmapped_kinds": {
+            "denominator": len(gridded) - len(unread),
+            "denominator_rule": "gridded rows whose element x cell accounting was read",
+            "count": len(unmapped),
+            "kinds": [dict(zip(kinds.KIND_FIELDS, kind), views=len(e["views"]),
+                           keys=e["keys"], px=e["px"], ink_px=e["ink_px"])
+                      for kind, e in sorted(unmapped.items(),
+                                            key=lambda kv: -kv[1]["px"])]},
+        "keys_with_null_category": dict(
+            (layer, {"keys": null_cat.get(layer, 0), "denominator": n,
+                     "denominator_rule": "{0} keys of the rows read".format(layer)})
+            for layer, n in sorted(totals.items())),
+        "accounting_not_read": {"denominator": len(gridded), "count": len(unread),
+                                "rows": unread}}
+
+
 def _blank_row(run_id, view_id, views_core, outcome):
     row = dict((c, None) for c in COLUMNS)
     row.update(run_id=run_id, view_id=view_id)
@@ -554,6 +726,9 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome):
             row["row_status"] = "gridded"
             row["reason"] = None
             row.update(grid_columns(record))
+            row.update(element_cell_columns(record))
+            row.update(kinds_columns(grid_dir, stem, grid_json)[0])
+            row["_keys"] = row_keys(grid_json)
         else:
             row["row_status"] = "grid_refused"
             row["reason"] = record.get("reason") or "grid status {0!r}".format(
@@ -616,7 +791,25 @@ def summarise(runs, rows, csv_path):
                 flags[f] = flags.get(f, 0) + 1
     with_black = [r for r in gridded if r["black_unassigned"] is not None]
     with_fr = [r for r in gridded if r["filled_region_elements"] is not None]
-    return {
+    ec_refused = [dict(_view_ref(r), row_status=r["row_status"],
+                       reason=r["reason"] if r["row_status"] == "grid_refused"
+                       else r["kinds_reason"])
+                  for r in rows
+                  if (r["row_status"] == "grid_refused"
+                      and "element x cell accounting" in str(r["reason"]))
+                  or (r["row_status"] == "gridded" and r["kinds_state"] == "refused"
+                      and "does not reproduce the grid" in str(r["kinds_reason"]))]
+    return dict(keys_summary(gridded), **{
+        "class_map": {"path": str(_CLASS_MAP_PATH), "sha256": _CLASS_MAP_SHA,
+                      "version": _CLASS_MAP.get("version")},
+        "kinds_state": {"denominator": len(gridded), "denominator_rule": "gridded rows",
+                        "counts": _counts(gridded, "kinds_state", KINDS_STATES)},
+        "ec_invariant_refusals": {
+            "denominator": n,
+            "rule": "rows the grid refused because its element x cell accounting did "
+                    "not reproduce the dense channels, and gridded rows whose class "
+                    "derivation did not reproduce the grid",
+            "count": len(ec_refused), "views": ec_refused},
         "schema": SCHEMA, "tool_version": TOOL_VERSION,
         "runs": runs,
         "denominator": n,
@@ -677,7 +870,7 @@ def summarise(runs, rows, csv_path):
                      for r in rows if r["row_status"] != "gridded"]},
         "csv": csv_path.name,
         "csv_sha256": grid.sha256_file(csv_path),
-    }
+    })
 
 
 def run_rows(sidecars, grid_dir, run_id, views_core, ident):

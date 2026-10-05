@@ -1,0 +1,447 @@
+{
+  "schema_version": "stage_a_metrics_manifest.v2",
+  "metrics_version": "2026-10-05.stage_a.v2",
+  "describes": "the Stage A analysis layer's products: what is written, where, stored or derived, under which lattice and class map. It does not replace vop_interwoven/metrics/manifest/metrics_manifest.v1.json, which describes the geometry path and is unchanged.",
+  "naming_rule": "every field names the observed quantity (px, ink_px, black_px, model_ink_under_px, cells_with_ink). Nothing here judges a drawing, a model or progress; where a number could be read as a verdict, its denominator is stated beside it.",
+  "lattice": {
+    "anchor": "view_uv",
+    "origin_rule": "origin_uv[k] = floor(crop_min_uv[k] / cell_ft) * cell_ft, per axis",
+    "cell_ft": "cell_size_paper_in (run_meta.json config) * view_scale / 12",
+    "pixel_rule": "a pixel belongs to the cell containing its centre",
+    "grid_schema": "vop.stage_a.analysis_grid.v2",
+    "grid_tool_version": "2.0.0",
+    "decision": "D-A9 (Greg, 2026-10-05); docs/DESIGN_ANALYSIS_GRID.md, Amendment 2026-10-05"
+  },
+  "class_map": {
+    "path": "tools/maps/stage_a_class_map.v1.json",
+    "version": "1.1",
+    "sha256": "88a70a2bf2cb242f5595ab17a106d659a9fea657359690c5e75d8b452a550a19",
+    "rule": "every kinds record and the roll-up record the sha256 they used; a roll-up leaves class columns empty for a derivation made under another map"
+  },
+  "families": {
+    "dense_channels": {
+      "stored": true,
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)"
+    },
+    "element_cell": {
+      "stored": true,
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)",
+      "fields": [
+        "ec_px",
+        "ec_ink_px",
+        "ec_black_px",
+        "ec_model_ink_under_px"
+      ]
+    },
+    "annotation_class": {
+      "stored": "derived, separate file",
+      "file": "<run>/analysis_grid/<view>.kinds.npz (+ .kinds.json)",
+      "classes": [
+        "tag",
+        "keynote_unknown_kind",
+        "dimension",
+        "text",
+        "detail_line",
+        "generic_annotation",
+        "filled_region",
+        "detail_component",
+        "import_view_owned",
+        "datum",
+        "view_reference",
+        "revision_cloud",
+        "unmapped"
+      ],
+      "fields": [
+        "px",
+        "ink_px",
+        "black_px",
+        "occupancy_px",
+        "model_ink_under_px"
+      ]
+    },
+    "model_class": {
+      "stored": "derived, separate file",
+      "file": "<run>/analysis_grid/<view>.kinds.npz (+ .kinds.json)",
+      "classes": [
+        "WALL",
+        "DOOR",
+        "STAIR",
+        "COLUMN",
+        "LIGHT",
+        "OTHER"
+      ],
+      "fields": [
+        "px",
+        "ink_px",
+        "model_ink_under_px"
+      ]
+    },
+    "legacy_bucket": {
+      "stored": "derived, separate file",
+      "file": "<run>/analysis_grid/<view>.kinds.npz (+ .kinds.json)",
+      "classes": [
+        "TEXT",
+        "TAG",
+        "DIM",
+        "DETAIL",
+        "LINES",
+        "REGION",
+        "OTHER",
+        "IMPORT_VIEW_OWNED"
+      ],
+      "fields": [
+        "px",
+        "ink_px",
+        "black_px",
+        "occupancy_px",
+        "model_ink_under_px"
+      ],
+      "not_in_v1": [
+        "IMPORT_VIEW_OWNED"
+      ]
+    },
+    "source_partition_8_legacy": {
+      "stored": "derived",
+      "file": "<run>/analysis_grid/<view>.kinds.npz (+ .kinds.json)",
+      "classes": [
+        "Cells_Empty",
+        "Cells_ModelOnly",
+        "Cells_AnnoOnly",
+        "Cells_ExtOnly",
+        "Cells_ModelAnno",
+        "Cells_ModelExt",
+        "Cells_AnnoExt",
+        "Cells_All3"
+      ]
+    }
+  },
+  "products": [
+    {
+      "name": "dense channels (model_*, anno_*, model_ink_under_*)",
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)",
+      "kind": "stored",
+      "derivation": "per-cell pixel counts by channel; a pixel belongs to the cell holding its centre (G-5)",
+      "parameters": {},
+      "class_map_version": null,
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "crop_a_px",
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)",
+      "kind": "stored",
+      "derivation": "model pixel centres inside crop A (and its split bands) per cell (W1)",
+      "parameters": {},
+      "class_map_version": null,
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "inside_crop_a",
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)",
+      "kind": "stored (derived from the spec)",
+      "derivation": "crop A's cells holding a model pixel centre; for a split crop, cells whose centre is in a band",
+      "parameters": {},
+      "class_map_version": null,
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "occupancy",
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)",
+      "kind": "stored (derived; kept for parity)",
+      "derivation": "empty / model_only / anno_only / overlap from the ink counts (item 3)",
+      "parameters": {
+        "OCCUPANCY_MIN_INK_PX": 1
+      },
+      "class_map_version": null,
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "element x cell accounting (ec_*)",
+      "file": "<run>/analysis_grid/<view>.grid.npz (+ .grid.json)",
+      "kind": "stored -- the primary granular record (A1)",
+      "derivation": "per (key, cell): ec_px: the key's pixels in the cell; ec_ink_px: the key's ink pixels (item 3: a 4-neighbour of a different colour); a filled region's ink, not its area; ec_black_px: annotation keys: black pixels assigned to the element (smallest containing bbox); 0 for model keys; ec_model_ink_under_px: annotation key: model ink pixels under the element's own pixels and its assigned black; model key: the key's ink pixels under ANY annotation (element | black_assigned)",
+      "parameters": {
+        "BLACK_BBOX_PAD_PX": 1.0
+      },
+      "class_map_version": null,
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "class arrays (<family>__<class>__<field>)",
+      "file": "<run>/analysis_grid/<view>.kinds.npz (+ .kinds.json)",
+      "kind": "derived and stored in a separate file",
+      "derivation": "ec rows summed per cell by the class the map gives each key's kind; annotation occupancy_px = ink + black + area if a filled region",
+      "parameters": {
+        "class_map": "tools/maps/stage_a_class_map.v1.json"
+      },
+      "class_map_version": "1.1",
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "legacy_source_partition_8 (array) / channel_shape_legacy",
+      "file": "<run>/analysis_grid/<view>.kinds.npz (+ .kinds.json)",
+      "kind": "derived",
+      "derivation": "kinds.legacy_channel_shape over the grid's dense arrays",
+      "parameters": {
+        "min_ink_px": 1
+      },
+      "class_map_version": "1.1",
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "cells_with_ink",
+      "file": "<run>/analysis_grid/<view>.kinds.json",
+      "kind": "derived (recorded, not an array)",
+      "derivation": "presence(<family>, ink_px, min_px)",
+      "parameters": {
+        "min_px": 1
+      },
+      "class_map_version": "1.1",
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "legacy_anno_partition (AnnoFinalCells_*)",
+      "file": "<run>/analysis_grid/<view>.kinds.json",
+      "kind": "derived (recorded)",
+      "derivation": "dominant(legacy_bucket, occupancy_px) over annotation-present cells; ties to the class map's declared order",
+      "parameters": {
+        "order": [
+          "TEXT",
+          "TAG",
+          "DIM",
+          "DETAIL",
+          "LINES",
+          "REGION",
+          "OTHER",
+          "IMPORT_VIEW_OWNED"
+        ]
+      },
+      "class_map_version": "1.1",
+      "lattice_anchor": "view_uv"
+    },
+    {
+      "name": "model_class_cells_multihot (ModelClassCells_*)",
+      "file": "<run>/analysis_grid/<view>.kinds.json",
+      "kind": "derived (recorded)",
+      "derivation": "presence(model_class, ink_px, min_px)",
+      "parameters": {
+        "min_px": 1
+      },
+      "class_map_version": "1.1",
+      "lattice_anchor": "view_uv"
+    }
+  ],
+  "invariants": [
+    {
+      "id": "ec_layer_sums_equal_dense_per_cell",
+      "level": "refusal",
+      "where": "stage_a_grid.ec_invariants, at write time",
+      "expr": "for each layer and field, sum of ec rows per cell == the grid's dense channel(s) in that cell (model element/DWG/link px and ink; annotation px, ink, assigned black; model ink under annotation)"
+    },
+    {
+      "id": "model_ink_under_annotation_equal_from_both_layers",
+      "level": "refusal",
+      "where": "stage_a_grid.ec_invariants",
+      "expr": "sum(ec_model_ink_under_px over annotation keys) == sum(over model keys) == model_ink_under_anno (one annotation owner per covered pixel)"
+    },
+    {
+      "id": "class_family_sums_equal_dense_per_cell",
+      "level": "refusal",
+      "where": "stage_a_kinds.class_arrays",
+      "expr": "for each family and field, sum over classes per cell == the grid's dense channel; annotation occupancy_px == anno_element_ink + anno_filled_region + anno_black_assigned"
+    },
+    {
+      "id": "anno_types_sum_to_anno_present",
+      "level": "refusal",
+      "where": "stage_a_kinds.legacy_anno_partition",
+      "expr": "sum(AnnoFinalCells_*) == AnnoPresentFinal (as in v1)"
+    },
+    {
+      "id": "partition_sums_to_total",
+      "level": "recorded",
+      "where": "channel_shape_legacy.*.invariants",
+      "expr": "sum(Cells_*) == TotalCells (as in v1)"
+    },
+    {
+      "id": "ext_any_inclusion_exclusion",
+      "level": "recorded",
+      "where": "channel_shape_legacy.*.invariants",
+      "expr": "ExtFinalCells_Any == DWG + RVT - DWG_RVT (as in v1)"
+    },
+    {
+      "id": "image_totals_unchanged_by_lattice_anchor",
+      "level": "test",
+      "where": "tests/test_stage_a_grid_lattice.py",
+      "expr": "W1 changes binning, never a pixel count"
+    }
+  ],
+  "rollup_columns": {
+    "tool": "tools/stage_a_grid_rollup.py 1.1.0",
+    "empty_cell": "not applicable (row status, no derivation, another class map, no registered annotation), never 0",
+    "from_grid_record": [
+      "ec_rows",
+      "ec_keys",
+      "crop_a_px",
+      "crop_a_cells_with_px",
+      "crop_a_cells_partial",
+      "crop_a_cells_partial_fraction (denominator crop_a_cells_with_px)"
+    ],
+    "from_kinds_record": [
+      "kinds_state",
+      "kinds_reason",
+      "class_map_sha256",
+      "anno_class_<class>_{px,ink_px,cells_with_ink} (all cells)",
+      "model_class_<class>_{px,ink_px,cells_with_ink} (all cells)",
+      "legacy_AnnoFinalCells_<bucket>, legacy_AnnoPresentFinal, legacy_anno_partition_ties (inside crop A)",
+      "legacy_Cells_*, legacy_TotalCells, legacy_ExtFinalCells_* (inside crop A)"
+    ]
+  },
+  "legacy_mapping": {
+    "TotalCells": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_TotalCells (inside_crop_a cells of the grid)",
+      "note": "v1: the geometry raster's W x H (crop A, annotation-expanded on some views, sheet-capped on others). Stage A: the cells inside crop A on the view-UV lattice."
+    },
+    "Cells_Empty": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_Cells_Empty",
+      "note": "Same partition and precedence (All3, ModelAnno, ModelExt, AnnoExt, ModelOnly, AnnoOnly, ExtOnly, Empty). Different inputs: M is model INK (host+DWG+link) where v1 was occupancy/edge/proxy presence; A is the item-3 annotation occupancy (ink, filled-region area, assigned black; includes datums, view markers, revision clouds and view-owned DWG) where v1 was the final anno_key."
+    },
+    "Cells_ModelOnly": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_Cells_ModelOnly",
+      "note": "Same partition and precedence (All3, ModelAnno, ModelExt, AnnoExt, ModelOnly, AnnoOnly, ExtOnly, Empty). Different inputs: M is model INK (host+DWG+link) where v1 was occupancy/edge/proxy presence; A is the item-3 annotation occupancy (ink, filled-region area, assigned black; includes datums, view markers, revision clouds and view-owned DWG) where v1 was the final anno_key."
+    },
+    "Cells_AnnoOnly": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_Cells_AnnoOnly",
+      "note": "Same partition and precedence (All3, ModelAnno, ModelExt, AnnoExt, ModelOnly, AnnoOnly, ExtOnly, Empty). Different inputs: M is model INK (host+DWG+link) where v1 was occupancy/edge/proxy presence; A is the item-3 annotation occupancy (ink, filled-region area, assigned black; includes datums, view markers, revision clouds and view-owned DWG) where v1 was the final anno_key."
+    },
+    "Cells_ExtOnly": {
+      "relation": "same",
+      "stage_a": "legacy_Cells_ExtOnly",
+      "note": "Structurally 0 in both: in v1 because has_model includes every source of Ext under model_presence_mode 'any' (verified, see notes); in Stage A because E is DWG+link ink and M includes it."
+    },
+    "Cells_ModelAnno": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_Cells_ModelAnno",
+      "note": "Same partition and precedence (All3, ModelAnno, ModelExt, AnnoExt, ModelOnly, AnnoOnly, ExtOnly, Empty). Different inputs: M is model INK (host+DWG+link) where v1 was occupancy/edge/proxy presence; A is the item-3 annotation occupancy (ink, filled-region area, assigned black; includes datums, view markers, revision clouds and view-owned DWG) where v1 was the final anno_key."
+    },
+    "Cells_ModelExt": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_Cells_ModelExt",
+      "note": "Same partition and precedence (All3, ModelAnno, ModelExt, AnnoExt, ModelOnly, AnnoOnly, ExtOnly, Empty). Different inputs: M is model INK (host+DWG+link) where v1 was occupancy/edge/proxy presence; A is the item-3 annotation occupancy (ink, filled-region area, assigned black; includes datums, view markers, revision clouds and view-owned DWG) where v1 was the final anno_key."
+    },
+    "Cells_AnnoExt": {
+      "relation": "same",
+      "stage_a": "legacy_Cells_AnnoExt",
+      "note": "Structurally 0 in both: in v1 because has_model includes every source of Ext under model_presence_mode 'any' (verified, see notes); in Stage A because E is DWG+link ink and M includes it."
+    },
+    "Cells_All3": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_Cells_All3",
+      "note": "Same partition and precedence (All3, ModelAnno, ModelExt, AnnoExt, ModelOnly, AnnoOnly, ExtOnly, Empty). Different inputs: M is model INK (host+DWG+link) where v1 was occupancy/edge/proxy presence; A is the item-3 annotation occupancy (ink, filled-region area, assigned black; includes datums, view markers, revision clouds and view-owned DWG) where v1 was the final anno_key."
+    },
+    "AnnoPresentFinal": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoPresentFinal",
+      "note": "v1: cells with a final anno_key, over the categories the geometry path collected. Stage A: cells the annotation occupancy rule marks (every view-owned element painted, plus datums, view markers, revision clouds, assigned black, filled-region area)."
+    },
+    "AnnoFinalCells_TEXT": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_TEXT",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "AnnoFinalCells_TAG": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_TAG",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "AnnoFinalCells_DIM": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_DIM",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "AnnoFinalCells_DETAIL": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_DETAIL",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "AnnoFinalCells_LINES": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_LINES",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "AnnoFinalCells_REGION": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_REGION",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "AnnoFinalCells_OTHER": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_AnnoFinalCells_OTHER",
+      "note": "v1: one type per cell from the cell's FINAL anno_key (last writer: draw-order dependent). Stage A: one type per cell by dominant(legacy_bucket, occupancy_px), ties to the class map's declared order: deterministic. Bucket rules reproduce classify_annotation by category; spot dimensions and tag categories outside its list fall to OTHER as they did."
+    },
+    "ExtFinalCells_Any": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_ExtFinalCells_Any",
+      "note": "Flags from DWG / link INK at the occupancy threshold, where v1 used edge/proxy key sources and occ_* arrays. A view-owned DWG is annotation under Stage A (D1) and is NOT Ext here; v1 counted it as Model + Ext (see notes)."
+    },
+    "ExtFinalCells_Only": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_ExtFinalCells_Only",
+      "note": "Flags from DWG / link INK at the occupancy threshold, where v1 used edge/proxy key sources and occ_* arrays. A view-owned DWG is annotation under Stage A (D1) and is NOT Ext here; v1 counted it as Model + Ext (see notes)."
+    },
+    "ExtFinalCells_DWG": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_ExtFinalCells_DWG",
+      "note": "Flags from DWG / link INK at the occupancy threshold, where v1 used edge/proxy key sources and occ_* arrays. A view-owned DWG is annotation under Stage A (D1) and is NOT Ext here; v1 counted it as Model + Ext (see notes)."
+    },
+    "ExtFinalCells_RVT": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_ExtFinalCells_RVT",
+      "note": "Flags from DWG / link INK at the occupancy threshold, where v1 used edge/proxy key sources and occ_* arrays. A view-owned DWG is annotation under Stage A (D1) and is NOT Ext here; v1 counted it as Model + Ext (see notes)."
+    },
+    "ExtFinalCells_DWG_RVT": {
+      "relation": "different_semantics",
+      "stage_a": "legacy_ExtFinalCells_DWG_RVT",
+      "note": "Flags from DWG / link INK at the occupancy threshold, where v1 used edge/proxy key sources and occ_* arrays. A view-owned DWG is annotation under Stage A (D1) and is NOT Ext here; v1 counted it as Model + Ext (see notes)."
+    },
+    "ModelClassCells_WALL": {
+      "relation": "different_semantics",
+      "stage_a": "model_class_WALL_cells_with_ink (all cells) / derived.model_class_cells_multihot",
+      "note": "Class rule identical (final_state_scanner._default_model_class_resolver category branch). v1: multihot over the classes of a cell's edge key and proxy key. Stage A: presence(model_class, ink_px, 1) -- every class with ink in the cell, so a cell can count toward several classes in both."
+    },
+    "ModelClassCells_DOOR": {
+      "relation": "different_semantics",
+      "stage_a": "model_class_DOOR_cells_with_ink (all cells) / derived.model_class_cells_multihot",
+      "note": "Class rule identical (final_state_scanner._default_model_class_resolver category branch). v1: multihot over the classes of a cell's edge key and proxy key. Stage A: presence(model_class, ink_px, 1) -- every class with ink in the cell, so a cell can count toward several classes in both."
+    },
+    "ModelClassCells_STAIR": {
+      "relation": "different_semantics",
+      "stage_a": "model_class_STAIR_cells_with_ink (all cells) / derived.model_class_cells_multihot",
+      "note": "Class rule identical (final_state_scanner._default_model_class_resolver category branch). v1: multihot over the classes of a cell's edge key and proxy key. Stage A: presence(model_class, ink_px, 1) -- every class with ink in the cell, so a cell can count toward several classes in both."
+    },
+    "ModelClassCells_COLUMN": {
+      "relation": "different_semantics",
+      "stage_a": "model_class_COLUMN_cells_with_ink (all cells) / derived.model_class_cells_multihot",
+      "note": "Class rule identical (final_state_scanner._default_model_class_resolver category branch). v1: multihot over the classes of a cell's edge key and proxy key. Stage A: presence(model_class, ink_px, 1) -- every class with ink in the cell, so a cell can count toward several classes in both."
+    },
+    "ModelClassCells_LIGHT": {
+      "relation": "different_semantics",
+      "stage_a": "model_class_LIGHT_cells_with_ink (all cells) / derived.model_class_cells_multihot",
+      "note": "Class rule identical (final_state_scanner._default_model_class_resolver category branch). v1: multihot over the classes of a cell's edge key and proxy key. Stage A: presence(model_class, ink_px, 1) -- every class with ink in the cell, so a cell can count toward several classes in both."
+    },
+    "ModelClassCells_OTHER": {
+      "relation": "different_semantics",
+      "stage_a": "model_class_OTHER_cells_with_ink (all cells) / derived.model_class_cells_multihot",
+      "note": "Class rule identical (final_state_scanner._default_model_class_resolver category branch). v1: multihot over the classes of a cell's edge key and proxy key. Stage A: presence(model_class, ink_px, 1) -- every class with ink in the cell, so a cell can count toward several classes in both."
+    }
+  },
+  "notes": [
+    "A4, VERIFIED against the code (vop_interwoven/metrics/final_state_scanner.py, core/raster.py, pipeline._compute_manifest_metrics_payload): the pipeline scans with model_presence_mode='any'; has_model = has_model_present(idx,'any') (occ OR edge OR proxy) OR occ_host OR occ_link OR occ_dwg, and every source of ext (an edge key or proxy key whose element_meta source is DWG/LINK, occ_dwg, occ_link) is one of those terms. So Ext was a sub-flag of Model and Cells_ExtOnly / Cells_AnnoExt were structurally 0 -- exactly, not approximately. Under model_presence_mode='occ' they are not (an edge-only DWG cell is ExtOnly); tests/test_stage_a_kinds.py pins both.",
+    "A3: the geometry path's AnnoFinalCells_* was a partition (one type per cell, from the cell's final anno_key, i.e. the last writer), invariant anno_types_sum_to_anno_present. The Stage A partition is dominant-by-px over occupancy_px, ties to a declared order: deterministic where last-writer was order-dependent.",
+    "A5: a view-owned DWG appears on the ANNOTATION layer under Stage A (decision D1) but was counted as Model + Ext in the geometry path. It is folded into neither: annotation_class import_view_owned, legacy bucket IMPORT_VIEW_OWNED (not a v1 bucket). The disposition is Greg's and is open.",
+    "Link pixels are colour-per-category: per-element link identity is not captured (ledger M1), so link keys are one per linked category.",
+    "No view basis is captured: a moved or rotated section/elevation cannot be told from a crop edit; a cross-run tool must flag, not assume."
+  ]
+}

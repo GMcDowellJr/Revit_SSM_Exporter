@@ -359,3 +359,182 @@ What the disagreements are, checked view by view:
 - Moving `colorid_to_occupancy.py` onto this grid.
 - A geometry-comparison tool: not to be built (Greg, 2026-10-01). The
   comparison above was a one-off.
+
+## Amendment 2026-10-05: G-1 origin anchored to view UV (Greg)
+
+Decision D-A9. It replaces the origin rule written in G-2 above ("the origin
+is crop A's lower-left corner"); the cell size (G-1) and everything else are
+unchanged. Implemented in `tools/stage_a_grid.py` 2.0.0, schema
+`vop.stage_a.analysis_grid.v2`.
+
+**Rule.** Per axis, `origin_uv = floor(crop_min_uv / cell_ft) * cell_ft`.
+Every cell boundary is then a whole multiple of `cell_ft` from view UV
+(0, 0), whatever the crop. A crop minimum within 1e-9 (relative) of a whole
+number of cells is taken as that number, so a float artefact of the crop
+read-back cannot move the origin a whole cell.
+
+**Why.** With the origin on crop A's corner, editing the crop shifted every
+cell index, and moved every cell boundary by the fractional part of the
+edit. Cell (i, j) in one run and cell (i, j) in the next were different
+pieces of the view, so comparing cells across runs was invalid.
+
+**What changes.**
+- Cell boundaries move by less than one cell. Crop A's minimum now lies
+  inside cell 0 rather than on its corner. The record carries
+  `crop_a_offset_cells` = `(crop_min - origin) / cell_ft` per axis, in [0, 1).
+  `crop_a_cells` usually starts at 0, but starts at 1 when crop A's minimum
+  is within half a pixel of the next boundary: the first pixel centre inside
+  it is then in cell 1.
+- The grid record states `lattice_anchor: "view_uv"` and `origin_rule` (the
+  formula as text), and records `crop_uv`.
+- A new dense array, `crop_a_px`, counts the model pixel centres inside
+  crop A (and, for a split crop, inside its bands) per cell. `inside_crop_a`
+  keeps its meaning (cells holding at least one such centre). `crop_a_px`
+  measures how much of an edge cell is inside: `crop_a_coverage` in the
+  record gives the total, the cells with any, and the cells where some
+  model pixels lie outside crop A (`0 < crop_a_px < model_total`).
+- Only binning changes, never a pixel count. On the existing fixtures every
+  `image_totals` channel is identical before and after
+  (`tests/test_stage_a_grid_lattice.py`, with one fixture whose origin really
+  moves). On the shared fixture the crop minimum (-1, -2) is already a whole
+  number of 1 ft cells, so its cells are unchanged too.
+- Past runs can be re-gridded from their captures. Nothing in the capture
+  changes.
+
+**Known limit.** No view basis is captured. A section or elevation that was
+moved or rotated in the model therefore looks, to the grid, the same as one
+whose crop was edited: in both cases the same view-UV cells hold different
+things. A later cross-run tool must flag that case, not assume the view is
+unchanged.
+
+## A1: the element × cell accounting (2026-10-05)
+
+Decision D-A3 (Greg): store per-cell COUNTS, never flags or a single type
+per cell. Presence (count > 0) and dominant type are derivations, done by
+the reader (`tools/stage_a_kinds.py`).
+
+`<view>.grid.npz` gains a sparse table, one row per (key, cell) with any
+nonzero field: `ec_key`, `ec_i`, `ec_j`, `ec_px`, `ec_ink_px`,
+`ec_black_px`, `ec_model_ink_under_px` (all int32). The grid JSON names the
+keys (`ec_keys`, indexed by `ec_key`), the row count (`ec_rows`), the npz
+size (`npz_bytes`) and the checks below (`element_cell.invariants`).
+
+- **Keys.** One per model element id the decode map can decode (host and
+  DWG; `source` and `category` from `near_face_w_map.host`, null where not
+  recorded). One per linked category, because link pixels are
+  colour-per-category (ledger M1). One per annotation element in the colour
+  map, with `category` and `element_class` from `annotation_bbox_map`. An
+  element missing from the bbox map keeps nulls and is counted
+  (`keys_absent_from_bbox_map`). An element that painted nothing but whose
+  bbox holds assigned black pixels also gets a key (`keys_black_only`), so
+  its black pixels are not lost. Linked categories that share one colour
+  cannot be told apart, so the view is refused.
+- **Not keys.** Annotation residual, unassigned black and model residual
+  stay in the dense channels only.
+- **Checked at write time.** Each layer's rows, summed per cell, must equal
+  the dense arrays in every cell: model element / DWG / link pixels and ink,
+  annotation pixels, ink and assigned black, and model ink under annotation.
+  A mismatch refuses the view, with the numbers. Model ink under annotation
+  sums to `model_ink_under_anno` EXACTLY from both layers. An annotation
+  element's pixels and black pixels are disjoint, and each black pixel has at
+  most one assigned element, so every covered pixel has one annotation
+  owner.
+
+The write-time check found a defect while this was being built: the
+annotation id table was not sorted once black-only keys were added, so their
+black pixels were dropped. The view was refused (`ec 0 vs dense 1296`), which
+is what the check is for.
+
+## A2, A4, A5: kinds, class map v1, derived class arrays (2026-10-05)
+
+`tools/stage_a_kinds.py`. A **kind** is a distinct `(layer, source,
+category, element_class)` of a grid `ec_keys` entry, exactly as the capture
+recorded it. Kinds are what is aggregated. A **class** is a lookup applied
+afterwards through `tools/maps/stage_a_class_map.v1.json`, which is versioned
+and named by sha256 in every product that uses it.
+
+- `inventory <run>...`: every kind, with its views, keys, px, ink px and
+  black px, and the class the map gives it. A kind no rule matches is listed
+  as `unmapped`. This is how the map is checked against real runs.
+- `derive <run>...`: `<view>.kinds.npz`, then `<view>.kinds.json` (written
+  last). For each annotation class, legacy bucket and model class it holds
+  per-cell `px`, `ink_px` and `model_ink_under_px`. The annotation families
+  also hold `black_px` and `occupancy_px` (ink + assigned black + a filled
+  region's area: item 3's occupancy weight per key). The file is separate
+  from the grid npz, so the primary record does not depend on the map
+  version. Each field, summed over a family's classes, must equal the grid's
+  dense channel in every cell, or the view is refused.
+- **Model classes** use the geometry path's `_default_model_class_resolver`
+  rule exactly: a substring of the upper-cased category, in the order WALL,
+  DOOR, STAIR, COLUMN, LIGHT, else OTHER. It is applied to host, DWG and link
+  categories alike. A test composes the map with the resolver itself. The
+  resolver's explicit `meta["class"]` branch has no Stage A input.
+- **Category names are localized** (`Category.Name`). The map matches English
+  names, so a non-English project's categories fall to `unmapped` / `OTHER`.
+  They are listed, not guessed. API class names (`element_class`) are not
+  localized, which is why most rules key on them.
+
+**A4: the geometry path's channel shape, reproduced as legacy.** The
+derived record carries `channel_shape_legacy`: source_partition_8
+(`Cells_*`) and `ExtFinalCells_*`, over all cells and inside crop A. M is
+model ink (host + DWG + link), A the grid's annotation occupancy, E DWG +
+link ink. **Verified, not assumed.** `pipeline._compute_manifest_metrics_payload`
+calls `scan_final_state_totals(..., model_presence_mode="any")`. There
+`has_model` is `has_model_present(idx, "any")` (occ, edge or proxy) OR
+`occ_host` / `occ_link` / `occ_dwg`. Every source of `ext` is one of those
+terms: a DWG or link edge key makes `has_model_edge` true, a proxy key makes
+`has_model_proxy` true, and `occ_dwg` / `occ_link` are OR-ed in directly. So
+Ext is within Model, and **Cells_ExtOnly and Cells_AnnoExt are structurally
+0**, exactly, not approximately. Under `model_presence_mode="occ"` they are
+not: an edge-only DWG cell is ExtOnly there. Tests compose
+`legacy_channel_shape` with `scan_final_state_totals` on a real `ViewRaster`
+(model presence written through occ arrays and through edge keys), and pin
+the "occ" control.
+
+**A5: view-owned DWG.** Under Stage A a view-owned import is on the
+ANNOTATION layer (D1). The geometry path counted it as Model + Ext. It is
+folded into neither: its annotation class is `import_view_owned`, and its
+legacy bucket is `IMPORT_VIEW_OWNED`, which is marked `not_in_v1`. The
+disposition is Greg's and is open.
+
+## A3: derivations over stored counts (2026-10-05)
+
+Pure functions in `tools/stage_a_kinds.py`. Each runs on the counts the grid
+and the derivation store, and nothing it returns is stored in place of a
+count.
+
+- `presence(counts, field, min_px)`: per class, the cells holding at least
+  `min_px` of `field`. A threshold of 0 is refused, because it would mark
+  every cell present.
+- `dominant(counts, field, order)`: per cell, the class with the most
+  `field`; −1 where every class is 0. A tie goes to the class earliest in
+  `order`, a DECLARED fixed order (the class map's `classes` list), and the
+  number of cells decided that way is reported (`ties`).
+- `legacy_anno_partition`: the geometry path's `AnnoFinalCells_<bucket>`.
+  Each cell that the annotation occupancy rule marks present goes to its
+  dominant legacy bucket by `occupancy_px`. The geometry path's partition
+  used each cell's FINAL `anno_key`, the last writer, so it depended on draw
+  order. Dominant-by-px is deterministic. Its invariant,
+  `anno_types_sum_to_anno_present`, holds by construction (every present cell
+  has occupancy_px ≥ 1 in some bucket), and the code checks it: a present
+  cell with no bucket refuses.
+
+`derive` records `derived.cells_with_ink` (presence of ink at
+`presence_min_px` = 1), `derived.legacy_anno_partition` and
+`derived.model_class_cells_multihot` (`ModelClassCells_*` as presence of
+model-class ink), over all cells and inside crop A.
+
+## Running it: one call (2026-10-05)
+
+```
+python tools/stage_a_analyze.py <run> [<run> ...] [--out DIR]
+```
+
+This runs, per run, `register_stage_a_annotation` → `stage_a_grid` →
+`stage_a_kinds derive`, then across all runs `stage_a_kinds inventory` →
+`stage_a_grid_rollup`. Each stage is the tool's own `main()`, so each stage
+prints its own lines and keeps its own refusals. A refused view (exit 1)
+does not stop the others: the roll-up reports it. A stage that cannot run at
+all (exit 2) stops everything after it. `--out` takes the cross-run products
+and is required with more than one run. Each tool can still be run on its
+own.
