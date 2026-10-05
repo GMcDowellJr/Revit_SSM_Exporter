@@ -220,7 +220,14 @@ turns an archive sidecar into the current shape.
 - The decoder takes a registered annotation capture's feet-per-pixel from its
   own tick fit; with no usable fit it reports none rather than guessing.
 
-**Run outputs.** `run_meta.json` is written once per run, `finalized: false`
+**Run outputs.** The `output_dir` a caller passes is a ROOT: each run writes
+into `<root>/<as_of_date>__<run_id>/` (`run_meta.run_directory()`, recorded
+as `run_meta.run_dir`), and a run directory that already holds another run, or
+holds no `run_meta.json`, is refused before any view is captured
+(`check_run_directory()`). `run_id` is always the execution clock
+(`YYYYMMDDTHHMMSS`, plus `_<tag>`); a date override sets only the as-of date
+(`run_meta.date`) -- `run_identity()` is the one minting function.
+`vop_view_cache.json` stays in the root. `run_meta.json` is written once per run, `finalized: false`
 at the start and `finalized: true` with an outcome for every requested view
 (a view that never reported is backfilled as failed). `views_core` holds
 view metadata plus CaptureStatus, keyed by RunId and ConfigHash; the

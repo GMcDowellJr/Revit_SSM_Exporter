@@ -237,7 +237,7 @@ def test_thinrunner_writes_the_root_run_meta_before_relocating_a_batch():
     # Read as text: importing the module RUNS the Dynamo script.
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
         __file__))), "vop_interwoven", "thinrunner_streaming.py")).read()
-    write = src.index("write_merged_run_meta(batch_meta_paths, output_dir, run_complete=False)")
+    write = src.index("write_merged_run_meta(batch_meta_paths, run_dir, run_complete=False)")
     move = src.index("_relocate_batch_stage_a_outputs(\n", src.index("for batch_index"))
     assert write < move
 
