@@ -444,3 +444,55 @@ The write-time check found a defect while this was being built: the
 annotation id table was not sorted once black-only keys were added, so their
 black pixels were dropped. The view was refused (`ec 0 vs dense 1296`), which
 is what the check is for.
+
+## A2, A4, A5: kinds, class map v1, derived class arrays (2026-10-05)
+
+`tools/stage_a_kinds.py`. A **kind** is a distinct `(layer, source,
+category, element_class)` of a grid `ec_keys` entry, exactly as the capture
+recorded it. Kinds are what is aggregated. A **class** is a lookup applied
+afterwards through `tools/maps/stage_a_class_map.v1.json`, which is versioned
+and named by sha256 in every product that uses it.
+
+- `inventory <run>...`: every kind, with its views, keys, px, ink px and
+  black px, and the class the map gives it. A kind no rule matches is listed
+  as `unmapped`. This is how the map is checked against real runs.
+- `derive <run>...`: `<view>.kinds.npz`, then `<view>.kinds.json` (written
+  last). For each annotation class, legacy bucket and model class it holds
+  per-cell `px`, `ink_px` and `model_ink_under_px`. The annotation families
+  also hold `black_px` and `occupancy_px` (ink + assigned black + a filled
+  region's area: item 3's occupancy weight per key). The file is separate
+  from the grid npz, so the primary record does not depend on the map
+  version. Each field, summed over a family's classes, must equal the grid's
+  dense channel in every cell, or the view is refused.
+- **Model classes** use the geometry path's `_default_model_class_resolver`
+  rule exactly: a substring of the upper-cased category, in the order WALL,
+  DOOR, STAIR, COLUMN, LIGHT, else OTHER. It is applied to host, DWG and link
+  categories alike. A test composes the map with the resolver itself. The
+  resolver's explicit `meta["class"]` branch has no Stage A input.
+- **Category names are localized** (`Category.Name`). The map matches English
+  names, so a non-English project's categories fall to `unmapped` / `OTHER`.
+  They are listed, not guessed. API class names (`element_class`) are not
+  localized, which is why most rules key on them.
+
+**A4: the geometry path's channel shape, reproduced as legacy.** The
+derived record carries `channel_shape_legacy`: source_partition_8
+(`Cells_*`) and `ExtFinalCells_*`, over all cells and inside crop A. M is
+model ink (host + DWG + link), A the grid's annotation occupancy, E DWG +
+link ink. **Verified, not assumed.** `pipeline._compute_manifest_metrics_payload`
+calls `scan_final_state_totals(..., model_presence_mode="any")`. There
+`has_model` is `has_model_present(idx, "any")` (occ, edge or proxy) OR
+`occ_host` / `occ_link` / `occ_dwg`. Every source of `ext` is one of those
+terms: a DWG or link edge key makes `has_model_edge` true, a proxy key makes
+`has_model_proxy` true, and `occ_dwg` / `occ_link` are OR-ed in directly. So
+Ext is within Model, and **Cells_ExtOnly and Cells_AnnoExt are structurally
+0**, exactly, not approximately. Under `model_presence_mode="occ"` they are
+not: an edge-only DWG cell is ExtOnly there. Tests compose
+`legacy_channel_shape` with `scan_final_state_totals` on a real `ViewRaster`
+(model presence written through occ arrays and through edge keys), and pin
+the "occ" control.
+
+**A5: view-owned DWG.** Under Stage A a view-owned import is on the
+ANNOTATION layer (D1). The geometry path counted it as Model + Ext. It is
+folded into neither: its annotation class is `import_view_owned`, and its
+legacy bucket is `IMPORT_VIEW_OWNED`, which is marked `not_in_v1`. The
+disposition is Greg's and is open.
