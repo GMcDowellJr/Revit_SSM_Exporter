@@ -98,6 +98,122 @@ def primary_view(doc, view, diag=None, view_id=None):
         return None, reason
 
 
+# ---- split crops (probe Q7, run 20261005T084311) --------------------------
+#
+# A split crop shows only some bands of the crop, each moved on the sheet by
+# its region's offset. HIGH ROOF PLAN (3300684): split along its width,
+# region 0 the left 36 % of the crop, region 1 the right 8.6 % moved 115.9 ft
+# left beside it. The export of a split view is neither crop A nor any one
+# band, so its mid ticks did not draw and its two fits disagreed on scale.
+#
+# Removing a region of a two-region split UN-SPLITS the view (R0, R1 and U
+# were pixel-identical, Split False, one region 0-1); the crop box does not
+# move. So the capture removes the split inside its group -- the rollback
+# puts it back, and the probe's restore check saw it put back -- captures
+# the ordinary view, and RECORDS the bands. The analysis keeps only the bands
+# (tools/stage_a_grid.py); the hidden middle is captured but not shown. The
+# offsets only move regions on the sheet, so view-UV analysis ignores them.
+
+def split_crop_state(view):
+    """The view's crop split, as read: ``None`` when the view has no crop
+    region shape manager, else count, flags and each region's fractions and
+    offset. Raises when it will not read."""
+    m = view.GetCropRegionShapeManager()
+    if m is None:
+        return None
+    n = int(m.NumberOfSplitRegions)
+    regions = []
+    for i in range(n):
+        offset = m.GetSplitRegionOffset(i)
+        regions.append({"min": float(m.GetSplitRegionMinimum(i)),
+                        "max": float(m.GetSplitRegionMaximum(i)),
+                        "offset": _xyz(offset)})
+    return {"count": n, "split": bool(m.Split),
+            "horizontal": bool(m.IsSplitHorizontally),
+            "vertical": bool(m.IsSplitVertically), "regions": regions}
+
+
+def split_bands_uv(crop_uv, state):
+    """PURE. ``(bands, reason)``: the view-UV rectangles a split crop shows,
+    one per region, before its offset, or None with the reason.
+
+    A HORIZONTALLY split crop's region fractions run along u from the crop's
+    left edge (measured, Q7: region 0 at 0.00-0.36 showed the left grids).
+    Which end of v a VERTICAL split's fractions start from has not been
+    measured, so it is refused rather than guessed."""
+    if crop_uv is None:
+        return None, "the crop could not be read, so the bands have no extent"
+    if state.get("horizontal") and not state.get("vertical"):
+        u0, v0, u1, v1 = (float(c) for c in crop_uv)
+        w = u1 - u0
+        return [[u0 + r["min"] * w, v0, u0 + r["max"] * w, v1]
+                for r in state["regions"]], None
+    return None, ("a {0} split: which end its fractions start from is not "
+                  "measured".format("vertical" if state.get("vertical") else
+                                    "split in neither direction"))
+
+
+def remove_split_for_capture(doc, view, crop_uv, Transaction, TransactionStatus,
+                             diag=None, view_id=None, fault=None):
+    """Un-split a split crop for the capture, inside the capture's group (the
+    rollback is the restore), and record what the view SHOWS. Returns the
+    record; ``state`` is "not_split", "removed" or "unavailable". Faults:
+
+    * ``split_crop_unverified`` -- the split would not read: a split view
+      captured as is does not register, and nothing can say it is not one;
+    * ``split_crop_not_removed`` -- the removal raised, did not commit, or
+      reads back still split.
+    """
+    def _fail(name, message, ex=None):
+        if fault is not None:
+            fault(name, message, ex)
+        record["state"] = "unavailable"
+        record["reason"] = message
+        return record
+
+    record = {"state": None}
+    try:
+        before = split_crop_state(view)
+    except Exception as ex:
+        return _fail("split_crop_unverified",
+                     "the crop's split state would not read: {0}: {1}".format(
+                         type(ex).__name__, ex), ex)
+    if before is None or before["count"] <= 1:
+        record["state"] = "not_split"
+        return record
+    record["before"] = before
+    record["crop_uv"] = list(crop_uv) if crop_uv is not None else None
+    record["bands_uv"], record["bands_reason"] = split_bands_uv(crop_uv, before)
+    tx = Transaction(doc, "VOP Stage A remove split crop")
+    try:
+        tx.Start()
+        view.GetCropRegionShapeManager().RemoveSplit()
+        status = tx.Commit()
+        if status != TransactionStatus.Committed:
+            raise RuntimeError("Commit returned {0}".format(status))
+    except Exception as ex:
+        try:
+            if not tx.HasEnded():
+                tx.RollBack()
+        except Exception as rollback_ex:
+            if diag is not None:
+                diag.error(phase="color_id_buffer", callsite="remove_split_crop",
+                           message="rolling back the failed split removal also failed",
+                           view_id=view_id, exc=rollback_ex)
+        return _fail("split_crop_not_removed",
+                     "the split could not be removed: {0}: {1}".format(
+                         type(ex).__name__, ex), ex)
+    after = _read(lambda: split_crop_state(view))
+    record["read_back"] = after
+    value = after.get("value") if after.get("state") == "value" else None
+    if value is None or value["count"] > 1 or value["split"]:
+        return _fail("split_crop_not_removed",
+                     "the split reads back {0} after removing it".format(
+                         after.get("value") if value is not None else after))
+    record["state"] = "removed"
+    return record
+
+
 def view_state(view, primary=None):
     """What the capture writes and the rollback must put back, read. With a
     ``primary`` (a dependent view's), its template too: the passes detach
@@ -111,6 +227,8 @@ def view_state(view, primary=None):
         "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
         "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
         "crop_box": _read(_crop_box),
+        # Q7: the capture un-splits a split crop; the rollback must put it back.
+        "split_crop": _read(lambda: split_crop_state(view)),
     }
     if primary is not None:
         state["primary_view_template_id"] = _read(
@@ -269,7 +387,7 @@ def mark_fpp_ft(view, raster, cfg):
 # What total holds beyond their sum -- the membership collection, detail-line
 # hide/show, link-category discovery, the view-state and mark read-backs --
 # is reported as ``unaccounted``, not hidden.
-TIMING_PARTITION = ("authored_override_scan", "lines_unhide", "mark_layout",
+TIMING_PARTITION = ("authored_override_scan", "split_remove", "lines_unhide", "mark_layout",
                     "marks_create", "model_pass", "suppression", "annotation_pass", "rollback",
                     "restore_element_overrides", "view_membership_readback")
 
@@ -427,6 +545,9 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         "mark_avoidance": record.get("mark_avoidance"),
         # B: whether the capture unhid OST_Lines for the ticks, and how.
         "lines_unhidden": record.get("lines_unhidden"),
+        # Q7: a split crop, un-split for the capture, and the view-UV bands
+        # the view actually SHOWS. tools/stage_a_grid.py keeps only those.
+        "split_crop": record.get("split_crop"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
@@ -540,6 +661,21 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         record["_authored_before"] = _non_blank_override_ids(view, model_member_ids)
         record["timings_ms"]["authored_override_scan"] = round(
             (time.time() - _t) * 1000.0, 3)
+
+        # ---- 0a: a split crop is un-split for the capture -----------------
+        # AFTER membership_before: the unsplit view returns the hidden
+        # middle's elements too (Q7: 826 against 820), and the read-back
+        # after the rollback must compare like with like.
+        _t = time.time()
+        _crop_uv, _crop_err = (None, None)
+        if getattr(raster, "view_basis", None) is not None:
+            from .color_id_buffer import read_crop_uv
+            _crop_uv, _crop_err = read_crop_uv(view, raster.view_basis, diag=diag,
+                                               view_id=view_id)
+        record["split_crop"] = remove_split_for_capture(
+            doc, view, _crop_uv, Transaction, TransactionStatus, diag=diag,
+            view_id=view_id, fault=_fault)
+        record["timings_ms"]["split_remove"] = round((time.time() - _t) * 1000.0, 3)
 
         # ---- 0b: B -- a view that hides OST_Lines -------------------------
         # The ticks are detail lines: no line style draws while the view

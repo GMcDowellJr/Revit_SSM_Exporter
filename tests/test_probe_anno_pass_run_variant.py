@@ -259,14 +259,55 @@ def _open_tx():
 
 
 class _Manager(object):
+    """ViewCropRegionShapeManager. Unsplit by default; the OWNER view's
+    ``split_regions`` -- ``[(min, max, offset_x), ...]`` along u (a
+    horizontal split) -- makes it split, and RemoveSplit un-splits it as
+    Revit did in probe Q7. Kept on the view, so the group's rollback (which
+    restores the view's attributes) puts a removed split back."""
     LeftAnnotationCropOffset = 0.25
     RightAnnotationCropOffset = 0.25
     TopAnnotationCropOffset = 0.25
     BottomAnnotationCropOffset = 0.25
     ShapeSet = False
 
+    def __init__(self, owner=None):
+        self._owner = owner
+        self.remove_split_calls = 0
+
+    @property
+    def regions(self):
+        return list(getattr(self._owner, "split_regions", None) or [(0.0, 1.0, 0.0)])
+
     def GetCropShape(self):
         return []
+
+    @property
+    def NumberOfSplitRegions(self):
+        return len(self.regions)
+
+    @property
+    def Split(self):
+        return len(self.regions) > 1
+
+    @property
+    def IsSplitHorizontally(self):
+        return len(self.regions) > 1
+
+    IsSplitVertically = False
+
+    def GetSplitRegionMinimum(self, i):
+        return self.regions[i][0]
+
+    def GetSplitRegionMaximum(self, i):
+        return self.regions[i][1]
+
+    def GetSplitRegionOffset(self, i):
+        from tests.stage_a_capture_fakes import FakeXYZ
+        return FakeXYZ(self.regions[i][2], 0.0, 0.0)
+
+    def RemoveSplit(self):
+        self.remove_split_calls += 1
+        object.__setattr__(self._owner, "split_regions", [(0.0, 1.0, 0.0)])
 
 
 class _ProbeView(FakeViewPlan):
@@ -284,7 +325,7 @@ class _ProbeView(FakeViewPlan):
         self.Origin = FakeXYZ(0, 0, 0)
         self.RightDirection = FakeXYZ(1, 0, 0)
         self.UpDirection = FakeXYZ(0, 1, 0)
-        self._manager = _Manager()
+        self._manager = _Manager(self)
         object.__setattr__(self, "_logging", True)
 
     def __setattr__(self, name, value):
