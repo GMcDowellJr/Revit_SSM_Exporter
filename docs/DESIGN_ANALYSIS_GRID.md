@@ -406,3 +406,41 @@ moved or rotated in the model therefore looks, to the grid, the same as one
 whose crop was edited: in both cases the same view-UV cells hold different
 things. A later cross-run tool must flag that case, not assume the view is
 unchanged.
+
+## A1: the element × cell accounting (2026-10-05)
+
+Decision D-A3 (Greg): store per-cell COUNTS, never flags or a single type
+per cell. Presence (count > 0) and dominant type are derivations, done by
+the reader (`tools/stage_a_kinds.py`).
+
+`<view>.grid.npz` gains a sparse table, one row per (key, cell) with any
+nonzero field: `ec_key`, `ec_i`, `ec_j`, `ec_px`, `ec_ink_px`,
+`ec_black_px`, `ec_model_ink_under_px` (all int32). The grid JSON names the
+keys (`ec_keys`, indexed by `ec_key`), the row count (`ec_rows`), the npz
+size (`npz_bytes`) and the checks below (`element_cell.invariants`).
+
+- **Keys.** One per model element id the decode map can decode (host and
+  DWG; `source` and `category` from `near_face_w_map.host`, null where not
+  recorded). One per linked category, because link pixels are
+  colour-per-category (ledger M1). One per annotation element in the colour
+  map, with `category` and `element_class` from `annotation_bbox_map`. An
+  element missing from the bbox map keeps nulls and is counted
+  (`keys_absent_from_bbox_map`). An element that painted nothing but whose
+  bbox holds assigned black pixels also gets a key (`keys_black_only`), so
+  its black pixels are not lost. Linked categories that share one colour
+  cannot be told apart, so the view is refused.
+- **Not keys.** Annotation residual, unassigned black and model residual
+  stay in the dense channels only.
+- **Checked at write time.** Each layer's rows, summed per cell, must equal
+  the dense arrays in every cell: model element / DWG / link pixels and ink,
+  annotation pixels, ink and assigned black, and model ink under annotation.
+  A mismatch refuses the view, with the numbers. Model ink under annotation
+  sums to `model_ink_under_anno` EXACTLY from both layers. An annotation
+  element's pixels and black pixels are disjoint, and each black pixel has at
+  most one assigned element, so every covered pixel has one annotation
+  owner.
+
+The write-time check found a defect while this was being built: the
+annotation id table was not sorted once black-only keys were added, so their
+black pixels were dropped. The view was refused (`ec 0 vs dense 1296`), which
+is what the check is for.

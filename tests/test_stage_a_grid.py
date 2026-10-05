@@ -248,6 +248,9 @@ def test_the_record_is_written_last_and_names_the_arrays_it_describes(tmp_path):
     arrays = _arrays(tmp_path)
     spec = rec["grid"]
     for name, arr in arrays.items():
+        if name.startswith("ec_"):        # the element x cell rows (A1): 1-D
+            assert arr.shape == (rec["ec_rows"],), name
+            continue
         assert arr.shape == (spec["cells_h"], spec["cells_w"]), name
     assert rec["image_totals"]["model_total"] == int(arrays["model_total"].sum())
     assert (tmp_path / "out" / rec["png"]).exists()
