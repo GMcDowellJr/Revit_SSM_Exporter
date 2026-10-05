@@ -523,3 +523,18 @@ count.
 `presence_min_px` = 1), `derived.legacy_anno_partition` and
 `derived.model_class_cells_multihot` (`ModelClassCells_*` as presence of
 model-class ink), over all cells and inside crop A.
+
+## Running it: one call (2026-10-05)
+
+```
+python tools/stage_a_analyze.py <run> [<run> ...] [--out DIR]
+```
+
+This runs, per run, `register_stage_a_annotation` → `stage_a_grid` →
+`stage_a_kinds derive`, then across all runs `stage_a_kinds inventory` →
+`stage_a_grid_rollup`. Each stage is the tool's own `main()`, so each stage
+prints its own lines and keeps its own refusals. A refused view (exit 1)
+does not stop the others: the roll-up reports it. A stage that cannot run at
+all (exit 2) stops everything after it. `--out` takes the cross-run products
+and is required with more than one run. Each tool can still be run on its
+own.
