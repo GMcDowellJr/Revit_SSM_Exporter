@@ -3347,10 +3347,19 @@ def crop_write_fault(crop_write):
     * ``authored_crop_unreadable`` -- an active authored crop that would not
       read, so the export renders a crop nothing recorded;
     * ``authored_crop_changed`` -- not written, and the crop read at the
-      export is not the one the lattice was sized on.
+      export is not the one the lattice was sized on;
+    * ``crop_write_failed`` -- the crop the lattice was sized on was to be
+      written and could not be: the write raised, or the view has no CropBox
+      to write (``write_error``). The export then renders whatever extent
+      Revit chooses, which is not crop A. A drafting view or a legend is
+      where this is expected if Revit refuses them a crop. (The model pass
+      records it; the annotation pass already faults the same case as
+      ``annotation_frame_not_applied``.)
     """
     if not crop_write:
         return None
+    if crop_write.get("write_error"):
+        return "crop_write_failed"
     read_back = crop_write.get("read_back") or {}
     if crop_write.get("written"):
         active = crop_write.get("crop_box_active_read_back", True)
@@ -4333,6 +4342,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             type(ex).__name__, ex)
                 else:
                     model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+                    # A fault, not only a warning: the lattice was sized on
+                    # crop A and the export will not render it.
+                    crop_write = {
+                        "written": False,
+                        "source": (crop_a_record or {}).get("source", "model_crop"),
+                        "write_error": "the view has no CropBox to write",
+                    }
                     if diag is not None:
                         diag.warn(
                             phase="color_id_buffer",
@@ -4354,6 +4370,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         except Exception as ex:
             crop_bounds_xy = None
             model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+            # Recorded, so crop_write_fault fails the capture: it used to be a
+            # warning only, and a view whose crop Revit refuses (a drafting
+            # view, a legend) shipped an uncropped export as a clean capture.
+            crop_write = dict(crop_write or {
+                "written": False,
+                "source": (crop_a_record or {}).get("source", "model_crop"),
+            })
+            crop_write["write_attempted"] = bool(crop_write_attempted)
+            crop_write["write_error"] = "{0}: {1}".format(type(ex).__name__, ex)
             if diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
