@@ -1479,6 +1479,9 @@ def resolve_view_element_bounds(doc, view, basis, pad_ft, diag=None):
     """
     from ..core.math_utils import Bounds2D
     from Autodesk.Revit.DB import FilteredElementCollector
+    # The one bbox -> view-UV projection, which applies bbox.Transform: a
+    # rotated element's Min/Max are bbox-local, not world (Codex, PR #227).
+    from .collection import project_bbox_corners_uv
 
     view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
     min_u = min_v = max_u = max_v = None
@@ -1489,17 +1492,19 @@ def resolve_view_element_bounds(doc, view, basis, pad_ft, diag=None):
             bbox = elem.get_BoundingBox(view)
             if bbox is None:
                 continue
-            mn, mx = bbox.Min, bbox.Max
-            for x in (mn.X, mx.X):
-                for y in (mn.Y, mx.Y):
-                    for z in (mn.Z, mx.Z):
-                        u, v = basis.transform_to_view_uv((x, y, z))
-                        if min_u is None:
-                            min_u = max_u = u
-                            min_v = max_v = v
-                        else:
-                            min_u, max_u = min(min_u, u), max(max_u, u)
-                            min_v, max_v = min(min_v, v), max(max_v, v)
+            elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+            corners = project_bbox_corners_uv(bbox, basis, diag=diag, view_id=view_id,
+                                              elem_id=elem_id)
+            if not corners:
+                raise ValueError("the bbox of element {0} could not be projected".format(
+                    elem_id))
+            for u, v in corners:
+                if min_u is None:
+                    min_u = max_u = u
+                    min_v = max_v = v
+                else:
+                    min_u, max_u = min(min_u, u), max(max_u, u)
+                    min_v, max_v = min(min_v, v), max(max_v, v)
         except Exception as e:
             unreadable += 1
             if first_error is None:

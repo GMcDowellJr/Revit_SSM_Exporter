@@ -797,6 +797,16 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                        "the view has no crop region and {0} of 2 frame-bound lines "
                        "were drawn ({1}); the export's extent is not crop A".format(
                            fb.get("created_count"), fb.get("reason")))
+            # A bound whose WHITE override did not take draws in its native
+            # colour: ink in the model capture that no palette owns (Codex,
+            # PR #227).
+            unpainted = [b for b in fb.get("created") or [] if not b.get("painted")]
+            if unpainted:
+                _fault("frame_bounds_not_white",
+                       "{0} frame-bound line(s) could not be painted white and may "
+                       "draw as unassigned ink: {1}".format(
+                           len(unpainted),
+                           [(b.get("id"), b.get("paint_error")) for b in unpainted]))
         if marks.get("created_count") != marks.get("expected_count") or not marks.get(
                 "expected_count"):
             _fault("registration_marks_incomplete",

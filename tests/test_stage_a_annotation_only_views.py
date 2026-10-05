@@ -190,7 +190,7 @@ class _NoCropView(world._ProbeView):
         raise RuntimeError("this view has no crop region (fake)")
 
 
-def _run_registered_no_crop(tmp_path, view_type):
+def _run_registered_no_crop(tmp_path, view_type, refuse_white=False):
     from vop_interwoven.config import Config
     from vop_interwoven.core.math_utils import Bounds2D
     from vop_interwoven.stage_a_registered_capture import export_registered_stage_a_view
@@ -221,6 +221,16 @@ def _run_registered_no_crop(tmp_path, view_type):
         W=30, H=22, cell_size_ft=1.0, bounds_xy=frame, model_clip_bounds=None,
         anno_frame_bounds=None, anno_cap_envelope_applied=False,
         view_basis=_PLAN_BASIS)
+    if refuse_white:
+        # The white override does not take on the capture's own lines: every
+        # other override still does.
+        real_set = view.SetElementOverrides
+
+        def _set(eid, ogs):
+            if world._colour_of(ogs) == (255, 255, 255) and int(eid.IntegerValue) > 5000:
+                raise RuntimeError("override refused (fake)")
+            return real_set(eid, ogs)
+        object.__setattr__(view, "SetElementOverrides", _set)
     exports = []
     doc.on_export_image = lambda opts: exports.append(dict(
         (eid, world._colour_of(ogs)) for eid, ogs in view.element_overrides.items()))
@@ -353,7 +363,28 @@ def _with_collector(elems):
 
 
 def _identity_basis():
-    return types.SimpleNamespace(transform_to_view_uv=lambda p: (p[0], p[1]))
+    return types.SimpleNamespace(transform_to_view_uv=lambda p: (p[0], p[1]),
+                                 transform_to_view_uvw=lambda p: (p[0], p[1], p[2]))
+
+
+class _Rot90(object):
+    """A bbox Transform: a 90-degree rotation about Z, then a move to (100, 0)."""
+    def OfPoint(self, p):
+        return (100.0 - p[1], p[0], p[2])
+
+
+def test_a_rotated_elements_bbox_is_framed_where_it_is_drawn():
+    """BoundingBoxXYZ.Min/Max are bbox-LOCAL: an element with a Transform (a
+    rotated family instance) is framed through it, not at its local corners
+    (Codex, PR #227). Mutation: project Min/Max without the Transform ->
+    the frame lands at (0..10, 0..2), red."""
+    from vop_interwoven.revit.view_basis import resolve_view_element_bounds
+    box = _Box((0, 0), (10, 2))
+    box.Transform = _Rot90()
+    view = types.SimpleNamespace(Id=_FakeElementId(VIEW_ID))
+    with _with_collector([_Elem(box)]):
+        b = resolve_view_element_bounds(None, view, _identity_basis(), 0.0)
+    assert (b.xmin, b.ymin, b.xmax, b.ymax) == (98.0, 0.0, 100.0, 10.0)
 
 
 def test_the_frame_covers_every_element_not_only_the_extent_drivers():
@@ -394,3 +425,19 @@ def test_init_view_raster_frames_by_every_element_under_stage_a_only(
     b = raster.bounds_xy
     expected = (0, 0, 30, 20) if stage_a else (5, 5, 6, 6)
     assert (b.xmin, b.ymin, b.xmax, b.ymax) == expected
+
+
+def test_a_frame_bound_that_will_not_paint_white_is_a_fault_in_the_FILE(tmp_path):
+    """Codex, PR #227: a bound whose white override fails draws in its native
+    colour, and the capture used to report success. Control: the clean
+    capture above has no faults. Mutation: drop the painted check -> red."""
+    import json
+    out, _view, _frame, _exports = _run_registered_no_crop(
+        tmp_path, "DraftingView", refuse_white=True)
+    faults = [f["fault"] for f in out["registration"]["faults"]]
+    assert "frame_bounds_not_white" in faults
+    assert out["registration"]["success"] is False
+    with open(out["sidecar_path"]) as f:
+        model = json.load(f)
+    assert "frame_bounds_not_white" in [
+        f["fault"] for f in model["registration_marks"]["faults"]]
