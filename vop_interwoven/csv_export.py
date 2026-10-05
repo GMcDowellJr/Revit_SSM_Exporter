@@ -1544,10 +1544,13 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "run_id": run_id,
     }
 
-    # Filenames: include tag if present
-    core_filename = f"views_core_{date_str}{'_' + tag if tag else ''}.csv"
-    vop_filename = f"views_vop_{date_str}{'_' + tag if tag else ''}.csv"
-    occlusion_filename = f"views_occlusion_{date_str}{'_' + tag if tag else ''}.csv"
+    # Filenames: the same date part as every other writer of the run (a tag
+    # names the files as given; a date-shaped override by its date).
+    from vop_interwoven.run_meta import output_date_str
+    file_date_str = output_date_str(date_override, now=run_dt)
+    core_filename = f"views_core_{file_date_str}.csv"
+    vop_filename = f"views_vop_{file_date_str}.csv"
+    occlusion_filename = f"views_occlusion_{file_date_str}.csv"
 
     core_path = os.path.join(output_dir, core_filename)
     vop_path = os.path.join(output_dir, vop_filename)

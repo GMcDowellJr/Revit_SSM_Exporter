@@ -67,6 +67,36 @@ def test_pipeline_files_carry_the_same_date_as_views_core(monkeypatch, tmp_path,
     assert emap in ([], ["vop_view_element_map_%s.json" % suffix]), emap
 
 
+def _non_streaming_names(monkeypatch, tmp_path, date_override):
+    """run_vop_pipeline_with_csv(): views_core/vop/occlusion from
+    export_pipeline_to_csv(), views_perf from the entry point itself."""
+    from vop_interwoven import entry_dynamo
+    monkeypatch.setattr(entry_dynamo, "run_vop_pipeline",
+                        lambda doc, view_ids, cfg: {"views": []})
+    out = entry_dynamo.run_vop_pipeline_with_csv(
+        None, [], cfg=Config(), output_dir=str(tmp_path), export_png=False,
+        export_perf_csv=True, date_override=date_override)
+    return [os.path.basename(out[k]) for k in
+            ("core_csv_path", "vop_csv_path", "perf_csv_path")]
+
+
+@pytest.mark.parametrize("override,expected", [
+    ("PR_221", "PR_221"),
+    ("20261001", "2026-10-01"),
+    ("2026-10-01T12:34:56", "2026-10-01"),
+    ("2026-09-29", "2026-09-29"),
+])
+def test_the_non_streaming_path_names_its_csvs_like_the_pipeline(
+        monkeypatch, tmp_path, override, expected):
+    """It used to write views_core_<today>_<tag>.csv and
+    views_perf_<override minus dashes>.csv beside the pipeline's _<tag> JSONs."""
+    names = _non_streaming_names(monkeypatch, tmp_path / "csv", override)
+    assert names == ["views_core_%s.csv" % expected, "views_vop_%s.csv" % expected,
+                     "views_perf_%s.csv" % expected], names
+    diag, _emap = _pipeline_names(monkeypatch, tmp_path / "pipe", override)
+    assert diag == ["views_diagnostics_%s.json" % expected], diag
+
+
 def test_output_date_str_shapes():
     from datetime import datetime
     assert output_date_str(datetime(2026, 1, 2, 3, 4)) == "2026-01-02"
