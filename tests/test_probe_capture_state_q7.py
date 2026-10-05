@@ -90,8 +90,8 @@ def test_every_bic_name_with_the_categorys_value_is_listed(monkeypatch):
     import types
     fake = types.ModuleType("Autodesk.Revit.DB")
     fake.BuiltInCategory = types.SimpleNamespace(
-        OST_Elevations=-2000535, OST_ElevationMarks=-2000200, OST_Viewers=-2000278,
+        OST_Elev=-2000535, OST_ElevationMarks=-2006045, OST_Viewers=-2000278,
         OST_Alias=-2000535, NotACategory=-2000535)
     monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake)
-    assert sorted(probe.bic_names_for(-2000535)) == ["OST_Alias", "OST_Elevations"]
+    assert sorted(probe.bic_names_for(-2000535)) == ["OST_Alias", "OST_Elev"]
     assert probe.bic_names_for(-1) == []

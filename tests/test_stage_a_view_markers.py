@@ -164,12 +164,14 @@ def test_control_readable_names_warn_nothing():
 
 # --- probe Q7 (run 20261005T084311): the ElevationMarker body ----------------
 #
-# The marker body is category -2000535 "Elevations", not OST_ElevationMarks; on
-# CABINET TYPES all 15 were placed no_owner_view (model pass) and their text
-# came out black. Resolved the way production resolves the list -- by name,
-# off the live enum -- so the test fails if the name is dropped from it.
-# Mutation: removing "OST_Elevations" from STAGE_A_VIEW_REFERENCE_BIC_NAMES
-# turns this red.
+# The marker body is category -2000535 "Elevations", BuiltInCategory OST_Elev,
+# not OST_ElevationMarks; on CABINET TYPES all 15 were placed no_owner_view
+# (model pass) and their text came out black. Resolved the way production
+# resolves the list -- by name, off the live enum -- with the enum values the
+# host REPORTED (probe 2026-10-05.1, run 20261005T091441), which has no
+# OST_Elevations: the first fix used that name and resolved to nothing.
+# Mutations: removing "OST_Elev" from STAGE_A_VIEW_REFERENCE_BIC_NAMES, or
+# naming it OST_Elevations again, turns this red.
 
 import sys  # noqa: E402
 import types  # noqa: E402
@@ -182,9 +184,9 @@ ELEVATIONS = -2000535
 def test_an_elevation_marker_body_is_annotation_and_counted_by_name(monkeypatch):
     fake = types.ModuleType("Autodesk.Revit.DB")
     fake.BuiltInCategory = types.SimpleNamespace(
-        OST_Viewers=VIEWERS, OST_Elevations=ELEVATIONS, OST_ElevationMarks=-2000200,
-        OST_SectionHeads=-2000201, OST_CalloutHeads=-2000202,
-        OST_ReferenceViewer=-2000203)
+        OST_Viewers=VIEWERS, OST_Elev=ELEVATIONS, OST_ElevationMarks=-2006045,
+        OST_SectionHeads=-2000400, OST_CalloutHeads=-2000538,
+        OST_ReferenceViewer=-2000198)
     monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake)
     names = {}
     ids, error = stage_a_view_reference_category_ids(names_out=names)
@@ -196,4 +198,4 @@ def test_an_elevation_marker_body_is_annotation_and_counted_by_name(monkeypatch)
         [marker, _Elem(3, 10, "Wall")], capture_view_id_int=CAPTURE_VIEW_ID,
         datum_category_ids=set(), capture_view_name="CABINET TYPES")
     assert [e.Id.IntegerValue for e in anno] == [31]
-    assert basis["view_reference_category_counts"]["OST_Elevations"] == 1
+    assert basis["view_reference_category_counts"]["OST_Elev"] == 1

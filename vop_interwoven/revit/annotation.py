@@ -1961,13 +1961,16 @@ STAGE_A_DATUM_BIC_NAMES = (
 # THE ELEVATION MARKER'S BODY (probe Q7, run 20261005T084311). An elevation
 # marker is two elements: the viewer (OST_Viewers, the arrow and number) and
 # the ElevationMarker itself, which carries the reference text. The marker is
-# category -2000535 "Elevations" -- not OST_ElevationMarks -- so on CABINET
-# TYPES all 15 fell to the model pass (no_owner_view) and their text came out
-# black. Painting them colours the whole body, text included (Q7 S1: 1224 px
-# of black removed, none left on the markers).
+# category -2000535 "Elevations", whose BuiltInCategory name is OST_Elev --
+# not OST_ElevationMarks (-2006045) -- so on CABINET TYPES all 15 fell to the
+# model pass (no_owner_view) and their text came out black. Painting them
+# colours the whole body, text included (Q7 S1: 1224 px of black removed,
+# none left on the markers). The name is MEASURED (probe 2026-10-05.1, run
+# 20261005T091441): a first guess, OST_Elevations, does not exist on the host
+# and resolved to nothing.
 STAGE_A_VIEW_REFERENCE_BIC_NAMES = (
     "OST_Viewers",
-    "OST_Elevations",
+    "OST_Elev",
     "OST_ElevationMarks",
     "OST_SectionHeads",
     "OST_CalloutHeads",
