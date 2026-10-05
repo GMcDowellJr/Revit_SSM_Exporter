@@ -221,6 +221,9 @@ def _run_registered_no_crop(tmp_path, view_type):
         W=30, H=22, cell_size_ft=1.0, bounds_xy=frame, model_clip_bounds=None,
         anno_frame_bounds=None, anno_cap_envelope_applied=False,
         view_basis=_PLAN_BASIS)
+    exports = []
+    doc.on_export_image = lambda opts: exports.append(dict(
+        (eid, world._colour_of(ogs)) for eid, ogs in view.element_overrides.items()))
     cfg = Config(enable_color_id_buffer_stage_a=True,
                  color_id_buffer_registered_capture=True,
                  color_id_buffer_export_dpi=150.0)
@@ -236,14 +239,14 @@ def _run_registered_no_crop(tmp_path, view_type):
         world._ROLLBACK_TARGETS[:] = [view, doc]
         out = export_registered_stage_a_view(doc, view, [], cfg, diag=diag,
                                              raster=raster)
-    return out, view, frame
+    return out, view, frame, exports
 
 
 @pytest.mark.parametrize("view_type", ["DraftingView", "Legend"])
 def test_a_view_with_no_crop_region_is_captured_without_touching_a_crop(
         tmp_path, view_type):
     import json
-    out, view, frame = _run_registered_no_crop(tmp_path, view_type)
+    out, view, frame, exports = _run_registered_no_crop(tmp_path, view_type)
     reg = out["registration"]
     assert view.crop_access == []
     assert reg["faults"] == [], reg["faults"]
@@ -262,23 +265,46 @@ def test_a_view_with_no_crop_region_is_captured_without_touching_a_crop(
     assert model["frame"]["crop_uv"] == [frame.xmin, frame.ymin, frame.xmax, frame.ymax]
     assert anno["registration"]["crop_applied"] == "none"
     assert "no crop region" in anno["registration"]["rendered_uv_reason"]
-    # The ticks sit ON crop A's edges, so their bbox IS crop A: that is what
-    # bounds the uncropped export.
-    # Read back from the drawn detail lines, not the requested layout.
+    # Run 1005_0947: ticks ON the frame edge were lost to the derived axis's
+    # rounding. So the ticks keep their ordinary inset, INSIDE crop A ...
     ends = [p for m in reg["marks"]["created"] for p in m["readback_uv"]]
     assert reg["marks"]["created_count"] == 12
-    us = [p[0] for p in ends]
-    vs = [p[1] for p in ends]
-    assert (min(us), min(vs), max(us), max(vs)) == pytest.approx(
+    assert min(p[0] for p in ends) > frame.xmin and max(p[0] for p in ends) < frame.xmax
+    assert min(p[1] for p in ends) > frame.ymin and max(p[1] for p in ends) < frame.ymax
+    # ... and two frame-bound lines, read back from what was drawn, bound
+    # exactly crop A -- which is what sets the uncropped export's extent.
+    bounds = reg["frame_bounds"]
+    assert bounds["created_count"] == 2
+    b_ends = [p for b in bounds["created"] for p in b["readback_uv"]]
+    assert (min(p[0] for p in b_ends), min(p[1] for p in b_ends),
+            max(p[0] for p in b_ends), max(p[1] for p in b_ends)) == pytest.approx(
         (frame.xmin, frame.ymin, frame.xmax, frame.ymax))
+    # WHITE in both exports: never ink. Not in the annotation palette or its
+    # color_assignment_map, and in the FILES' registration record.
+    bound_ids = [b["id"] for b in bounds["created"]]
+    assert len(exports) == 2
+    for overrides in exports:
+        assert all(overrides[i] == (255, 255, 255) for i in bound_ids)
+    assert not set(str(i) for i in bound_ids) & set(anno["color_assignment_map"])
+    assert sorted(anno["palette_reservation"]["blank_ids_painted"]) == sorted(bound_ids)
+    for sidecar in (model, anno):
+        assert sidecar["registration_marks"]["frame_bounds"]["created_count"] == 2
+    # Rolled back with the ticks.
+    assert reg["restore"]["marks_still_in_project"] == []
+    # The analysis grid reads the FILE's split record as unsplit, not as a
+    # split the capture failed to remove (run 1005_0947 refused both views).
+    from tools import stage_a_grid as grid
+    assert grid.split_crop_bands(model) is None
 
 
 def test_control_the_same_view_as_a_floor_plan_reaches_the_crop_and_fails(tmp_path):
     """THE CONTROL: the fixture does reach the crop code -- on a view that
     claims a crop region, every access raises and the capture faults."""
-    out, view, _frame = _run_registered_no_crop(tmp_path, "FloorPlan")
+    out, view, _frame, _exports = _run_registered_no_crop(tmp_path, "FloorPlan")
     assert view.crop_access != []
     assert out["registration"]["success"] is False
+    # A view with a crop region gets no frame-bound lines.
+    assert out["registration"].get("frame_bounds") is None
 
 
 # --- the frame: the bbox of EVERY element in the view, plus a pad -----------

@@ -175,15 +175,22 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   `crop_applied: "none"`), and the split and crop read-backs are skipped.
   Their frame is the bbox of EVERY element in the view plus one cell
   (`resolve_view_element_bounds()`, as the geometry exporter's crop was), not
-  the extent-driver bounds. The ticks go ON that frame's edges (inset 0), so
-  the uncropped export's drawn extent is the frame in both captures; the
-  registration fit measures it. Every element is view-owned, so the
-  annotation pass paints all of it. `OST_LegendComponents` (Model-typed) is
-  on `VIEW_ONLY_MODEL_BIC_NAMES`, hidden in the model pass only.
-  **Unmeasured in Revit:** that an uncropped export adds no margin around
-  the drawn extent; a margin shows up as `model_marks_vs_lattice` deviation
-  or `export_dim_mismatch`. Elsewhere, a model-pass crop write that raises or
-  finds no CropBox is `crop_write_failed` (it used to be a warning only).
+  the extent-driver bounds. The uncropped export renders the DRAWN extent,
+  so two short WHITE detail lines at opposite corners of the frame
+  (`registration_marks.frame_bounds`, `stage_a_registration.frame_bound_segments`)
+  set it to the frame in both captures: white on white in the one-cell pad,
+  never ink, out of the palette and `color_assignment_map` (`blank_ids`).
+  The ticks keep their ordinary inset. Run 1005_0947 measured both halves:
+  ticks placed ON the frame edge were lost on the derived axis (the edge row
+  rounds off the image; RCP GENERAL NOTES lost all four horizontal corner
+  ticks and would not register), while the export's extent still matched the
+  frame to 0.52 px -- Revit sizes it from the lines' geometry, not from
+  surviving pixels. Every element is view-owned, so the annotation pass
+  paints all of it. `OST_LegendComponents` (Model-typed) is on
+  `VIEW_ONLY_MODEL_BIC_NAMES`, hidden in the model pass only.
+  `tools/stage_a_grid.py` reads `split_crop.state "no_crop_region"` as
+  unsplit. Elsewhere, a model-pass crop write that raises or finds no CropBox
+  is `crop_write_failed` (it used to be a warning only).
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
   unpainted and counted per category under `not_painted`.

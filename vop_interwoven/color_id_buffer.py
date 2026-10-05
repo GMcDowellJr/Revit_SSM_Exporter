@@ -5731,8 +5731,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                            raster=None, elements=None,
                                            authored_check_exclude_ids=None,
                                            reserve_tick_colour=False,
-                                           mark_ids=None):
+                                           mark_ids=None, blank_ids=None):
     """Export one view's ANNOTATION color ID buffer, over frame B.
+
+    ``blank_ids``: lines the capture drew itself that must not be ink (the
+    frame bounds of a view with no crop region). Painted WHITE, given no
+    palette entry and left out of color_assignment_map, as the ticks are.
 
     Args:
         geom: the MODEL pass's frame_export_geometry() result, handed in
@@ -6001,9 +6005,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # are found by ONE colour in both captures, never by a palette colour that
     # text anti-aliasing can also produce (run 1001-1950).
     _mark_ints = set(int(i) for i in (mark_ids or ()))
-    element_ids = [eid for eid in resolved_ids if eid.IntegerValue not in _mark_ints]
+    _blank_ints = set(int(i) for i in (blank_ids or ()))
+    element_ids = [eid for eid in resolved_ids
+                   if eid.IntegerValue not in _mark_ints
+                   and eid.IntegerValue not in _blank_ints]
     painted_mark_ids = [eid.IntegerValue for eid in resolved_ids
                         if eid.IntegerValue in _mark_ints]
+    painted_blank_ids = [eid.IntegerValue for eid in resolved_ids
+                         if eid.IntegerValue in _blank_ints]
     palette, step, palette_reservation = stage_a_palette(
         len(element_ids), step, reserve_tick_colour=reserve_tick_colour)
     color_map = {element_ids[i].IntegerValue: palette[i]
@@ -6013,6 +6022,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         for _mid in painted_mark_ids:
             color_map[_mid] = tuple(_MARK_COLOUR)
     palette_reservation["mark_ids_painted"] = sorted(painted_mark_ids)
+    for _bid in painted_blank_ids:
+        color_map[_bid] = (255, 255, 255)
+    palette_reservation["blank_ids_painted"] = sorted(painted_blank_ids)
 
     # ---- bbox records (Stage A step 4) ---------------------------------
     #
@@ -6790,7 +6802,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # are MARK_COLOUR, named under palette_reservation.mark_ids_painted.
         "color_assignment_map": {
             str(eid): list(color_map[eid]) for eid in color_map
-            if eid not in _mark_ints
+            if eid not in _mark_ints and eid not in _blank_ints
         },
         "color_assignment_count": len(element_ids),
         # M1: what this pass collected and did NOT paint because the view

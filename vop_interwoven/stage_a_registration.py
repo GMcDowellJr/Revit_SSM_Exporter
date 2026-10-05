@@ -970,8 +970,48 @@ def tick_line_style(doc, view, curve, diag=None, view_id=None):
     return style, record
 
 
-def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=None):
-    """Draw the registration ticks as DETAIL LINES and paint them MARK_COLOUR.
+# FRAME BOUNDS (run 1005_0947): a view with no crop region (a drafting view,
+# a legend) exports everything it draws, so its export's extent is the drawn
+# extent. The ticks cannot set it: a tick ON the frame edge sits on the
+# image's last row or column, and on the DERIVED axis that row is lost to
+# rounding (CONCRETE EDGE lost its top horizontal ticks, RCP GENERAL NOTES
+# all four, and would not register). Revit sizes the export from the lines'
+# geometry, not from surviving pixels (CONCRETE EDGE's image matched the
+# frame to 0.52 px with its top ticks gone). So two short WHITE detail lines
+# at opposite corners of the frame bound it -- white on white, in the frame's
+# one-cell pad, so they are never ink and never a tick candidate -- and the
+# ticks stay at their ordinary inset, where the fitter sees them.
+FRAME_BOUND_LENGTH_PX = MARK_GAP_PX
+
+
+def frame_bound_segments(reference_uv, length_ft):
+    """The two frame-bound lines for ``reference_uv``, in view UV. PURE.
+
+    One along the bottom edge from the min corner, one along the top edge
+    to the max corner: together their bbox is exactly the rectangle."""
+    if not reference_uv or len(reference_uv) != 4 or not length_ft or length_ft <= 0:
+        return _unavailable("no reference rectangle or bound length "
+                            "(reference={0!r}, length_ft={1!r})".format(
+                                reference_uv, length_ft))
+    u0, v0, u1, v1 = (float(v) for v in reference_uv)
+    if u1 - u0 <= 2.0 * length_ft or v1 <= v0:
+        return _unavailable("the reference rectangle is too small for the frame "
+                            "bounds: {0!r}".format(reference_uv))
+    L = float(length_ft)
+    segments = [
+        {"key": "bound_min", "corner": "left_bottom", "orientation": "horizontal",
+         "level_uv": v0, "span_uv": [u0, u0 + L], "uv0": [u0, v0], "uv1": [u0 + L, v0]},
+        {"key": "bound_max", "corner": "right_top", "orientation": "horizontal",
+         "level_uv": v1, "span_uv": [u1 - L, u1], "uv0": [u1 - L, v1], "uv1": [u1, v1]},
+    ]
+    return {"state": "value", "segments": segments,
+            "reference_uv": [u0, v0, u1, v1], "length_ft": L, "colour": list(WHITE)}
+
+
+def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=None,
+                              colour=None):
+    """Draw the registration ticks as DETAIL LINES and paint them MARK_COLOUR
+    (or ``colour``: the frame bounds are drawn the same way, in WHITE).
 
     Inside an open Transaction, inside the capture's TransactionGroup: the
     marks are removed by the group's rollback, never by a delete this module
@@ -1022,7 +1062,7 @@ def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=
                    float(origin.Y) + du * float(right.Y) + dv * float(up.Y),
                    float(origin.Z) + du * float(right.Z) + dv * float(up.Z))
 
-    paint = flat_colour_override(doc, colour=MARK_COLOUR)
+    paint = flat_colour_override(doc, colour=MARK_COLOUR if colour is None else colour)
     thinnest = None
     for segment in segments:
         entry = dict(segment)
