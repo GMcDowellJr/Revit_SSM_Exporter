@@ -77,12 +77,18 @@ def _cells_with(arr, spec):
 
 # --- the grid itself --------------------------------------------------------
 
-def test_cells_are_the_paper_cell_from_crop_As_lower_left_in_the_FILE(tmp_path):
+def test_cells_are_the_paper_cell_anchored_to_view_uv_in_the_FILE(tmp_path):
+    """D-A9: the origin is the whole cell at or below crop A's minimum. This
+    fixture's crop minimum (-1, -2) is already a whole number of 1 ft cells,
+    so the two coincide here; tests/test_stage_a_grid_lattice.py has the
+    fixtures where they do not."""
     _rec, rec, _m = _view(tmp_path)
     assert rec["status"] == "value"
     spec = rec["grid"]
     assert spec["cell_ft"] == pytest.approx(CELL_FT)
-    assert spec["origin_uv"] == pytest.approx([MODEL_BOUNDS[0], MODEL_BOUNDS[1]])
+    assert spec["origin_uv"] == pytest.approx(
+        [math.floor(MODEL_BOUNDS[0] / CELL_FT) * CELL_FT,
+         math.floor(MODEL_BOUNDS[1] / CELL_FT) * CELL_FT])
     assert spec["px_per_cell_u"] == pytest.approx(18.0, abs=0.05)
     # The model element spans u 8..12, v 6..9: cells i = 8-(-1) .. 12-(-1)-1,
     # j = 6-(-2) .. 9-(-2)-1 -- arithmetic on the fixture, not the tool.

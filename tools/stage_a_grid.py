@@ -7,10 +7,13 @@ definition, used by every analysis-layer product:
   * CELL SIZE is the requested paper cell -- ``cell_size_paper_in`` from the
     run's run_meta.json config, times the view scale, over 12. Never adaptive,
     never guessed: missing either input is a refusal.
-  * ORIGIN is crop A's lower-left corner (``frame.crop_uv``'s minimum). Cell
-    (i, j) covers u in [u0 + i*cell, u0 + (i+1)*cell) and v likewise, with j
-    running UP. Annotation ink left of or below crop A gets NEGATIVE indices
-    -- expected, and kept signed.
+  * ORIGIN is anchored to VIEW UV, not to crop A (D-A9, Greg 2026-10-05):
+    per axis ``origin = floor(crop_min / cell) * cell``, so every cell
+    boundary is a whole multiple of the cell from view UV (0, 0) and a crop
+    edit no longer renumbers the cells. Cell (i, j) covers u in
+    [u0 + i*cell, u0 + (i+1)*cell) and v likewise, with j running UP. Crop A
+    starts inside cell 0 (``crop_a_offset_cells``); annotation ink left of or
+    below it gets NEGATIVE indices -- expected, and kept signed.
   * EXTENT is the union of the model image and the registered annotation
     canvas (``<view>_anno.registered.json``), in whole cells. The annotation
     canvas is usually larger but need not be.
@@ -59,8 +62,8 @@ from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa
 
 Image.MAX_IMAGE_PIXELS = None
 
-SCHEMA = "vop.stage_a.analysis_grid.v1"
-TOOL_VERSION = "1.1.0"
+SCHEMA = "vop.stage_a.analysis_grid.v2"
+TOOL_VERSION = "2.0.0"
 
 # Greg, 2026-09-30: 2 and 8 px per cell "for starters", expressed as what they
 # are -- a cell must hold whole pixels to be measured at all, and a mapping
@@ -308,18 +311,43 @@ def pixel_to_uv(spec, model_x, model_y):
     return ((model_x - m["b_u"]) / m["a_u"], (model_y - m["b_v"]) / m["a_v"])
 
 
-def crop_a_cell_ranges(spec, crop, w, h):
-    """The cells crop A covers: those holding a model pixel CENTRE that lies
-    inside ``crop`` -- the same pixel-centre rule every count uses. Not the
-    image's own extent: an aspect-clamped capture pads the image outside the
-    crop, and those pad pixels are not inside crop A."""
+def _crop_axes(spec, crop, w, h):
+    """Model-pixel columns and rows, their centres' u and v, and whether each
+    centre lies inside ``crop`` on its axis (edges inclusive)."""
     m = spec["mapping"]
     cols = np.arange(w, dtype=np.float64)
     rows = np.arange(h, dtype=np.float64)
     u = (cols + 0.5 - m["b_u"]) / m["a_u"]
     v = (rows + 0.5 - m["b_v"]) / m["a_v"]
-    in_u = cols[(u >= crop[0]) & (u <= crop[2])]
-    in_v = rows[(v >= crop[1]) & (v <= crop[3])]
+    return (cols, rows, u, v, (u >= crop[0]) & (u <= crop[2]),
+            (v >= crop[1]) & (v <= crop[3]))
+
+
+def crop_a_pixel_mask(spec, crop, w, h):
+    """Model pixels whose CENTRE lies inside crop A -- and, for a split crop,
+    inside one of the bands the view shows (``split_bands_uv``, edges
+    inclusive as in inside_crop_a). Counted per cell as ``crop_a_px``, which
+    makes an edge cell's partial coverage measurable where ``inside_crop_a``
+    only says the cell holds at least one such centre."""
+    _cols, _rows, u, v, col_in, row_in = _crop_axes(spec, crop, w, h)
+    mask = row_in[:, None] & col_in[None, :]
+    bands = spec.get("split_bands_uv")
+    if bands:
+        shown = np.zeros_like(mask)
+        for u0, v0, u1, v1 in bands:
+            shown |= (((v >= v0) & (v <= v1))[:, None]
+                      & ((u >= u0) & (u <= u1))[None, :])
+        mask &= shown
+    return mask
+
+
+def crop_a_cell_ranges(spec, crop, w, h):
+    """The cells crop A covers: those holding a model pixel CENTRE that lies
+    inside ``crop`` -- the same pixel-centre rule every count uses. Not the
+    image's own extent: an aspect-clamped capture pads the image outside the
+    crop, and those pad pixels are not inside crop A."""
+    cols, rows, _u, _v, col_in, row_in = _crop_axes(spec, crop, w, h)
+    in_u, in_v = cols[col_in], rows[row_in]
     if not len(in_u) or not len(in_v):
         raise GridRefusal("no model pixel centre lies inside crop A")
     mi = cells_of_columns(spec, in_u)
@@ -356,6 +384,29 @@ def split_crop_bands(sidecar):
     return [[float(c) for c in band] for band in bands]
 
 
+LATTICE_ANCHOR = "view_uv"
+ORIGIN_RULE = "origin_uv[k] = floor(crop_min_uv[k] / cell_ft) * cell_ft, per axis"
+# A crop minimum within this RELATIVE distance of a whole number of cells is
+# that whole number: floor() of 2.9999999999 would otherwise move the origin
+# a whole cell for a float artefact of the crop read-back.
+ORIGIN_SNAP_REL = 1e-9
+
+
+def lattice_origin(crop_min_uv, cell_ft):
+    """PURE. D-A9 (Greg, 2026-10-05): the cell lattice is anchored to VIEW UV.
+    Per axis, the largest whole multiple of ``cell_ft`` at or below crop A's
+    minimum (ORIGIN_RULE), so cell boundaries fall on multiples of the cell
+    from view UV (0, 0) whatever the crop."""
+    out = []
+    for value in crop_min_uv:
+        k = float(value) / float(cell_ft)
+        nearest = round(k)
+        if abs(k - nearest) <= ORIGIN_SNAP_REL * max(1.0, abs(k)):
+            k = nearest
+        out.append(math.floor(k) * float(cell_ft))
+    return out
+
+
 def build_spec(sidecar, rgb, run_config, lattice=None):
     """The GridSpec for one view, or raises GridRefusal."""
     frame = frame_record(sidecar)
@@ -382,10 +433,14 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
     h, w = rgb.shape[:2]
     spec = {"cell_ft": cell_ft, "cell_size_paper_in": float(cell_in),
             "view_scale": float(scale),
-            "origin_uv": [float(crop[0]), float(crop[1])],
+            "origin_uv": lattice_origin((crop[0], crop[1]), cell_ft),
+            "lattice_anchor": LATTICE_ANCHOR, "origin_rule": ORIGIN_RULE,
+            "crop_uv": [float(c) for c in crop],
             "mapping": mapping, "uv_basis": basis,
             "px_per_cell_u": px_u, "px_per_cell_v": px_v,
             "model_image_px": [w, h]}
+    spec["crop_a_offset_cells"] = [(float(crop[k]) - spec["origin_uv"][k]) / cell_ft
+                                   for k in (0, 1)]
     # Extent over model pixel CENTRES: the model image and, when present,
     # the registered annotation canvas (both on the model lattice).
     x0, y0, x1, y1 = 0, 0, w, h
@@ -641,6 +696,20 @@ def occupancy_summary(occ, inside):
             "outside_crop_a": _counts(~inside)}
 
 
+def crop_a_coverage(arrays):
+    """PURE. How crop A's pixels fall in the cells: ``px`` model pixel centres
+    inside crop A; ``cells_with_px`` cells holding at least one (the
+    ``inside_crop_a`` population, by pixel centre); ``cells_partial`` those
+    cells where some of the cell's model pixels lie OUTSIDE crop A (the
+    lattice is anchored to view UV, so crop A's edges fall inside cells)."""
+    crop_px, total = arrays["crop_a_px"], arrays["model_total"]
+    with_px = crop_px > 0
+    return {"px": int(crop_px.sum()), "cells_with_px": int(with_px.sum()),
+            "cells_partial": int((with_px & (crop_px < total)).sum()),
+            "rule": "crop_a_px: model pixel centres inside crop A (and its "
+                    "split bands); cells_partial: 0 < crop_a_px < model_total"}
+
+
 def inside_crop_a(spec):
     """The cells the view SHOWS: crop A's cells, and for a split crop only
     those whose centre lies in one of its bands (``split_bands_uv``)."""
@@ -811,6 +880,8 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         h, w = rgb.shape[:2]
         del rgb
         arrays = dict(("model_" + k, v) for k, v in count_cells(spec, model_masks).items())
+        arrays["crop_a_px"] = count_cells(spec, {"crop_a_px": crop_a_pixel_mask(
+            spec, spec["crop_uv"], w, h)})["crop_a_px"]
         model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
         del model_masks
         if registered is not None:
@@ -878,6 +949,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             "status": "value", "grid": spec,
             "image_totals": dict((k, int(v.sum())) for k, v in arrays.items()
                                  if k not in ("inside_crop_a", "occupancy")),
+            "crop_a_coverage": crop_a_coverage(arrays),
             "occupancy": dict(occupancy_summary(arrays["occupancy"],
                                                 arrays["inside_crop_a"]),
                               codes=OCCUPANCY_CODES,

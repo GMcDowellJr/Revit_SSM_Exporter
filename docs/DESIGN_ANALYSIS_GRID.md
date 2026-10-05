@@ -359,3 +359,50 @@ What the disagreements are, checked view by view:
 - Moving `colorid_to_occupancy.py` onto this grid.
 - A geometry-comparison tool: not to be built (Greg, 2026-10-01). The
   comparison above was a one-off.
+
+## Amendment 2026-10-05: G-1 origin anchored to view UV (Greg)
+
+Decision D-A9. It replaces the origin rule written in G-2 above ("the origin
+is crop A's lower-left corner"); the cell size (G-1) and everything else are
+unchanged. Implemented in `tools/stage_a_grid.py` 2.0.0, schema
+`vop.stage_a.analysis_grid.v2`.
+
+**Rule.** Per axis, `origin_uv = floor(crop_min_uv / cell_ft) * cell_ft`.
+Every cell boundary is then a whole multiple of `cell_ft` from view UV
+(0, 0), whatever the crop. A crop minimum within 1e-9 (relative) of a whole
+number of cells is taken as that number, so a float artefact of the crop
+read-back cannot move the origin a whole cell.
+
+**Why.** With the origin on crop A's corner, editing the crop shifted every
+cell index, and moved every cell boundary by the fractional part of the
+edit. Cell (i, j) in one run and cell (i, j) in the next were different
+pieces of the view, so comparing cells across runs was invalid.
+
+**What changes.**
+- Cell boundaries move by less than one cell. Crop A's minimum now lies
+  inside cell 0 rather than on its corner. The record carries
+  `crop_a_offset_cells` = `(crop_min - origin) / cell_ft` per axis, in [0, 1).
+  `crop_a_cells` usually starts at 0, but starts at 1 when crop A's minimum
+  is within half a pixel of the next boundary: the first pixel centre inside
+  it is then in cell 1.
+- The grid record states `lattice_anchor: "view_uv"` and `origin_rule` (the
+  formula as text), and records `crop_uv`.
+- A new dense array, `crop_a_px`, counts the model pixel centres inside
+  crop A (and, for a split crop, inside its bands) per cell. `inside_crop_a`
+  keeps its meaning (cells holding at least one such centre). `crop_a_px`
+  measures how much of an edge cell is inside: `crop_a_coverage` in the
+  record gives the total, the cells with any, and the cells where some
+  model pixels lie outside crop A (`0 < crop_a_px < model_total`).
+- Only binning changes, never a pixel count. On the existing fixtures every
+  `image_totals` channel is identical before and after
+  (`tests/test_stage_a_grid_lattice.py`, with one fixture whose origin really
+  moves). On the shared fixture the crop minimum (-1, -2) is already a whole
+  number of 1 ft cells, so its cells are unchanged too.
+- Past runs can be re-gridded from their captures. Nothing in the capture
+  changes.
+
+**Known limit.** No view basis is captured. A section or elevation that was
+moved or rotated in the model therefore looks, to the grid, the same as one
+whose crop was edited: in both cases the same view-UV cells hold different
+things. A later cross-run tool must flag that case, not assume the view is
+unchanged.
