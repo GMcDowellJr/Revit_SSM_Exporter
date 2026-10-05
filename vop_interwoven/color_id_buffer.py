@@ -3352,6 +3352,9 @@ def crop_write_fault(crop_write):
       read, so the export renders a crop nothing recorded;
     * ``authored_crop_changed`` -- not written, and the crop read at the
       export is not the one the lattice was sized on;
+    * nothing, for a view with no crop region (``source``
+      "no_crop_region"): a drafting view or a legend, whose frame the
+      registration ticks bound instead;
     * ``crop_write_failed`` -- the crop the lattice was sized on was to be
       written and could not be: the write raised, or the view has no CropBox
       to write (``write_error``). The export then renders whatever extent
@@ -3364,6 +3367,9 @@ def crop_write_fault(crop_write):
         return None
     if crop_write.get("write_error"):
         return "crop_write_failed"
+    if crop_write.get("source") == "no_crop_region" and not crop_write.get("written"):
+        # Nothing to write and nothing to read back: the view has no crop.
+        return None
     read_back = crop_write.get("read_back") or {}
     if crop_write.get("written"):
         active = crop_write.get("crop_box_active_read_back", True)
@@ -3406,9 +3412,21 @@ def resolve_crop_a(view, raster, diag=None, view_id=None):
     when there is no raster frame to resolve anything in.
     """
     from .core.math_utils import Bounds2D
+    from .revit.view_basis import supports_crop_region
     frame = getattr(raster, "anno_frame_bounds", None) or getattr(raster, "bounds_xy", None)
     if frame is None:
         raise ValueError("no raster frame to resolve crop A in")
+    if not supports_crop_region(view):
+        # A drafting view or a legend has no crop region: nothing is read
+        # (CropBoxActive included) and nothing is written. Crop A is the
+        # raster frame -- the bbox of every element in the view -- and the
+        # registered capture draws its ticks ON that rectangle's edges, so
+        # the uncropped export's drawn extent is crop A (``source``
+        # "no_crop_region", ``write`` False).
+        return (float(frame.xmin), float(frame.ymin),
+                float(frame.xmax), float(frame.ymax)), {
+                    "authored_crop_active": None, "source": "no_crop_region",
+                    "write": False}
     record = {"authored_crop_active": None}
     try:
         record["authored_crop_active"] = bool(view.CropBoxActive)
@@ -4151,8 +4169,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         orig_crop_box = None
         orig_crop_box_active = None
         try:
-            orig_crop_box = view.CropBox
-            orig_crop_box_active = bool(view.CropBoxActive)
+            # Nothing to restore on a view with no crop region: never written.
+            if (crop_a_record or {}).get("source") != "no_crop_region":
+                orig_crop_box = view.CropBox
+                orig_crop_box_active = bool(view.CropBoxActive)
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -4259,7 +4279,22 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         crop_write_attempted = False
         _crop_fpp = geom["achieved_fpp_ft"] if geom is not None else None
         try:
-            if crop_a_record is not None and not crop_a_record.get("write", True):
+            if (crop_a_record or {}).get("source") == "no_crop_region":
+                # A drafting view or a legend: no crop to write or read. The
+                # registered capture's ticks sit on crop A's edges, so the
+                # uncropped export renders crop A; the registration fit
+                # measures that rather than this record assuming it.
+                crop_write = {"written": False, "source": "no_crop_region",
+                              "rendered_extent": "bounded_by_registration_marks"}
+                crop_bounds_xy = tuple(float(v) for v in crop_uv)
+                if getattr(raster, "bounds_xy", None) is not None:
+                    model_crop_offset_uv = (
+                        crop_bounds_xy[0] - float(raster.bounds_xy.xmin),
+                        crop_bounds_xy[1] - float(raster.bounds_xy.ymin),
+                        crop_bounds_xy[2] - float(raster.bounds_xy.xmax),
+                        crop_bounds_xy[3] - float(raster.bounds_xy.ymax),
+                    )
+            elif crop_a_record is not None and not crop_a_record.get("write", True):
                 # D: an ACTIVE authored crop is never written -- not even with
                 # the identical box (Plaza 6112047: 8.8 % of pixels changed).
                 # The export renders it as it is; crop_uv is what it reads.
@@ -5858,7 +5893,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # -- and a view with an active crop keeps it untouched.
     crop_applied = {"frame_b": "frame_b", "untouched": "none"}.get(anno_crop_mode)
     authored_crop_active = None
-    if anno_crop_mode == "authored_else_crop_a":
+    from .revit.view_basis import supports_crop_region
+    no_crop_region = not supports_crop_region(view)
+    if no_crop_region:
+        # A drafting view or a legend has no crop region, so whatever the
+        # mode, nothing is written: "none", and the rendered rectangle is
+        # measured from the registration ticks.
+        crop_applied = "none"
+    elif anno_crop_mode == "authored_else_crop_a":
         try:
             authored_crop_active = bool(view.CropBoxActive)
         except Exception as ex:
@@ -6109,8 +6151,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         orig_crop_box = None
         orig_crop_box_active = None
         try:
-            orig_crop_box = view.CropBox
-            orig_crop_box_active = bool(view.CropBoxActive)
+            # Nothing to restore on a view with no crop region: never written.
+            if not no_crop_region:
+                orig_crop_box = view.CropBox
+                orig_crop_box_active = bool(view.CropBoxActive)
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -6725,6 +6769,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "crop_write": crop_write,
             "rendered_uv_reason": (
                 None if crop_bounds_xy is not None else (
+                    "the view has no crop region (a drafting view or a legend), so "
+                    "the export renders everything it draws and the rendered "
+                    "rectangle must be MEASURED (registration marks)"
+                    if no_crop_region else
                     "the view's authored crop was left as found and no rectangle "
                     "was handed to Revit, so the rendered rectangle is Revit's "
                     "choice and must be MEASURED (registration marks), not read "

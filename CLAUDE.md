@@ -167,18 +167,23 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   (`datum_category`); the view's own crop-region element, named like the view,
   stays in the model pass (`own_view_reference`).
 - **Drafting views and legends are captured by Stage A too** (2026-10-05):
-  `resolve_view_mode` calls them ANNOTATION_ONLY, and under Stage A they now
-  take the same capture as a model view with **no model elements** (nothing
-  collected), instead of the geometry annotation raster. Every element in
-  them is view-owned, so the annotation pass paints all of it; the model
-  capture is the ticks on white. `OST_LegendComponents` (Model-typed) is on
-  `VIEW_ONLY_MODEL_BIC_NAMES`, so it is hidden in the model pass only. Crop A
-  is the annotation-only bounds, and these views are crop-inactive, so it is
-  WRITTEN. **Unmeasured:** whether Revit accepts that crop on these view
-  types. If it does not, the capture fails loudly as `crop_write_failed`
-  (model pass; a write that raised, or no CropBox, used to be a warning only)
-  and `annotation_frame_not_applied` (annotation pass). It is never shipped
-  uncropped as clean.
+  `resolve_view_mode` calls them ANNOTATION_ONLY, and under Stage A they take
+  the registered capture (always, even with the fallback configured) with
+  **no model elements** collected. They have **no crop region**
+  (`view_basis.supports_crop_region()`, the one predicate), so no crop is
+  read or written in either pass (`crop_write.source: "no_crop_region"`,
+  `crop_applied: "none"`), and the split and crop read-backs are skipped.
+  Their frame is the bbox of EVERY element in the view plus one cell
+  (`resolve_view_element_bounds()`, as the geometry exporter's crop was), not
+  the extent-driver bounds. The ticks go ON that frame's edges (inset 0), so
+  the uncropped export's drawn extent is the frame in both captures; the
+  registration fit measures it. Every element is view-owned, so the
+  annotation pass paints all of it. `OST_LegendComponents` (Model-typed) is
+  on `VIEW_ONLY_MODEL_BIC_NAMES`, hidden in the model pass only.
+  **Unmeasured in Revit:** that an uncropped export adds no margin around
+  the drawn extent; a margin shows up as `model_marks_vs_lattice` deviation
+  or `export_dim_mismatch`. Elsewhere, a model-pass crop write that raises or
+  finds no CropBox is `crop_write_failed` (it used to be a warning only).
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
   unpainted and counted per category under `not_painted`.

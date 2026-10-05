@@ -1449,6 +1449,75 @@ def supports_crop_bounds(view, diag=None):
         return False
 
 
+# View types with NO crop region at all: Revit offers them neither a crop box
+# nor a crop toggle, so nothing can be written to them and nothing read from
+# them describes what they draw. Their frame is the bbox of their elements.
+NO_CROP_REGION_VIEW_TYPES = ("DraftingView", "Legend")
+
+
+def supports_crop_region(view, diag=None):
+    """Capability: the view has a crop region a capture may read or write.
+
+    False for drafting views and legends (NO_CROP_REGION_VIEW_TYPES). The one
+    predicate Stage A asks: the model pass, the annotation pass and the
+    registered capture all decide "write a crop / read one back" from it.
+    """
+    return _view_type_name(view) not in NO_CROP_REGION_VIEW_TYPES
+
+
+def resolve_view_element_bounds(doc, view, basis, pad_ft, diag=None):
+    """Bounds2D of EVERY element the view shows, from their view bboxes, padded
+    by ``pad_ft`` on each side; None when no element has a bbox.
+
+    The frame of a view with no crop region (drafting views, legends) for a
+    Stage A capture, as the geometry exporter's view_raster crop was: an
+    uncropped export renders all the view draws -- detail lines, filled
+    regions, detail items, legend components -- not only the extent-driver
+    annotations resolve_annotation_only_bounds() keeps. Bboxes only, never
+    geometry (the Stage A rule). An element whose bbox will not read is
+    counted and warned, not guessed.
+    """
+    from ..core.math_utils import Bounds2D
+    from Autodesk.Revit.DB import FilteredElementCollector
+
+    view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    min_u = min_v = max_u = max_v = None
+    unreadable = 0
+    first_error = None
+    for elem in FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType():
+        try:
+            bbox = elem.get_BoundingBox(view)
+            if bbox is None:
+                continue
+            mn, mx = bbox.Min, bbox.Max
+            for x in (mn.X, mx.X):
+                for y in (mn.Y, mx.Y):
+                    for z in (mn.Z, mx.Z):
+                        u, v = basis.transform_to_view_uv((x, y, z))
+                        if min_u is None:
+                            min_u = max_u = u
+                            min_v = max_v = v
+                        else:
+                            min_u, max_u = min(min_u, u), max(max_u, u)
+                            min_v, max_v = min(min_v, v), max(max_v, v)
+        except Exception as e:
+            unreadable += 1
+            if first_error is None:
+                first_error = "{0}: {1}".format(type(e).__name__, e)
+    if unreadable and diag is not None:
+        diag.warn(
+            phase="bounds",
+            callsite="resolve_view_element_bounds",
+            message="{0} element bbox(es) would not read and are outside the frame; "
+                    "first: {1}".format(unreadable, first_error),
+            view_id=view_id,
+        )
+    if min_u is None:
+        return None
+    pad = float(pad_ft)
+    return Bounds2D(min_u - pad, min_v - pad, max_u + pad, max_v + pad)
+
+
 def supports_depth(view, diag=None):
     """
     Capability: pipeline depth semantics are meaningful.

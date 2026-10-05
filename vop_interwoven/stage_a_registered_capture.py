@@ -217,19 +217,28 @@ def remove_split_for_capture(doc, view, crop_uv, Transaction, TransactionStatus,
 def view_state(view, primary=None):
     """What the capture writes and the rollback must put back, read. With a
     ``primary`` (a dependent view's), its template too: the passes detach
-    a dependent view's template there."""
+    a dependent view's template there.
+
+    A view with no crop region (a drafting view or a legend) has no crop for
+    the capture to write, so none is read: an unreadable crop there would
+    read as "unverified" and fail a capture that never touched it."""
+    from .revit.view_basis import supports_crop_region
+
     def _crop_box():
         box = view.CropBox
         return {"min": _xyz(box.Min), "max": _xyz(box.Max)}
     state = {
         "view_template_id": _read(lambda: _element_id_int(view.ViewTemplateId)),
         "display_style": _read(lambda: str(view.DisplayStyle)),
-        "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
-        "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
-        "crop_box": _read(_crop_box),
-        # Q7: the capture un-splits a split crop; the rollback must put it back.
-        "split_crop": _read(lambda: split_crop_state(view)),
     }
+    if supports_crop_region(view):
+        state.update({
+            "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
+            "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
+            "crop_box": _read(_crop_box),
+            # Q7: the capture un-splits a split crop; the rollback must put it back.
+            "split_crop": _read(lambda: split_crop_state(view)),
+        })
     if primary is not None:
         state["primary_view_template_id"] = _read(
             lambda: _element_id_int(primary.ViewTemplateId))
@@ -273,6 +282,17 @@ def mark_reference_rectangle(view, raster, diag=None, view_id=None):
     crop when it is active, else the model pass's crop A
     (``raster.model_clip_bounds``), else the raster frame. Never a guess: a
     view with none of them returns ``(None, reason)``."""
+    from .revit.view_basis import supports_crop_region
+    if not supports_crop_region(view):
+        # A drafting view or a legend: the marks go on crop A itself -- the
+        # one rectangle the model pass is sized on -- with no inset, so they
+        # bound the uncropped export (see export_registered_stage_a_view).
+        from .color_id_buffer import resolve_crop_a
+        try:
+            uv, _record = resolve_crop_a(view, raster, diag=diag, view_id=view_id)
+            return tuple(uv), "no_crop_region_frame"
+        except ValueError as ex:
+            return None, "no crop region and no raster frame: {0}".format(ex)
     basis = getattr(raster, "view_basis", None)
     try:
         if bool(view.CropBoxActive) and basis is not None:
@@ -667,14 +687,21 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # middle's elements too (Q7: 826 against 820), and the read-back
         # after the rollback must compare like with like.
         _t = time.time()
-        _crop_uv, _crop_err = (None, None)
-        if getattr(raster, "view_basis", None) is not None:
-            from .color_id_buffer import read_crop_uv
-            _crop_uv, _crop_err = read_crop_uv(view, raster.view_basis, diag=diag,
-                                               view_id=view_id)
-        record["split_crop"] = remove_split_for_capture(
-            doc, view, _crop_uv, Transaction, TransactionStatus, diag=diag,
-            view_id=view_id, fault=_fault)
+        from .revit.view_basis import supports_crop_region
+        has_crop_region = supports_crop_region(view)
+        record["crop_region"] = has_crop_region
+        if has_crop_region:
+            _crop_uv, _crop_err = (None, None)
+            if getattr(raster, "view_basis", None) is not None:
+                from .color_id_buffer import read_crop_uv
+                _crop_uv, _crop_err = read_crop_uv(view, raster.view_basis, diag=diag,
+                                                   view_id=view_id)
+            record["split_crop"] = remove_split_for_capture(
+                doc, view, _crop_uv, Transaction, TransactionStatus, diag=diag,
+                view_id=view_id, fault=_fault)
+        else:
+            # A drafting view or a legend: no crop, so nothing can be split.
+            record["split_crop"] = {"state": "no_crop_region"}
         record["timings_ms"]["split_remove"] = round((time.time() - _t) * 1000.0, 3)
 
         # ---- 0b: B -- a view that hides OST_Lines -------------------------
@@ -697,7 +724,14 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                                      view_id=view_id)
         record["mark_reference_source"] = source
         mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, cfg)
-        layout = (registration.registration_mark_segments(reference, mark_fpp)
+        # With no crop region the export renders everything drawn, so the
+        # ticks go ON crop A's edges (inset 0): their bbox is then crop A
+        # exactly, and both captures render that rectangle -- the model one
+        # (ticks only) and the annotation one (its content lies inside crop
+        # A's one-cell pad). Inset ticks would let the export shrink to them.
+        layout = (registration.registration_mark_segments(
+                      reference, mark_fpp,
+                      **({} if has_crop_region else {"inset_px": 0.0}))
                   if reference is not None else {"state": "unavailable",
                                                  "reason": source})
         # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or

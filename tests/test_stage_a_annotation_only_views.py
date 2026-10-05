@@ -108,11 +108,14 @@ def test_under_stage_a_the_view_is_captured_with_no_model_elements(
     assert results[0]["view_mode"] == "ANNOTATION_ONLY"
 
 
-def test_the_two_pass_fallback_capture_is_taken_too(monkeypatch, tmp_path):
+def test_the_registered_capture_is_used_even_when_the_fallback_is_configured(
+        monkeypatch, tmp_path):
+    """The two-pass fallback writes a crop and has no ticks, so it cannot frame
+    a view with no crop region; such a view takes the registered capture."""
     calls, results = _run(monkeypatch, tmp_path, "DraftingView", stage_a=True,
                           registered=False)
-    assert calls["fallback_capture"] == [[]]
-    assert calls["capture"] == [] and calls["anno_raster"] == 0
+    assert calls["capture"] == [[]]
+    assert calls["fallback_capture"] == [] and calls["anno_raster"] == 0
     assert len(results) == 1
 
 
@@ -150,3 +153,218 @@ def test_legend_components_are_hidden_for_the_model_pass_only():
     # Control.
     assert -2000011 in anno_pass_hides and -2000011 not in model_pass_hides
     assert -2000300 in model_pass_hides
+
+
+# --- end to end: the REGISTERED capture of a view with no crop region --------
+
+from tests import test_probe_anno_pass_run_variant as world  # noqa: E402
+
+CROP_NAMES = ("CropBox", "CropBoxActive", "CropBoxVisible")
+
+
+class _NoCropView(world._ProbeView):
+    """A view with no crop region: once armed, reading or writing any crop
+    property -- or asking for the split manager -- raises and is logged."""
+
+    def __init__(self, view_id, view_type):
+        object.__setattr__(self, "_armed", False)
+        object.__setattr__(self, "crop_access", [])
+        world._ProbeView.__init__(self, view_id)
+        object.__setattr__(self, "ViewType", _FakeViewType(view_type))
+        object.__setattr__(self, "_armed", True)
+
+    def __getattribute__(self, name):
+        if name in CROP_NAMES and object.__getattribute__(self, "_armed"):
+            object.__getattribute__(self, "crop_access").append(("read", name))
+            raise RuntimeError("this view has no crop region (fake): " + name)
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name, value):
+        if name in CROP_NAMES and object.__getattribute__(self, "_armed"):
+            object.__getattribute__(self, "crop_access").append(("write", name))
+            raise RuntimeError("this view has no crop region (fake): " + name)
+        world._ProbeView.__setattr__(self, name, value)
+
+    def GetCropRegionShapeManager(self):
+        self.crop_access.append(("read", "GetCropRegionShapeManager"))
+        raise RuntimeError("this view has no crop region (fake)")
+
+
+def _run_registered_no_crop(tmp_path, view_type):
+    from vop_interwoven.config import Config
+    from vop_interwoven.core.math_utils import Bounds2D
+    from vop_interwoven.stage_a_registered_capture import export_registered_stage_a_view
+    from tests.stage_a_capture_fakes import FakeDiag, FakeElement, install_fake_revit_db
+    from tests.test_stage_a_annotation_pass_probe_switches import (
+        ANNO_CAT, _BBox, _PLAN_BASIS, _SizedDoc,
+    )
+    del world._LOG[:]
+    view_id = 77
+    # Everything a drafting view holds is owned by it.
+    elements = [
+        FakeElement(2001, ANNO_CAT, owner_view_id=view_id,
+                    bbox=_BBox((25, 20, 0), (31, 23, 0))),
+        FakeElement(2002, ANNO_CAT, owner_view_id=view_id,
+                    bbox=_BBox((40, 30, 0), (47, 34, 0))),
+        FakeElement(3001, world.LINES_CAT, owner_view_id=view_id,
+                    bbox=_BBox((22, 18, 0), (70, 18, 0))),
+    ]
+    view = _NoCropView(view_id, view_type)
+    view.Scale = 96
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[ANNO_CAT, world.LINES_CAT])
+    doc.IsModifiable = False
+    doc.Create = world._Create(doc)
+    # The frame init_view_raster builds for it: every element's bbox + pad.
+    frame = Bounds2D(20.0, 15.0, 50.0, 37.0)
+    raster = types.SimpleNamespace(
+        W=30, H=22, cell_size_ft=1.0, bounds_xy=frame, model_clip_bounds=None,
+        anno_frame_bounds=None, anno_cap_envelope_applied=False,
+        view_basis=_PLAN_BASIS)
+    cfg = Config(enable_color_id_buffer_stage_a=True,
+                 color_id_buffer_registered_capture=True,
+                 color_id_buffer_export_dpi=150.0)
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    diag = FakeDiag()
+    with install_fake_revit_db() as fake_db:
+        fake_db.Transaction = world._Tx
+        fake_db.TransactionGroup = world._Group
+        fake_db.TransactionStatus = world._STATUS
+        fake_db.Line = world._Line
+        fake_db.FilteredElementCollector = world._ViewCollector
+        world._ROLLBACK_TARGETS[:] = [view, doc]
+        out = export_registered_stage_a_view(doc, view, [], cfg, diag=diag,
+                                             raster=raster)
+    return out, view, frame
+
+
+@pytest.mark.parametrize("view_type", ["DraftingView", "Legend"])
+def test_a_view_with_no_crop_region_is_captured_without_touching_a_crop(
+        tmp_path, view_type):
+    import json
+    out, view, frame = _run_registered_no_crop(tmp_path, view_type)
+    reg = out["registration"]
+    assert view.crop_access == []
+    assert reg["faults"] == [], reg["faults"]
+    assert out["success"] is True and out["annotation_pass_success"] is True
+    assert reg["split_crop"] == {"state": "no_crop_region"}
+    assert reg["mark_reference_source"] == "no_crop_region_frame"
+    assert not any(k.startswith("crop_box") or k == "split_crop"
+                   for k in reg["restore"]["view_state"])
+    # The FILES: no crop written, and crop A is the element frame.
+    with open(out["sidecar_path"]) as f:
+        model = json.load(f)
+    with open(out["annotation_sidecar_path"]) as f:
+        anno = json.load(f)
+    assert model["frame"]["crop_write"]["source"] == "no_crop_region"
+    assert model["frame"]["crop_write"]["written"] is False
+    assert model["frame"]["crop_uv"] == [frame.xmin, frame.ymin, frame.xmax, frame.ymax]
+    assert anno["registration"]["crop_applied"] == "none"
+    assert "no crop region" in anno["registration"]["rendered_uv_reason"]
+    # The ticks sit ON crop A's edges, so their bbox IS crop A: that is what
+    # bounds the uncropped export.
+    # Read back from the drawn detail lines, not the requested layout.
+    ends = [p for m in reg["marks"]["created"] for p in m["readback_uv"]]
+    assert reg["marks"]["created_count"] == 12
+    us = [p[0] for p in ends]
+    vs = [p[1] for p in ends]
+    assert (min(us), min(vs), max(us), max(vs)) == pytest.approx(
+        (frame.xmin, frame.ymin, frame.xmax, frame.ymax))
+
+
+def test_control_the_same_view_as_a_floor_plan_reaches_the_crop_and_fails(tmp_path):
+    """THE CONTROL: the fixture does reach the crop code -- on a view that
+    claims a crop region, every access raises and the capture faults."""
+    out, view, _frame = _run_registered_no_crop(tmp_path, "FloorPlan")
+    assert view.crop_access != []
+    assert out["registration"]["success"] is False
+
+
+# --- the frame: the bbox of EVERY element in the view, plus a pad -----------
+
+class _Box(object):
+    def __init__(self, mn, mx):
+        self.Min = types.SimpleNamespace(X=mn[0], Y=mn[1], Z=0.0)
+        self.Max = types.SimpleNamespace(X=mx[0], Y=mx[1], Z=0.0)
+
+
+class _Elem(object):
+    def __init__(self, box=None, raises=False):
+        self._box, self._raises = box, raises
+
+    def get_BoundingBox(self, view):
+        if self._raises:
+            raise RuntimeError("bbox unreadable (fake)")
+        return self._box
+
+
+def _with_collector(elems):
+    import contextlib
+    import sys
+
+    class _FEC(object):
+        def __init__(self, doc, view_id):
+            pass
+
+        def WhereElementIsNotElementType(self):
+            return list(elems)
+
+    @contextlib.contextmanager
+    def _cm():
+        fake = types.ModuleType("Autodesk.Revit.DB")
+        fake.FilteredElementCollector = _FEC
+        saved = sys.modules.get("Autodesk.Revit.DB")
+        sys.modules["Autodesk.Revit.DB"] = fake
+        try:
+            yield
+        finally:
+            if saved is None:
+                sys.modules.pop("Autodesk.Revit.DB", None)
+            else:
+                sys.modules["Autodesk.Revit.DB"] = saved
+    return _cm()
+
+
+def _identity_basis():
+    return types.SimpleNamespace(transform_to_view_uv=lambda p: (p[0], p[1]))
+
+
+def test_the_frame_covers_every_element_not_only_the_extent_drivers():
+    """A detail line or filled region far from any text draws in an uncropped
+    export, so it is inside the frame. An element with no bbox adds nothing;
+    one whose bbox will not read is warned, not guessed."""
+    from vop_interwoven.revit.view_basis import resolve_view_element_bounds
+    from tests.stage_a_capture_fakes import FakeDiag
+    elems = [_Elem(_Box((10, 10), (12, 11))),      # a text note
+             _Elem(_Box((-30, 5), (40, 5))),       # a long detail line
+             _Elem(None),                          # no bbox
+             _Elem(raises=True)]                   # unreadable
+    diag = FakeDiag()
+    view = types.SimpleNamespace(Id=_FakeElementId(VIEW_ID))
+    with _with_collector(elems):
+        b = resolve_view_element_bounds(None, view, _identity_basis(), 0.5, diag=diag)
+    assert (b.xmin, b.ymin, b.xmax, b.ymax) == (-30.5, 4.5, 40.5, 11.5)
+    assert [w["callsite"] for w in diag.warnings] == ["resolve_view_element_bounds"]
+    with _with_collector([_Elem(None)]):
+        assert resolve_view_element_bounds(None, view, _identity_basis(), 0.5) is None
+
+
+@pytest.mark.parametrize("stage_a", [True, False])
+def test_init_view_raster_frames_by_every_element_under_stage_a_only(
+        monkeypatch, tmp_path, stage_a):
+    """Control is stage_a=False: the geometry path keeps its extent-driver
+    bounds, unchanged."""
+    from vop_interwoven.core.math_utils import Bounds2D
+    import vop_interwoven.revit.view_basis as vb
+    monkeypatch.setattr(vb, "resolve_view_element_bounds",
+                        lambda *a, **k: Bounds2D(0, 0, 30, 20))
+    monkeypatch.setattr(vb, "resolve_annotation_only_bounds",
+                        lambda *a, **k: Bounds2D(5, 5, 6, 6))
+    monkeypatch.setattr(pipeline, "make_view_basis",
+                        lambda view, diag=None: _identity_basis())
+    view = _annotation_only_view("DraftingView")
+    raster = pipeline.init_view_raster(None, view, _make_cfg(tmp_path, stage_a))
+    b = raster.bounds_xy
+    expected = (0, 0, 30, 20) if stage_a else (5, 5, 6, 6)
+    assert (b.xmin, b.ymin, b.xmax, b.ymax) == expected

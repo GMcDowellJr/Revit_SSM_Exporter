@@ -1195,6 +1195,21 @@ def process_document_views(
                     # separate annotation call is skipped for it.
                     registered = bool(getattr(
                         cfg, "color_id_buffer_registered_capture", True))
+                    if stage_a_annotation_only and not registered:
+                        # A drafting view or a legend has no crop, so only the
+                        # registered capture can frame it: its ticks bound the
+                        # uncropped export. The two-pass fallback writes a crop
+                        # and has no ticks, so it could only fail here.
+                        registered = True
+                        if diag is not None:
+                            diag.warn(
+                                phase="pipeline",
+                                callsite="process_document_views",
+                                message="color_id_buffer_registered_capture is off, but "
+                                        "this view has no crop region; it is captured "
+                                        "by the registered capture regardless",
+                                view_id=view_id_int,
+                            )
                     if registered:
                         from .stage_a_registered_capture import (
                             export_registered_stage_a_view,
@@ -1788,7 +1803,18 @@ def init_view_raster(doc, view, cfg, diag=None):
     view_mode, _mode_reason = resolve_view_mode(view, diag=diag)
 
     if view_mode == VIEW_MODE_ANNOTATION_ONLY:
-        anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft_requested, cfg=cfg, diag=diag)
+        if bool(getattr(cfg, "enable_color_id_buffer_stage_a", False)):
+            # Stage A: these views have no crop region, so the capture renders
+            # everything they draw. The frame is therefore the bbox of EVERY
+            # element in the view plus one cell -- as the geometry exporter's
+            # view_raster crop was -- not the extent-driver annotations alone,
+            # which would leave detail lines, filled regions and legend
+            # components outside it.
+            from .revit.view_basis import resolve_view_element_bounds
+            anno_bounds = resolve_view_element_bounds(
+                doc, view, basis, cell_size_ft_requested, diag=diag)
+        else:
+            anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft_requested, cfg=cfg, diag=diag)
 
         if anno_bounds is None:
             # No driver annotations → deterministic small fallback to avoid huge grids
