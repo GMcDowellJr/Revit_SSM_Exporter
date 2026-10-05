@@ -381,6 +381,128 @@ def class_arrays(rec, arr, cmap):
     return out, records
 
 
+# --- derivations over the stored counts (A3) ---------------------------------------
+#
+# Presence and dominant type are DERIVED here, by the reader, from the counts
+# the grid and the derivation store (D-A3). Nothing below is stored in place
+# of a count.
+
+def family_counts(arrays, family, classes, fields, shape):
+    """``{class: {field: array}}`` for one family from a kinds npz's arrays; a
+    class with no array (no pixel in the view) is zeros, as the npz states."""
+    out = {}
+    for name in classes:
+        out[name] = {}
+        for f in fields:
+            a = arrays.get("{0}__{1}__{2}".format(family, name, f))
+            out[name][f] = (np.zeros(shape, dtype=np.int64) if a is None
+                            else np.asarray(a, dtype=np.int64))
+    return out
+
+
+def presence(counts, field, min_px=1):
+    """PURE. ``{class: bool array}``: the cells where the class holds at least
+    ``min_px`` of ``field``."""
+    if min_px < 1:
+        raise ValueError("min_px must be at least 1 (0 would call every cell present)")
+    return dict((name, by_field[field] >= min_px) for name, by_field in counts.items())
+
+
+def dominant(counts, field, order):
+    """PURE. Per cell, the class with the most ``field``.
+
+    Returns ``{"index": int array (position in ``order``; -1 where every class
+    is 0), "classes": order, "tie_cells": bool array, "ties": int}``. A tie --
+    two or more classes sharing the cell's nonzero maximum -- goes to the
+    class EARLIEST in ``order``, a declared fixed order, never to whichever
+    was read last; how many cells were decided that way is ``ties``."""
+    order = list(order)
+    missing = [c for c in order if c not in counts]
+    if missing:
+        raise ValueError("dominant(): classes {0} have no counts".format(missing))
+    stack = np.stack([np.asarray(counts[c][field]) for c in order])
+    best = stack.max(axis=0)
+    index = np.argmax(stack, axis=0).astype(np.int16)    # first maximum = earliest
+    empty = best <= 0
+    index[empty] = -1
+    tie_cells = ((stack == best[None]).sum(axis=0) > 1) & ~empty
+    return {"index": index, "classes": order, "tie_cells": tie_cells,
+            "ties": int(tie_cells.sum())}
+
+
+def legacy_anno_partition(counts, anno_present, order, inside=None):
+    """The geometry path's AnnoFinalCells_<bucket> on this grid: each cell the
+    annotation occupancy rule marks present goes to ONE bucket, its dominant
+    legacy bucket by ``occupancy_px`` (dominant()).
+
+    The geometry path's partition took the cell's FINAL anno_key -- the last
+    writer -- so it depended on draw order; this one is deterministic. Its
+    invariant (anno_types_sum_to_anno_present, metrics_manifest.v1.json) is
+    checked: a present cell with no bucket refuses."""
+    dom = dominant(counts, "occupancy_px", order)
+    lost = anno_present & (dom["index"] < 0)
+    if lost.any():
+        raise KindsRefusal("{0} annotation-present cells hold no legacy bucket's "
+                           "occupancy_px".format(int(lost.sum())))
+
+    def _over(mask):
+        sel = anno_present & mask
+        cells = dict(("AnnoFinalCells_" + name,
+                      int((sel & (dom["index"] == n)).sum())) for n, name in enumerate(order))
+        cells["AnnoPresentFinal"] = int(sel.sum())
+        cells["ties"] = int((sel & dom["tie_cells"]).sum())
+        cells["anno_types_sum_to_anno_present"] = (
+            sum(cells["AnnoFinalCells_" + n] for n in order) == cells["AnnoPresentFinal"])
+        return cells
+    out = {"all_cells": _over(np.ones(anno_present.shape, dtype=bool))}
+    if inside is not None:
+        out["inside_crop_a"] = _over(inside)
+    return out
+
+
+def class_cells(pres, inside):
+    """``{class: {"all_cells": n, "inside_crop_a": n}}`` from presence()."""
+    return dict((name, {"all_cells": int(m.sum()), "inside_crop_a": int((m & inside).sum())})
+                for name, m in pres.items())
+
+
+def derivations(families, arrays, grid_arrays, cmap, min_px=1):
+    """The derived products a kinds record carries, from the arrays it is
+    about to write and the grid's: cells_with_ink per class (presence of
+    ink_px at ``min_px``), the legacy annotation partition, and the legacy
+    ModelClassCells_* multihot (presence of model-class ink)."""
+    shape = grid_arrays["model_total"].shape
+    inside = grid_arrays["inside_crop_a"].astype(bool)
+    out = {"presence_min_px": min_px, "cells_with_ink": {},
+           "cells_with_ink_rule": "presence(<family>, ink_px, min_px): cells where the "
+                                  "class holds at least min_px ink pixels",
+           "tie_rule": "dominant(): ties go to the class earliest in the class map's "
+                       "declared order"}
+    for family, rec in families.items():
+        if rec.get("state") != "value":
+            continue
+        counts = family_counts(arrays, family, rec["classes"], rec["fields"], shape)
+        out["cells_with_ink"][family] = class_cells(presence(counts, "ink_px", min_px),
+                                                    inside)
+        if family == "legacy_bucket":
+            occ = grid_arrays["occupancy"]
+            present = np.isin(occ, (grid.OCCUPANCY_CODES["anno_only"],
+                                    grid.OCCUPANCY_CODES["overlap"]))
+            part = legacy_anno_partition(counts, present, rec["classes"], inside)
+            part["rule"] = ("each annotation-present cell (the grid's occupancy rule) to "
+                            "its dominant legacy bucket by occupancy_px")
+            part["note"] = ("The geometry path's AnnoFinalCells_* took each cell's final "
+                            "anno_key (the last writer), so it depended on draw order; "
+                            "dominant-by-px is deterministic. IMPORT_VIEW_OWNED is not a "
+                            "v1 bucket (A5).")
+            out["legacy_anno_partition"] = part
+        if family == "model_class":
+            out["model_class_cells_multihot"] = dict(
+                ("ModelClassCells_" + name, n) for name, n in
+                out["cells_with_ink"][family].items())
+    return out
+
+
 # --- the geometry path's channel shape (A4), labelled legacy ----------------------
 
 LEGACY_PARTITION_8 = ("Cells_Empty", "Cells_ModelOnly", "Cells_AnnoOnly", "Cells_ExtOnly",
@@ -487,13 +609,15 @@ def derive_view(grid_json, cmap_info, out_dir=None):
                       grid_npz_sha256=rec.get("npz_sha256"),
                       lattice_anchor=rec["grid"].get("lattice_anchor"))
         out, families = class_arrays(rec, arr, cmap)
+        derived = derivations(families, out, arr, cmap)
         part, shape = legacy_channel_shape(arr)
         out["legacy_source_partition_8"] = part
         if npz_path.exists():
             npz_path.unlink()
         np.savez_compressed(npz_path, **out)
         record.update({
-            "status": "value", "families": families, "channel_shape_legacy": shape,
+            "status": "value", "families": families, "derived": derived,
+            "channel_shape_legacy": shape,
             "npz": npz_path.name, "npz_sha256": sha256_file(npz_path),
             "layout": "arrays are (cells_h, cells_w) on the grid's cells (row 0 is "
                       "j_range[0]); <family>__<class>__<field>; a class absent from the "

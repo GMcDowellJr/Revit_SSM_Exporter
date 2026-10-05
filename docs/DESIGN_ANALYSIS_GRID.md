@@ -496,3 +496,30 @@ ANNOTATION layer (D1). The geometry path counted it as Model + Ext. It is
 folded into neither: its annotation class is `import_view_owned`, and its
 legacy bucket is `IMPORT_VIEW_OWNED`, which is marked `not_in_v1`. The
 disposition is Greg's and is open.
+
+## A3: derivations over stored counts (2026-10-05)
+
+Pure functions in `tools/stage_a_kinds.py`. Each runs on the counts the grid
+and the derivation store, and nothing it returns is stored in place of a
+count.
+
+- `presence(counts, field, min_px)`: per class, the cells holding at least
+  `min_px` of `field`. A threshold of 0 is refused, because it would mark
+  every cell present.
+- `dominant(counts, field, order)`: per cell, the class with the most
+  `field`; −1 where every class is 0. A tie goes to the class earliest in
+  `order`, a DECLARED fixed order (the class map's `classes` list), and the
+  number of cells decided that way is reported (`ties`).
+- `legacy_anno_partition`: the geometry path's `AnnoFinalCells_<bucket>`.
+  Each cell that the annotation occupancy rule marks present goes to its
+  dominant legacy bucket by `occupancy_px`. The geometry path's partition
+  used each cell's FINAL `anno_key`, the last writer, so it depended on draw
+  order. Dominant-by-px is deterministic. Its invariant,
+  `anno_types_sum_to_anno_present`, holds by construction (every present cell
+  has occupancy_px ≥ 1 in some bucket), and the code checks it: a present
+  cell with no bucket refuses.
+
+`derive` records `derived.cells_with_ink` (presence of ink at
+`presence_min_px` = 1), `derived.legacy_anno_partition` and
+`derived.model_class_cells_multihot` (`ModelClassCells_*` as presence of
+model-class ink), over all cells and inside crop A.
