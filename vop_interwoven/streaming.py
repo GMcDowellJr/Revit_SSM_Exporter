@@ -285,10 +285,13 @@ class StreamingExporter:
                 (date_override if is_dt else run_dt).strftime("%Y-%m-%d"),
                 view_ids, self.config_hash, run_tag=None if is_dt else tag)
             self.run_meta_path = write_run_meta(self.run_meta, output_dir)
-        if export_png:
+        # Stage A returns from on_view_complete before either PNG export, so
+        # it writes nothing to vop_raster/ or view_raster/ -- and creates
+        # neither folder.
+        if export_png and not self.stage_a:
             self.png_dir = os.path.join(output_dir, "vop_raster")
             os.makedirs(self.png_dir, exist_ok=True)
-        if export_view_raster:
+        if export_view_raster and not self.stage_a:
             self.view_raster_dir = os.path.join(output_dir, "view_raster")
             os.makedirs(self.view_raster_dir, exist_ok=True)
         
@@ -312,13 +315,8 @@ class StreamingExporter:
         os.makedirs(perf_output_dir, exist_ok=True)
 
         # Core CSV
-        if isinstance(self.date_override, datetime):
-            date_str = self.date_override.strftime("%Y-%m-%d")
-        elif isinstance(self.date_override, str):
-            date_str = self.date_override
-        else:
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            
+        from vop_interwoven.run_meta import output_date_str
+        date_str = output_date_str(self.date_override)
         self.date_str = date_str
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(csv_output_dir, core_filename)

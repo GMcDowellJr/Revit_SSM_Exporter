@@ -43,7 +43,7 @@ def test_the_pipeline_stamps_and_scopes_by_the_exporters_run_id():
     it, and the pipeline's own run_id is per CALL (one per view)."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "vop_interwoven", "pipeline.py")).read()
-    block = src[src.index('diag_filename = f"views_diagnostics_{date_str}.json"'):]
+    block = src[src.index('diag_filename = f"views_diagnostics_{file_date_str}.json"'):]
     block = block[:block.index("json.dump(payload, f, indent=2)")]
     assert 'exporter_run_id = getattr(cfg, "_view_element_map_run_id", None)' in src
     assert '"exporter_run_id": exporter_run_id' in block

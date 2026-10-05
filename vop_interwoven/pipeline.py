@@ -694,6 +694,10 @@ def process_document_views(
 
     date_str = run_dt.strftime("%Y-%m-%d")
     run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+    # Filenames take the override as views_core does (a tag stays the tag);
+    # date_str above stays a date for the payload's "date" field.
+    from .run_meta import output_date_str
+    file_date_str = output_date_str(date_override, now=run_dt)
 
     # ────────────────────────────────────────────────────────────────────
     # Persistent view-level cache (disk-backed)
@@ -1631,7 +1635,7 @@ def process_document_views(
     if (elem_cache is not None and getattr(cfg, "element_cache_export_csv", True)
             and output_dir is not None):
         try:
-            analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
+            analysis_path = os.path.join(output_dir, f"vop_view_element_map_{file_date_str}.json")
             exported = elem_cache.export_view_element_map_json(
                 analysis_path,
                 view_elements=view_elements,
@@ -1670,7 +1674,7 @@ def process_document_views(
             if not diagnostics_output_dir:
                 raise ValueError("No diagnostics output directory configured (cfg.output_dir / view_diagnostics_output_dir)")
 
-            diag_filename = f"views_diagnostics_{date_str}.json"
+            diag_filename = f"views_diagnostics_{file_date_str}.json"
             diag_path = os.path.join(diagnostics_output_dir, diag_filename)
 
             exporter_run_id = getattr(cfg, "_view_element_map_run_id", None)

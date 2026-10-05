@@ -24,6 +24,24 @@ RUN_META_FILENAME = "run_meta.json"
 EXPORTER_VERSION = "vop_interwoven"
 
 
+def output_date_str(date_override, now=None):
+    """The date part of every dated per-run filename (views_core_<d>.csv,
+    views_diagnostics_<d>.json, vop_view_element_map_<d>.json).
+
+    A datetime is formatted; a string is used as given (a tag such as
+    "PR_221" names the files, exactly as views_core always has); nothing
+    means today. ONE function, so the streaming exporter and the pipeline
+    cannot name one run's files differently again -- the pipeline used to
+    parse the override and fall back to today when it was not a date.
+    """
+    from datetime import datetime
+    if isinstance(date_override, datetime):
+        return date_override.strftime("%Y-%m-%d")
+    if isinstance(date_override, str) and date_override.strip():
+        return date_override.strip()
+    return (now or datetime.now()).strftime("%Y-%m-%d")
+
+
 def _value(v):
     return {"state": "value", "value": v}
 
