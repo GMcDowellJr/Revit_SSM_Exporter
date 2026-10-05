@@ -69,6 +69,10 @@ def test_the_maps_class_lists_are_the_geometry_paths(cmap_info):
     (_key(element_class="RoomTag", category="Room Tags"), "tag", "TAG"),
     (_key(element_class="Dimension", category="Dimensions"), "dimension", "DIM"),
     (_key(element_class="SpotDimension", category="Spot Elevations"), "dimension", "OTHER"),
+    # Run 1005_1018: linear dimensions are recorded as the subclass.
+    (_key(element_class="LinearDimension", category="Dimensions"), "dimension", "DIM"),
+    (_key(element_class="AngularDimension", category="Dimensions"), "dimension", "DIM"),
+    (_key(element_class="RadialDimension", category="Dimensions"), "dimension", "DIM"),
     (_key(element_class="DetailLine", category="Lines"), "detail_line", "LINES"),
     (_key(element_class="AnnotationSymbol", category="Generic Annotations"),
      "generic_annotation", "TAG"),

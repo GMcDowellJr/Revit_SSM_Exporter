@@ -14,8 +14,8 @@
   },
   "class_map": {
     "path": "tools/maps/stage_a_class_map.v1.json",
-    "version": "1",
-    "sha256": "29f0efb6e144ca3f596abaea0ddbbe83aa80a864bcf7e879616fff9ef0e2eca8",
+    "version": "1.1",
+    "sha256": "88a70a2bf2cb242f5595ab17a106d659a9fea657359690c5e75d8b452a550a19",
     "rule": "every kinds record and the roll-up record the sha256 they used; a roll-up leaves class columns empty for a derivation made under another map"
   },
   "families": {
@@ -173,7 +173,7 @@
       "parameters": {
         "class_map": "tools/maps/stage_a_class_map.v1.json"
       },
-      "class_map_version": "1",
+      "class_map_version": "1.1",
       "lattice_anchor": "view_uv"
     },
     {
@@ -184,7 +184,7 @@
       "parameters": {
         "min_ink_px": 1
       },
-      "class_map_version": "1",
+      "class_map_version": "1.1",
       "lattice_anchor": "view_uv"
     },
     {
@@ -195,7 +195,7 @@
       "parameters": {
         "min_px": 1
       },
-      "class_map_version": "1",
+      "class_map_version": "1.1",
       "lattice_anchor": "view_uv"
     },
     {
@@ -215,7 +215,7 @@
           "IMPORT_VIEW_OWNED"
         ]
       },
-      "class_map_version": "1",
+      "class_map_version": "1.1",
       "lattice_anchor": "view_uv"
     },
     {
@@ -226,7 +226,7 @@
       "parameters": {
         "min_px": 1
       },
-      "class_map_version": "1",
+      "class_map_version": "1.1",
       "lattice_anchor": "view_uv"
     }
   ],
