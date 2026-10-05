@@ -47,14 +47,21 @@ def _core_name(tmp_path, date_override):
 
 
 # "PR_221" is the case that diverged; "20261001" parsed to 2026-10-01 in the
-# pipeline while views_core kept it raw. "2026-09-29" is the control: it
-# agreed before the fix too, so it shows the fixture is not vacuous.
-@pytest.mark.parametrize("override", ["PR_221", "20261001", "2026-09-29"])
-def test_pipeline_files_carry_the_same_date_as_views_core(monkeypatch, tmp_path, override):
+# pipeline while views_core kept it raw; an ISO datetime must not put its
+# colons into a filename. "2026-09-29" is the control: it agreed before the
+# fix too, so it shows the fixture is not vacuous.
+@pytest.mark.parametrize("override,expected", [
+    ("PR_221", "PR_221"),
+    ("20261001", "2026-10-01"),
+    ("2026-10-01T12:34:56", "2026-10-01"),
+    ("2026-09-29", "2026-09-29"),
+])
+def test_pipeline_files_carry_the_same_date_as_views_core(monkeypatch, tmp_path,
+                                                          override, expected):
     core = _core_name(tmp_path / "core", override)
     diag, emap = _pipeline_names(monkeypatch, tmp_path / "pipe", override)
     suffix = core[len("views_core_"):-len(".csv")]
-    assert suffix == override
+    assert suffix == expected
     assert diag == ["views_diagnostics_%s.json" % suffix], diag
     # The fixture's element cache may not export a map; when it does, it must agree.
     assert emap in ([], ["vop_view_element_map_%s.json" % suffix]), emap
@@ -64,6 +71,9 @@ def test_output_date_str_shapes():
     from datetime import datetime
     assert output_date_str(datetime(2026, 1, 2, 3, 4)) == "2026-01-02"
     assert output_date_str(" PR_221 ") == "PR_221"
+    assert output_date_str("20261001") == "2026-10-01"
+    assert output_date_str("2026-10-01T12:34:56") == "2026-10-01"
+    assert output_date_str("2026-13-45") == "2026-13-45"   # not a date: a tag
     assert output_date_str(None, now=datetime(2026, 10, 5)) == "2026-10-05"
     assert output_date_str("", now=datetime(2026, 10, 5)) == "2026-10-05"
 
