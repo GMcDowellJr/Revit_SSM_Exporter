@@ -1957,8 +1957,17 @@ STAGE_A_DATUM_BIC_NAMES = (
 # IN the view. Each is left in the model pass (basis "own_view_reference")
 # and counted. Heads and marks that are not separate elements match nothing
 # here, measured per category exactly as the datum heads are.
+#
+# THE ELEVATION MARKER'S BODY (probe Q7, run 20261005T084311). An elevation
+# marker is two elements: the viewer (OST_Viewers, the arrow and number) and
+# the ElevationMarker itself, which carries the reference text. The marker is
+# category -2000535 "Elevations" -- not OST_ElevationMarks -- so on CABINET
+# TYPES all 15 fell to the model pass (no_owner_view) and their text came out
+# black. Painting them colours the whole body, text included (Q7 S1: 1224 px
+# of black removed, none left on the markers).
 STAGE_A_VIEW_REFERENCE_BIC_NAMES = (
     "OST_Viewers",
+    "OST_Elevations",
     "OST_ElevationMarks",
     "OST_SectionHeads",
     "OST_CalloutHeads",
