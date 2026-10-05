@@ -340,7 +340,10 @@ def split_crop_bands(sidecar):
     count the hidden middle as the view's."""
     payload = sidecar.get("registration_marks")
     rec = payload.get("split_crop") if isinstance(payload, dict) else None
-    if not isinstance(rec, dict) or rec.get("state") in (None, "not_split"):
+    # "no_crop_region": a drafting view or a legend, which has no crop to
+    # split; the whole frame is the view.
+    if not isinstance(rec, dict) or rec.get("state") in (None, "not_split",
+                                                         "no_crop_region"):
         return None
     if rec.get("state") != "removed":
         raise GridRefusal("the view's crop is split and the capture did not take it "

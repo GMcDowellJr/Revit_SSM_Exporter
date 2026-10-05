@@ -52,6 +52,10 @@ NEAR_WHITE_RESERVED_THRESHOLD = 224
 VIEW_ONLY_MODEL_BIC_NAMES = (
     "OST_DetailComponents",  # Detail Items: 2D symbols placed per-view, no 3D form
     "OST_Lines",             # Model Lines & Detail Lines share this category; neither has fill/area
+    # Legend Components: exist only in Legend views, owned by the view, and
+    # report CategoryType.Model (recorded in collection_policy). Without this
+    # entry the model pass of a legend would leave them visible and unpainted.
+    "OST_LegendComponents",
 )
 
 # Vetted colorable categories -- the FROZEN capture of
@@ -972,7 +976,7 @@ def _model_categories_in_linked_doc(linked_doc, is_colorable):
         Areas, MEP Spaces and Point Clouds are all in collection_policy's
         _EXCLUDED_BIC_NAMES_GLOBAL and all report CategoryType.Model, while
         _hidden_category_state() hides only CategoryType.Annotation plus the
-        two VIEW_ONLY_MODEL_BIC_NAMES entries. Nothing collects them, nothing
+        VIEW_ONLY_MODEL_BIC_NAMES entries. Nothing collects them, nothing
         paints them, nothing hides them. (Confirmed by reading those two
         lists against each other, not assumed.)
 
@@ -3347,9 +3351,24 @@ def crop_write_fault(crop_write):
     * ``authored_crop_unreadable`` -- an active authored crop that would not
       read, so the export renders a crop nothing recorded;
     * ``authored_crop_changed`` -- not written, and the crop read at the
-      export is not the one the lattice was sized on.
+      export is not the one the lattice was sized on;
+    * nothing, for a view with no crop region (``source``
+      "no_crop_region"): a drafting view or a legend, whose frame the
+      registration ticks bound instead;
+    * ``crop_write_failed`` -- the crop the lattice was sized on was to be
+      written and could not be: the write raised, or the view has no CropBox
+      to write (``write_error``). The export then renders whatever extent
+      Revit chooses, which is not crop A. A drafting view or a legend is
+      where this is expected if Revit refuses them a crop. (The model pass
+      records it; the annotation pass already faults the same case as
+      ``annotation_frame_not_applied``.)
     """
     if not crop_write:
+        return None
+    if crop_write.get("write_error"):
+        return "crop_write_failed"
+    if crop_write.get("source") == "no_crop_region" and not crop_write.get("written"):
+        # Nothing to write and nothing to read back: the view has no crop.
         return None
     read_back = crop_write.get("read_back") or {}
     if crop_write.get("written"):
@@ -3393,9 +3412,21 @@ def resolve_crop_a(view, raster, diag=None, view_id=None):
     when there is no raster frame to resolve anything in.
     """
     from .core.math_utils import Bounds2D
+    from .revit.view_basis import supports_crop_region
     frame = getattr(raster, "anno_frame_bounds", None) or getattr(raster, "bounds_xy", None)
     if frame is None:
         raise ValueError("no raster frame to resolve crop A in")
+    if not supports_crop_region(view):
+        # A drafting view or a legend has no crop region: nothing is read
+        # (CropBoxActive included) and nothing is written. Crop A is the
+        # raster frame -- the bbox of every element in the view -- and the
+        # registered capture draws its ticks ON that rectangle's edges, so
+        # the uncropped export's drawn extent is crop A (``source``
+        # "no_crop_region", ``write`` False).
+        return (float(frame.xmin), float(frame.ymin),
+                float(frame.xmax), float(frame.ymax)), {
+                    "authored_crop_active": None, "source": "no_crop_region",
+                    "write": False}
     record = {"authored_crop_active": None}
     try:
         record["authored_crop_active"] = bool(view.CropBoxActive)
@@ -4138,8 +4169,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         orig_crop_box = None
         orig_crop_box_active = None
         try:
-            orig_crop_box = view.CropBox
-            orig_crop_box_active = bool(view.CropBoxActive)
+            # Nothing to restore on a view with no crop region: never written.
+            if (crop_a_record or {}).get("source") != "no_crop_region":
+                orig_crop_box = view.CropBox
+                orig_crop_box_active = bool(view.CropBoxActive)
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -4246,7 +4279,22 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         crop_write_attempted = False
         _crop_fpp = geom["achieved_fpp_ft"] if geom is not None else None
         try:
-            if crop_a_record is not None and not crop_a_record.get("write", True):
+            if (crop_a_record or {}).get("source") == "no_crop_region":
+                # A drafting view or a legend: no crop to write or read. The
+                # registered capture's ticks sit on crop A's edges, so the
+                # uncropped export renders crop A; the registration fit
+                # measures that rather than this record assuming it.
+                crop_write = {"written": False, "source": "no_crop_region",
+                              "rendered_extent": "bounded_by_registration_marks"}
+                crop_bounds_xy = tuple(float(v) for v in crop_uv)
+                if getattr(raster, "bounds_xy", None) is not None:
+                    model_crop_offset_uv = (
+                        crop_bounds_xy[0] - float(raster.bounds_xy.xmin),
+                        crop_bounds_xy[1] - float(raster.bounds_xy.ymin),
+                        crop_bounds_xy[2] - float(raster.bounds_xy.xmax),
+                        crop_bounds_xy[3] - float(raster.bounds_xy.ymax),
+                    )
+            elif crop_a_record is not None and not crop_a_record.get("write", True):
                 # D: an ACTIVE authored crop is never written -- not even with
                 # the identical box (Plaza 6112047: 8.8 % of pixels changed).
                 # The export renders it as it is; crop_uv is what it reads.
@@ -4333,6 +4381,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             type(ex).__name__, ex)
                 else:
                     model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+                    # A fault, not only a warning: the lattice was sized on
+                    # crop A and the export will not render it.
+                    crop_write = {
+                        "written": False,
+                        "source": (crop_a_record or {}).get("source", "model_crop"),
+                        "write_error": "the view has no CropBox to write",
+                    }
                     if diag is not None:
                         diag.warn(
                             phase="color_id_buffer",
@@ -4354,6 +4409,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         except Exception as ex:
             crop_bounds_xy = None
             model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+            # Recorded, so crop_write_fault fails the capture: it used to be a
+            # warning only, and a view whose crop Revit refuses (a drafting
+            # view, a legend) shipped an uncropped export as a clean capture.
+            crop_write = dict(crop_write or {
+                "written": False,
+                "source": (crop_a_record or {}).get("source", "model_crop"),
+            })
+            crop_write["write_attempted"] = bool(crop_write_attempted)
+            crop_write["write_error"] = "{0}: {1}".format(type(ex).__name__, ex)
             if diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
@@ -5470,7 +5534,7 @@ def _model_category_hidden_state(doc, view, diag=None, view_id=None):
     a gap: this hides every category Revit classifies as CategoryType.Model
     EXCEPT the VIEW_ONLY_MODEL_BIC_NAMES entries, which carry a Model label
     but no 3D presence and are annotation content in every sense that matters
-    here (detail items, detail lines).
+    here (detail items, detail lines, legend components).
 
     Between the two functions every Model and Annotation category is hidden in
     exactly one pass, which is what makes "the model TIFF holds no annotation
@@ -5667,8 +5731,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                            raster=None, elements=None,
                                            authored_check_exclude_ids=None,
                                            reserve_tick_colour=False,
-                                           mark_ids=None):
+                                           mark_ids=None, blank_ids=None):
     """Export one view's ANNOTATION color ID buffer, over frame B.
+
+    ``blank_ids``: lines the capture drew itself that must not be ink (the
+    frame bounds of a view with no crop region). Painted WHITE, given no
+    palette entry and left out of color_assignment_map, as the ticks are.
 
     Args:
         geom: the MODEL pass's frame_export_geometry() result, handed in
@@ -5829,7 +5897,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # -- and a view with an active crop keeps it untouched.
     crop_applied = {"frame_b": "frame_b", "untouched": "none"}.get(anno_crop_mode)
     authored_crop_active = None
-    if anno_crop_mode == "authored_else_crop_a":
+    from .revit.view_basis import supports_crop_region
+    no_crop_region = not supports_crop_region(view)
+    if no_crop_region:
+        # A drafting view or a legend has no crop region, so whatever the
+        # mode, nothing is written: "none", and the rendered rectangle is
+        # measured from the registration ticks.
+        crop_applied = "none"
+    elif anno_crop_mode == "authored_else_crop_a":
         try:
             authored_crop_active = bool(view.CropBoxActive)
         except Exception as ex:
@@ -5930,9 +6005,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # are found by ONE colour in both captures, never by a palette colour that
     # text anti-aliasing can also produce (run 1001-1950).
     _mark_ints = set(int(i) for i in (mark_ids or ()))
-    element_ids = [eid for eid in resolved_ids if eid.IntegerValue not in _mark_ints]
+    _blank_ints = set(int(i) for i in (blank_ids or ()))
+    element_ids = [eid for eid in resolved_ids
+                   if eid.IntegerValue not in _mark_ints
+                   and eid.IntegerValue not in _blank_ints]
     painted_mark_ids = [eid.IntegerValue for eid in resolved_ids
                         if eid.IntegerValue in _mark_ints]
+    painted_blank_ids = [eid.IntegerValue for eid in resolved_ids
+                         if eid.IntegerValue in _blank_ints]
     palette, step, palette_reservation = stage_a_palette(
         len(element_ids), step, reserve_tick_colour=reserve_tick_colour)
     color_map = {element_ids[i].IntegerValue: palette[i]
@@ -5942,6 +6022,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         for _mid in painted_mark_ids:
             color_map[_mid] = tuple(_MARK_COLOUR)
     palette_reservation["mark_ids_painted"] = sorted(painted_mark_ids)
+    for _bid in painted_blank_ids:
+        color_map[_bid] = (255, 255, 255)
+    palette_reservation["blank_ids_painted"] = sorted(painted_blank_ids)
 
     # ---- bbox records (Stage A step 4) ---------------------------------
     #
@@ -6080,8 +6163,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         orig_crop_box = None
         orig_crop_box_active = None
         try:
-            orig_crop_box = view.CropBox
-            orig_crop_box_active = bool(view.CropBoxActive)
+            # Nothing to restore on a view with no crop region: never written.
+            if not no_crop_region:
+                orig_crop_box = view.CropBox
+                orig_crop_box_active = bool(view.CropBoxActive)
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -6696,6 +6781,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "crop_write": crop_write,
             "rendered_uv_reason": (
                 None if crop_bounds_xy is not None else (
+                    "the view has no crop region (a drafting view or a legend), so "
+                    "the export renders everything it draws and the rendered "
+                    "rectangle must be MEASURED (registration marks)"
+                    if no_crop_region else
                     "the view's authored crop was left as found and no rectangle "
                     "was handed to Revit, so the rendered rectangle is Revit's "
                     "choice and must be MEASURED (registration marks), not read "
@@ -6713,7 +6802,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # are MARK_COLOUR, named under palette_reservation.mark_ids_painted.
         "color_assignment_map": {
             str(eid): list(color_map[eid]) for eid in color_map
-            if eid not in _mark_ints
+            if eid not in _mark_ints and eid not in _blank_ints
         },
         "color_assignment_count": len(element_ids),
         # M1: what this pass collected and did NOT paint because the view

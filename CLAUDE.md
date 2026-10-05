@@ -166,6 +166,35 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   category (`view_reference_category`), as grids and levels do
   (`datum_category`); the view's own crop-region element, named like the view,
   stays in the model pass (`own_view_reference`).
+- **Drafting views and legends are captured by Stage A too** (2026-10-05):
+  `resolve_view_mode` calls them ANNOTATION_ONLY, and under Stage A they take
+  the registered capture (always, even with the fallback configured) with
+  **no model elements** collected. They have **no crop region**
+  (`view_basis.supports_crop_region()`, the one predicate), so no crop is
+  read or written in either pass (`crop_write.source: "no_crop_region"`,
+  `crop_applied: "none"`), and the split and crop read-backs are skipped.
+  Their frame is the bbox of EVERY element in the view plus one cell
+  (`resolve_view_element_bounds()`, as the geometry exporter's crop was), not
+  the extent-driver bounds. The uncropped export renders the DRAWN extent,
+  so two short WHITE detail lines at opposite corners of the frame
+  (`registration_marks.frame_bounds`, `stage_a_registration.frame_bound_segments`)
+  set it to the frame in both captures: white on white in the one-cell pad,
+  never ink, out of the palette and `color_assignment_map` (`blank_ids`).
+  The ticks keep their ordinary inset. Run 1005_0947 measured both halves:
+  ticks placed ON the frame edge were lost on the derived axis (the edge row
+  rounds off the image; RCP GENERAL NOTES lost all four horizontal corner
+  ticks and would not register), while the export's extent still matched the
+  frame to 0.52 px -- Revit sizes it from the lines' geometry, not from
+  surviving pixels. Run 1005_1018 (`e998b46`, same views) confirmed the
+  fix: both views 12/12 ticks in both captures, ticks within 0.56 px of the
+  recorded lattice, identity annotation->model transform, no faults, 0 px of
+  non-tick ink in either model capture (legend components hidden), and both
+  grid with no flags. Every element is view-owned, so the annotation pass
+  paints all of it. `OST_LegendComponents` (Model-typed) is on
+  `VIEW_ONLY_MODEL_BIC_NAMES`, hidden in the model pass only.
+  `tools/stage_a_grid.py` reads `split_crop.state "no_crop_region"` as
+  unsplit. Elsewhere, a model-pass crop write that raises or finds no CropBox
+  is `crop_write_failed` (it used to be a warning only).
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
   unpainted and counted per category under `not_painted`.

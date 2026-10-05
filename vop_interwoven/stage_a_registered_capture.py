@@ -217,19 +217,28 @@ def remove_split_for_capture(doc, view, crop_uv, Transaction, TransactionStatus,
 def view_state(view, primary=None):
     """What the capture writes and the rollback must put back, read. With a
     ``primary`` (a dependent view's), its template too: the passes detach
-    a dependent view's template there."""
+    a dependent view's template there.
+
+    A view with no crop region (a drafting view or a legend) has no crop for
+    the capture to write, so none is read: an unreadable crop there would
+    read as "unverified" and fail a capture that never touched it."""
+    from .revit.view_basis import supports_crop_region
+
     def _crop_box():
         box = view.CropBox
         return {"min": _xyz(box.Min), "max": _xyz(box.Max)}
     state = {
         "view_template_id": _read(lambda: _element_id_int(view.ViewTemplateId)),
         "display_style": _read(lambda: str(view.DisplayStyle)),
-        "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
-        "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
-        "crop_box": _read(_crop_box),
-        # Q7: the capture un-splits a split crop; the rollback must put it back.
-        "split_crop": _read(lambda: split_crop_state(view)),
     }
+    if supports_crop_region(view):
+        state.update({
+            "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
+            "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
+            "crop_box": _read(_crop_box),
+            # Q7: the capture un-splits a split crop; the rollback must put it back.
+            "split_crop": _read(lambda: split_crop_state(view)),
+        })
     if primary is not None:
         state["primary_view_template_id"] = _read(
             lambda: _element_id_int(primary.ViewTemplateId))
@@ -273,6 +282,17 @@ def mark_reference_rectangle(view, raster, diag=None, view_id=None):
     crop when it is active, else the model pass's crop A
     (``raster.model_clip_bounds``), else the raster frame. Never a guess: a
     view with none of them returns ``(None, reason)``."""
+    from .revit.view_basis import supports_crop_region
+    if not supports_crop_region(view):
+        # A drafting view or a legend: the marks go inside crop A -- the one
+        # rectangle the model pass is sized on -- and the frame-bound lines
+        # on its corners bound the uncropped export to it.
+        from .color_id_buffer import resolve_crop_a
+        try:
+            uv, _record = resolve_crop_a(view, raster, diag=diag, view_id=view_id)
+            return tuple(uv), "no_crop_region_frame"
+        except ValueError as ex:
+            return None, "no crop region and no raster frame: {0}".format(ex)
     basis = getattr(raster, "view_basis", None)
     try:
         if bool(view.CropBoxActive) and basis is not None:
@@ -337,6 +357,25 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
                    "excluded_imports": excluded_imports,
                    "read_errors": len(errors), "first_error": errors[0] if errors else None,
                    "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
+
+
+# Revit refuses a curve shorter than Application.ShortCurveTolerance
+# (about 1/32 in, 0.00256 ft, on current hosts); used when it will not read.
+SHORT_CURVE_TOLERANCE_FALLBACK_FT = 0.00256
+
+
+def frame_bound_length_ft(doc, fpp_ft):
+    """``(length_ft, tolerance_basis)``: the frame-bound lines' length,
+    FRAME_BOUND_LENGTH_PX on the model lattice and never under four times the
+    host's short-curve tolerance; the basis says whether that was read."""
+    from .stage_a_registration import FRAME_BOUND_LENGTH_PX
+    try:
+        tolerance = float(doc.Application.ShortCurveTolerance)
+        basis = "read"
+    except Exception as ex:
+        tolerance = SHORT_CURVE_TOLERANCE_FALLBACK_FT
+        basis = "fallback ({0}: {1})".format(type(ex).__name__, ex)
+    return max(FRAME_BOUND_LENGTH_PX * float(fpp_ft), 4.0 * tolerance), basis
 
 
 def nominal_fpp_ft(view, cfg):
@@ -548,6 +587,9 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # Q7: a split crop, un-split for the capture, and the view-UV bands
         # the view actually SHOWS. tools/stage_a_grid.py keeps only those.
         "split_crop": record.get("split_crop"),
+        # A view with no crop region: the two WHITE lines that bound its
+        # export to crop A (None for every other view).
+        "frame_bounds": record.get("frame_bounds"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
@@ -600,6 +642,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     model_out = None
     anno_out = None
     model_member_ids = []
+    # The frame-bound lines of a view with no crop region: drawn by the
+    # capture, WHITE in both passes, rolled back with the ticks.
+    bound_ids = []
+    has_crop_region = True
     membership_before = None
     detail_lines = {"ids": [], "hidden": []}
 
@@ -667,14 +713,21 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # middle's elements too (Q7: 826 against 820), and the read-back
         # after the rollback must compare like with like.
         _t = time.time()
-        _crop_uv, _crop_err = (None, None)
-        if getattr(raster, "view_basis", None) is not None:
-            from .color_id_buffer import read_crop_uv
-            _crop_uv, _crop_err = read_crop_uv(view, raster.view_basis, diag=diag,
-                                               view_id=view_id)
-        record["split_crop"] = remove_split_for_capture(
-            doc, view, _crop_uv, Transaction, TransactionStatus, diag=diag,
-            view_id=view_id, fault=_fault)
+        from .revit.view_basis import supports_crop_region
+        has_crop_region = supports_crop_region(view)
+        record["crop_region"] = has_crop_region
+        if has_crop_region:
+            _crop_uv, _crop_err = (None, None)
+            if getattr(raster, "view_basis", None) is not None:
+                from .color_id_buffer import read_crop_uv
+                _crop_uv, _crop_err = read_crop_uv(view, raster.view_basis, diag=diag,
+                                                   view_id=view_id)
+            record["split_crop"] = remove_split_for_capture(
+                doc, view, _crop_uv, Transaction, TransactionStatus, diag=diag,
+                view_id=view_id, fault=_fault)
+        else:
+            # A drafting view or a legend: no crop, so nothing can be split.
+            record["split_crop"] = {"state": "no_crop_region"}
         record["timings_ms"]["split_remove"] = round((time.time() - _t) * 1000.0, 3)
 
         # ---- 0b: B -- a view that hides OST_Lines -------------------------
@@ -715,6 +768,21 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             marks = registration.create_registration_marks(
                 doc, view, getattr(raster, "view_basis", None), layout,
                 diag=diag, view_id=view_id)
+            if not has_crop_region:
+                # No crop: the export renders the drawn extent, so two WHITE
+                # lines at opposite corners of crop A set it to crop A in
+                # both captures (stage_a_registration's FRAME BOUNDS note).
+                bound_length, tolerance_basis = frame_bound_length_ft(doc, mark_fpp)
+                bound_layout = (registration.frame_bound_segments(reference, bound_length)
+                                if reference is not None else
+                                {"state": "unavailable", "reason": source})
+                bounds = registration.create_registration_marks(
+                    doc, view, getattr(raster, "view_basis", None), bound_layout,
+                    diag=diag, view_id=view_id, colour=registration.WHITE)
+                bounds["short_curve_tolerance"] = tolerance_basis
+                record["frame_bounds"] = bounds
+                bound_ids.extend(b.get("id") for b in bounds.get("created") or []
+                                 if b.get("id") is not None)
             if tx.Commit() != TransactionStatus.Committed:
                 raise RuntimeError("marks Transaction.Commit did not commit")
         except Exception:
@@ -722,6 +790,23 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             raise
         record["timings_ms"]["marks_create"] = round((time.time() - _t) * 1000.0, 3)
         record["marks"] = marks
+        if not has_crop_region:
+            fb = record.get("frame_bounds") or {}
+            if fb.get("created_count") != 2 or fb.get("line_style_not_applied"):
+                _fault("frame_bounds_incomplete",
+                       "the view has no crop region and {0} of 2 frame-bound lines "
+                       "were drawn ({1}); the export's extent is not crop A".format(
+                           fb.get("created_count"), fb.get("reason")))
+            # A bound whose WHITE override did not take draws in its native
+            # colour: ink in the model capture that no palette owns (Codex,
+            # PR #227).
+            unpainted = [b for b in fb.get("created") or [] if not b.get("painted")]
+            if unpainted:
+                _fault("frame_bounds_not_white",
+                       "{0} frame-bound line(s) could not be painted white and may "
+                       "draw as unassigned ink: {1}".format(
+                           len(unpainted),
+                           [(b.get("id"), b.get("paint_error")) for b in unpainted]))
         if marks.get("created_count") != marks.get("expected_count") or not marks.get(
                 "expected_count"):
             _fault("registration_marks_incomplete",
@@ -867,7 +952,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             # was exactly the 12 ticks).
             anno_out = export_annotation_color_id_buffer_view(
                 doc, view, anno_cfg, geom, diag=diag, raster=raster,
-                authored_check_exclude_ids=_mark_ids,
+                authored_check_exclude_ids=_mark_ids + bound_ids,
+                # The frame bounds are WHITE here too: never ink, never
+                # in the palette or color_assignment_map.
+                blank_ids=bound_ids,
                 # The reserved tick colour (Greg, 2026-10-02): the ticks are
                 # MARK_COLOUR here as in the model pass, and neither palette
                 # hands out a look-alike.
@@ -909,7 +997,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                    "after the rollback these did not read back as before: "
                    "{0}".format(bad))
         mark_ids = [m.get("id") for m in (record.get("marks") or {}).get("created") or []
-                    if m.get("id") is not None]
+                    if m.get("id") is not None] + list(bound_ids)
         still = registration.marks_still_in_project(doc, mark_ids)
         restore["marks_still_in_project"] = sorted(
             k for k, v in still.items() if v is not False)

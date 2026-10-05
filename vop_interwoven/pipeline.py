@@ -1142,12 +1142,36 @@ def process_document_views(
             _gc_hits_after = _gc_hits_before
             _gc_misses_after = _gc_misses_before
 
-            if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
+            # Under Stage A, drafting views and legends (ANNOTATION_ONLY) are
+            # captured by the colour-ID process too, not by the geometry
+            # annotation raster below. They take the same capture as a model
+            # view with NO model elements: nothing is collected for the model
+            # pass (there is no model truth in these views), so its capture is
+            # the registration ticks on white, and the annotation pass paints
+            # the view's own content -- every element in a drafting view or a
+            # legend is owned by the view, so membership puts all of it there.
+            stage_a_annotation_only = bool(
+                stage_a_color_id_mode and view_mode == VIEW_MODE_ANNOTATION_ONLY)
+            if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION or stage_a_annotation_only:
                 # 2) Broad-phase visible elements
-                t0 = _perf_now()
-                elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
-                t1 = _perf_now()
-                _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
+                if stage_a_annotation_only:
+                    elements = []
+                    # Not every Diagnostics implementation has .info().
+                    if diag is not None and hasattr(diag, "info"):
+                        diag.info(
+                            phase="pipeline",
+                            callsite="process_document_views",
+                            message="Annotation-only view under Stage A: captured by the "
+                                    "colour-ID process with no model elements",
+                            view_id=view_id_int,
+                            extra={"view_name": getattr(view, "Name", None),
+                                   "mode_reason": mode_reason},
+                        )
+                else:
+                    t0 = _perf_now()
+                    elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
+                    t1 = _perf_now()
+                    _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
 
                 # 3) MODEL PASS
                 if getattr(cfg, "enable_color_id_buffer_stage_a", False):
@@ -1171,6 +1195,21 @@ def process_document_views(
                     # separate annotation call is skipped for it.
                     registered = bool(getattr(
                         cfg, "color_id_buffer_registered_capture", True))
+                    if stage_a_annotation_only and not registered:
+                        # A drafting view or a legend has no crop, so only the
+                        # registered capture can frame it: its ticks bound the
+                        # uncropped export. The two-pass fallback writes a crop
+                        # and has no ticks, so it could only fail here.
+                        registered = True
+                        if diag is not None:
+                            diag.warn(
+                                phase="pipeline",
+                                callsite="process_document_views",
+                                message="color_id_buffer_registered_capture is off, but "
+                                        "this view has no crop region; it is captured "
+                                        "by the registered capture regardless",
+                                view_id=view_id_int,
+                            )
                     if registered:
                         from .stage_a_registered_capture import (
                             export_registered_stage_a_view,
@@ -1764,7 +1803,18 @@ def init_view_raster(doc, view, cfg, diag=None):
     view_mode, _mode_reason = resolve_view_mode(view, diag=diag)
 
     if view_mode == VIEW_MODE_ANNOTATION_ONLY:
-        anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft_requested, cfg=cfg, diag=diag)
+        if bool(getattr(cfg, "enable_color_id_buffer_stage_a", False)):
+            # Stage A: these views have no crop region, so the capture renders
+            # everything they draw. The frame is therefore the bbox of EVERY
+            # element in the view plus one cell -- as the geometry exporter's
+            # view_raster crop was -- not the extent-driver annotations alone,
+            # which would leave detail lines, filled regions and legend
+            # components outside it.
+            from .revit.view_basis import resolve_view_element_bounds
+            anno_bounds = resolve_view_element_bounds(
+                doc, view, basis, cell_size_ft_requested, diag=diag)
+        else:
+            anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft_requested, cfg=cfg, diag=diag)
 
         if anno_bounds is None:
             # No driver annotations → deterministic small fallback to avoid huge grids
