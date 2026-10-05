@@ -60,7 +60,7 @@ from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.stage_a.analysis_grid.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 # Greg, 2026-09-30: 2 and 8 px per cell "for starters", expressed as what they
 # are -- a cell must hold whole pixels to be measured at all, and a mapping
@@ -328,6 +328,31 @@ def crop_a_cell_ranges(spec, crop, w, h):
             "j_range": [int(mj.min()), int(mj.max()) + 1]}
 
 
+def split_crop_bands(sidecar):
+    """The view-UV bands a SPLIT crop shows, or None for an unsplit view.
+
+    Probe Q7: a split crop is captured un-split (inside the capture's rolled-
+    back group) so it registers like any view; the capture records under
+    ``registration_marks.split_crop`` which bands of the crop the view
+    actually shows. Everything outside them was captured but is not in the
+    view. A split whose bands are not recorded (a vertical split, an unread
+    crop) or that was not removed is REFUSED: gridding the whole crop would
+    count the hidden middle as the view's."""
+    payload = sidecar.get("registration_marks")
+    rec = payload.get("split_crop") if isinstance(payload, dict) else None
+    if not isinstance(rec, dict) or rec.get("state") in (None, "not_split"):
+        return None
+    if rec.get("state") != "removed":
+        raise GridRefusal("the view's crop is split and the capture did not take it "
+                          "un-split ({0}: {1})".format(rec.get("state"),
+                                                       rec.get("reason")))
+    bands = rec.get("bands_uv")
+    if not bands:
+        raise GridRefusal("the view's crop is split and the bands it shows are not "
+                          "recorded ({0})".format(rec.get("bands_reason")))
+    return [[float(c) for c in band] for band in bands]
+
+
 def build_spec(sidecar, rgb, run_config, lattice=None):
     """The GridSpec for one view, or raises GridRefusal."""
     frame = frame_record(sidecar)
@@ -371,6 +396,8 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
     spec["i_range"] = [int(i_ends.min()), int(i_ends.max()) + 1]
     spec["j_range"] = [int(j_ends.min()), int(j_ends.max()) + 1]
     spec["crop_a_cells"] = crop_a_cell_ranges(spec, crop, w, h)
+    # Q7: a split crop shows only these bands of crop A (inside_crop_a).
+    spec["split_bands_uv"] = split_crop_bands(sidecar)
     spec["cells_w"] = spec["i_range"][1] - spec["i_range"][0]
     spec["cells_h"] = spec["j_range"][1] - spec["j_range"][0]
     unc = basis.get("uncertainty_px")
@@ -384,6 +411,8 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
         flags.append("capped")
     if lattice is None:
         flags.append("no_registered_annotation")
+    if spec["split_bands_uv"] is not None:
+        flags.append("split_crop")
     spec["frame_check"] = frame_check(frame)
     frame_flag = frame_check_flag(spec["frame_check"])
     if frame_flag is not None:
@@ -610,10 +639,23 @@ def occupancy_summary(occ, inside):
 
 
 def inside_crop_a(spec):
+    """The cells the view SHOWS: crop A's cells, and for a split crop only
+    those whose centre lies in one of its bands (``split_bands_uv``)."""
     mask = np.zeros((spec["cells_h"], spec["cells_w"]), dtype=bool)
     ci, cj = spec["crop_a_cells"]["i_range"], spec["crop_a_cells"]["j_range"]
     mask[cj[0] - spec["j_range"][0]:cj[1] - spec["j_range"][0],
          ci[0] - spec["i_range"][0]:ci[1] - spec["i_range"][0]] = True
+    bands = spec.get("split_bands_uv")
+    if bands:
+        i = np.arange(spec["i_range"][0], spec["i_range"][1])
+        j = np.arange(spec["j_range"][0], spec["j_range"][1])
+        u = spec["origin_uv"][0] + (i + 0.5) * spec["cell_ft"]
+        v = spec["origin_uv"][1] + (j + 0.5) * spec["cell_ft"]
+        shown = np.zeros_like(mask)
+        for u0, v0, u1, v1 in bands:
+            shown |= (((v >= v0) & (v <= v1))[:, None]
+                      & ((u >= u0) & (u <= u1))[None, :])
+        mask &= shown
     return mask
 
 

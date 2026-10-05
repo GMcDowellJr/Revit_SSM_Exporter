@@ -137,3 +137,32 @@ def test_a_split_the_rollback_did_not_restore_is_a_fault(tmp_path):
     verdict = out["registration"]["restore"]["view_state"]["split_crop"]
     assert verdict["status"] == "not_restored"
     assert "view_state_not_restored" in [f["fault"] for f in out["registration"]["faults"]]
+
+
+# --- composed with the grid (CLAUDE.md defect class 1) -------------------------
+# The grid reads the record production WRITES, not a hand-built copy of it.
+
+def test_the_grid_reads_the_bands_production_wrote(tmp_path):
+    from tools import stage_a_grid as grid
+    out, _view, _doc, _e, _diag = _run(tmp_path, view_setup=_split)
+    side = _sidecar(out["sidecar_path"])
+    assert grid.split_crop_bands(side) == side["registration_marks"]["split_crop"]["bands_uv"]
+    assert len(grid.split_crop_bands(side)) == 2
+
+
+def test_the_grid_refuses_the_record_of_a_split_production_could_not_remove(
+        tmp_path, monkeypatch):
+    from tools import stage_a_grid as grid
+
+    def _remove(self):
+        raise RuntimeError("RemoveSplit refused (fake)")
+    monkeypatch.setattr(world._Manager, "RemoveSplit", _remove)
+    out, _view, _doc, _e, _diag = _run(tmp_path, view_setup=_split)
+    with pytest.raises(grid.GridRefusal, match="split"):
+        grid.split_crop_bands(_sidecar(out["sidecar_path"]))
+
+
+def test_control_the_grid_reads_an_unsplit_record_as_no_bands(tmp_path):
+    from tools import stage_a_grid as grid
+    out, _view, _doc, _e, _diag = _run(tmp_path)
+    assert grid.split_crop_bands(_sidecar(out["sidecar_path"])) is None

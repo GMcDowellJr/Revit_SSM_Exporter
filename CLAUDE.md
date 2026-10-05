@@ -130,6 +130,12 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   toward white the locator could take for a tick's
   (`stage_a_registration.fringe_reads_as_mark`, recorded as
   `palette_reservation`). The ticks are not in `color_assignment_map`.
+- **A split crop is captured un-split** (Q7, 2026-10-05): inside the group,
+  after the view's membership is read; `registration_marks.split_crop`
+  records the regions and the view-UV bands the view shows, and
+  `tools/stage_a_grid.py` keeps only those (`split_crop` flag). A vertical
+  split's bands are unmeasured and refused; `split_crop_not_removed` /
+  `split_crop_unverified` fail the capture.
 - **The annotation pass keeps the authored crop.** A crop-inactive view gets
   the model pass's crop A. Model content is suppressed by membership: white
   element overrides and white link filters.
