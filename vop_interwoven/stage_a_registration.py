@@ -62,6 +62,54 @@ def _xyz_tuple(point):
 # by image thirds. Sizes are in MODEL-LATTICE pixels, via achieved_fpp_ft.
 MARK_COLOUR = (139, 251, 11)
 MARK_INSET_PX = 24.0
+# THE RESERVED TICK COLOUR (Greg, 2026-10-02). Both captures paint every tick
+# MARK_COLOUR, and neither palette hands out a colour whose anti-aliased
+# fringe toward white could read as one of the ticks': run 1001-1950 refused
+# four views on look-alike pixels of the ticks' own colours (text fringes, and
+# specks of the exact colour), with anti-aliasing OFF. These three mirror the
+# acceptance test of tools/registration_marks.py (BLEND_TOLERANCE,
+# BLEND_MIN_COVERAGE), widened by a margin for the export's rounding to whole
+# levels; tests/test_stage_a_reserved_tick_colour.py runs the tool's own test
+# over every colour this lets through, so the two cannot drift apart.
+TICK_BLEND_TOLERANCE = 3.0
+TICK_BLEND_MIN_COVERAGE = 0.1
+TICK_BLEND_EXCLUSION_MARGIN = 1.5
+_TICK_BLEND_SAMPLES = 512
+
+
+def fringe_reads_as_mark(rgb, mark=MARK_COLOUR):
+    """True when some blend of ``rgb`` toward white, ``t*rgb + (1-t)*255`` for
+    ``t`` in (0, 1], lies within the tick locator's tolerance (plus margin) of
+    ``mark``'s own line to white at a coverage it accepts -- so a palette
+    element painted ``rgb`` could be taken for a tick's fringe. ``rgb`` equal
+    to ``mark`` is True. Such a colour is withheld from the palette."""
+    dc = [255.0 - float(c) for c in rgb]
+    dm = [255.0 - float(c) for c in mark]
+    norm_m = sum(v * v for v in dm)
+    norm_c = sum(v * v for v in dc)
+    if norm_m <= 0.0 or norm_c <= 0.0:
+        return False
+    limit = TICK_BLEND_TOLERANCE + TICK_BLEND_EXCLUSION_MARGIN
+    # Quick reject: at the lowest coverage accepted, the mark's line is
+    # TICK_BLEND_MIN_COVERAGE * |dm| from white, and no point of rgb's line is
+    # nearer to it (Euclidean) than that times sin(angle); the Chebyshev
+    # distance the locator uses is at least that over sqrt(3).
+    dot = sum(a * b for a, b in zip(dc, dm))
+    cos2 = (dot * dot) / (norm_c * norm_m) if dot > 0 else 0.0
+    sin = (max(0.0, 1.0 - cos2)) ** 0.5
+    if TICK_BLEND_MIN_COVERAGE * (norm_m ** 0.5) * sin / (3.0 ** 0.5) > limit:
+        return False
+    for i in range(1, _TICK_BLEND_SAMPLES + 1):
+        t = float(i) / _TICK_BLEND_SAMPLES
+        p = [t * v for v in dc]
+        s = sum(a * b for a, b in zip(p, dm)) / norm_m
+        if s < TICK_BLEND_MIN_COVERAGE - 0.01 or s > 1.0 + 1e-9:
+            continue
+        if max(abs(s * b - a) for a, b in zip(p, dm)) <= limit:
+            return True
+    return False
+
+
 MARK_GAP_PX = 8.0
 # T1 (2026-09-29): ticks at their minimum size. 96 px arms were probe-era
 # generosity; 32 px is the smallest arm registration_marks is proven to
@@ -667,6 +715,29 @@ def still_hidden(doc, view, element_ids):
     return hidden, unreadable
 
 
+def line_ids_in_view(doc, view):
+    """Sorted ids of the OST_Lines elements FilteredElementCollector(doc,
+    view.Id) returns -- the lines the view DRAWS (a hidden category's
+    elements are not returned). Raises when it cannot be read."""
+    from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
+    lines_id = int(BuiltInCategory.OST_Lines)
+    ids = []
+    for elem in FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType():
+        cat_id = getattr(getattr(getattr(elem, "Category", None), "Id", None),
+                         "IntegerValue", None)
+        if cat_id is not None and int(cat_id) == lines_id:
+            elem_id = _element_id_int(getattr(elem, "Id", None))
+            if elem_id is not None:
+                ids.append(elem_id)
+    return sorted(ids)
+
+
+def set_lines_category_hidden(view, hidden):
+    """view.SetCategoryHidden(OST_Lines, hidden). Inside an open Transaction."""
+    from Autodesk.Revit.DB import BuiltInCategory, ElementId
+    view.SetCategoryHidden(ElementId(int(BuiltInCategory.OST_Lines)), bool(hidden))
+
+
 def _lines_category_hidden(view):
     """Whether the view hides OST_Lines, three-valued. The marks are detail
     lines: a view that hides Lines draws none of them, in either pass."""
@@ -680,8 +751,9 @@ def _lines_category_hidden(view):
         return None, "{0}: {1}".format(type(ex).__name__, ex)
 
 
-def _thinnest_line_style(doc, curve):
-    """``(style, record)``: the thinnest line style this detail curve may take.
+def _thinnest_line_style(doc, curve, view=None, diag=None, view_id=None):
+    """``(style, record)``: the thinnest line style this detail curve may take
+    THAT THE VIEW DRAWS.
 
     No override in either pass sets a line weight (both paint colour and
     patterns only), so a tick draws at its LINE STYLE's projection weight --
@@ -689,9 +761,31 @@ def _thinnest_line_style(doc, curve):
     line style. T1 picks the minimum over ``curve.GetLineStyleIds()``, keeping
     the current style on a tie. A style whose weight will not read is skipped
     and named; ``style`` is None when nothing could be chosen.
+
+    VISIBILITY (capture-state probe Q6, 2026-10-01). A line style is a
+    SUBCATEGORY of OST_Lines, and a view can hide it while the parent stays
+    visible: in 5823803 and 11999340 the view template hides "<Thin Lines>",
+    the weight-1 style T1 always picked, so no tick drew in 31 views and
+    nothing said so -- the only check was the parent category. With ``view``,
+    a style whose own subcategory the view hides is NOT a candidate, and one
+    whose hidden state will not read is not either (it is named under
+    ``hidden_unreadable``); ``hidden`` lists the ones refused. ``view=None``
+    is T1's unconditional choice, kept for callers with no view.
     """
     from Autodesk.Revit.DB import GraphicsStyleType
-    record = {"state": "value", "unreadable": []}
+    record = {"state": "value", "unreadable": [], "hidden": [],
+              "hidden_unreadable": []}
+
+    def _warn(what, entry):
+        # Codex, PR #226: a failed read leaves that style out of the choice;
+        # the record names it, and so does Diagnostics.
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite="tick_line_style",
+                      message="line style {0} ({1}): its {2} would not read, so it is "
+                              "not a tick candidate: {3}".format(
+                                  entry.get("id"), entry.get("name"), what,
+                                  entry.get("error")),
+                      view_id=view_id, elem_id=entry.get("id"))
     current = curve.LineStyle
     current_id = _element_id_int(getattr(current, "Id", None))
     candidates = []
@@ -704,17 +798,48 @@ def _thinnest_line_style(doc, curve):
             record["unreadable"].append({
                 "id": _element_id_int(style_id),
                 "error": "{0}: {1}".format(type(ex).__name__, ex)})
+            _warn("weight", record["unreadable"][-1])
             continue
         style_int = _element_id_int(getattr(style, "Id", None))
-        candidates.append((weight, 0 if style_int == current_id else 1,
-                           style_int, style))
         if style_int == current_id:
             record["default_style"] = {"id": style_int,
                                        "name": getattr(style, "Name", None),
                                        "projection_line_weight": weight}
+        if view is not None:
+            # SOLID ONLY (Q6 run 20261001T183711): on 5823803 A picked
+            # <Overhead>, a dashed style, and its ticks changed 92 px where the
+            # solid temporary subcategory changed 141. A dashed tick is several
+            # components, each read as a tick by the fit.
+            solid, solid_error = _style_pattern_is_solid(style)
+            if solid is not True:
+                entry = {"id": style_int, "name": getattr(style, "Name", None),
+                         "projection_line_weight": weight}
+                if solid_error is not None:
+                    entry["error"] = solid_error
+                    _warn("line pattern", entry)
+                record.setdefault("not_solid", []).append(entry)
+                continue
+            hidden, error = _style_subcategory_hidden(view, style)
+            if hidden is not False:
+                entry = {"id": style_int, "name": getattr(style, "Name", None),
+                         "projection_line_weight": weight}
+                if error is not None:
+                    entry["error"] = error
+                    record["hidden_unreadable"].append(entry)
+                    _warn("hidden state", entry)
+                else:
+                    record["hidden"].append(entry)
+                continue
+        candidates.append((weight, 0 if style_int == current_id else 1,
+                           style_int, style))
     if not candidates:
         record["state"] = "unavailable"
-        record["reason"] = "no line style of the detail curve had a readable weight"
+        record["reason"] = (
+            "no line style of the detail curve had a readable weight"
+            if not (record["hidden"] or record["hidden_unreadable"]
+                    or record.get("not_solid")) else
+            "every line style with a readable weight is hidden in this view, is "
+            "not solid, or its hidden state or pattern would not read")
         return None, record
     weight, _pref, style_int, style = min(candidates, key=lambda c: c[:3])
     record.update({"id": style_int, "name": getattr(style, "Name", None),
@@ -723,7 +848,129 @@ def _thinnest_line_style(doc, curve):
     return style, record
 
 
-def create_registration_marks(doc, view, view_basis, layout):
+def _solid_line_pattern_id():
+    """The id of Revit's built-in Solid line pattern, as an int."""
+    from Autodesk.Revit.DB import LinePatternElement
+    return _element_id_int(LinePatternElement.GetSolidPatternId())
+
+
+def _style_pattern_is_solid(style):
+    """``(solid, error)``: whether the line style's projection pattern is
+    Revit's Solid pattern, three-valued."""
+    try:
+        from Autodesk.Revit.DB import GraphicsStyleType
+        pattern = _element_id_int(style.GraphicsStyleCategory.GetLinePatternId(
+            GraphicsStyleType.Projection))
+        return pattern == _solid_line_pattern_id(), None
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+def _style_subcategory_hidden(view, style):
+    """``(hidden, error)``: whether ``view`` hides the line style's OWN
+    subcategory (``style.GraphicsStyleCategory``), three-valued."""
+    try:
+        return bool(view.GetCategoryHidden(style.GraphicsStyleCategory.Id)), None
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+# A Lines subcategory created for the ticks when the view hides every line
+# style the curve could take. Created inside the marks' Transaction, so the
+# capture's TransactionGroup rollback removes it with the ticks.
+TEMPORARY_TICK_SUBCATEGORY = "VOP Stage A registration ticks"
+
+
+def _temporary_tick_style(doc, view):
+    """``(style, record)``: a weight-1 OST_Lines subcategory made for the
+    ticks, and its projection GraphicsStyle. Inside an open Transaction.
+
+    Whether the view DRAWS it is read back, never assumed: a template that
+    controls V/G may hide a subcategory it has never seen (capture-state probe
+    Q6 asks; until a Revit run answers, the read is the answer). ``style`` is
+    None when it could not be made; the record says why.
+    """
+    from Autodesk.Revit.DB import BuiltInCategory, GraphicsStyleType
+    record = {"state": "value", "subcategory_name": TEMPORARY_TICK_SUBCATEGORY}
+    try:
+        categories = doc.Settings.Categories
+        lines = categories.get_Item(BuiltInCategory.OST_Lines)
+        existing = None
+        for sub in lines.SubCategories:
+            if str(getattr(sub, "Name", "")) == TEMPORARY_TICK_SUBCATEGORY:
+                existing = sub
+                break
+        # One left behind by a capture whose rollback failed is REUSED and
+        # said so, rather than refused: NewSubcategory would raise on the name.
+        record["created"] = existing is None
+        sub = existing if existing is not None else categories.NewSubcategory(
+            lines, TEMPORARY_TICK_SUBCATEGORY)
+        sub.SetLineWeight(1, GraphicsStyleType.Projection)
+        from Autodesk.Revit.DB import LinePatternElement
+        sub.SetLinePatternId(LinePatternElement.GetSolidPatternId(),
+                             GraphicsStyleType.Projection)
+        style = sub.GetGraphicsStyle(GraphicsStyleType.Projection)
+        record.update({
+            "id": _element_id_int(getattr(style, "Id", None)),
+            "name": getattr(style, "Name", None),
+            "subcategory_id": _element_id_int(getattr(sub, "Id", None)),
+            "projection_line_weight": int(sub.GetLineWeight(
+                GraphicsStyleType.Projection)),
+            "projection_pattern_solid": _style_pattern_is_solid(style)[0],
+        })
+    except Exception as ex:
+        return None, {"state": "unavailable",
+                      "subcategory_name": TEMPORARY_TICK_SUBCATEGORY,
+                      "reason": "the temporary Lines subcategory could not be "
+                                "made: {0}: {1}".format(type(ex).__name__, ex)}
+    # Codex, PR #226: the solid pattern is READ BACK, not assumed from the
+    # write. A dashed or unreadable one would break each tick into pieces the
+    # fit cannot use, so the style is unavailable (path "none"), which the
+    # capture faults as registration_marks_may_not_draw.
+    if record["projection_pattern_solid"] is not True:
+        return None, dict(record, state="unavailable",
+                          reason="the temporary Lines subcategory's line pattern "
+                                 "did not read back as Solid ({0})".format(
+                                     record["projection_pattern_solid"]))
+    return style, record
+
+
+def tick_line_style(doc, view, curve, diag=None, view_id=None):
+    """``(style, record)``: the style every tick is drawn in, and WHICH PATH
+    chose it -- ``record["path"]``:
+
+    * ``"visible_existing"`` -- the thinnest of the curve's own SOLID styles
+      whose subcategory the view does not hide;
+    * ``"temporary"`` -- none is, so a weight-1 solid subcategory made for
+      the capture (rolled back with it);
+    * ``"none"`` -- neither; ``style`` is None and the ticks keep the default.
+
+    ``subcategory_hidden_in_view`` is the chosen style's own subcategory,
+    READ (three-valued): the capture faults ``registration_marks_may_not_draw``
+    on anything but False. ``existing`` keeps the existing-style search's
+    record whichever path won.
+    """
+    style, existing = _thinnest_line_style(doc, curve, view=view, diag=diag,
+                                           view_id=view_id)
+    if style is not None:
+        record = dict(existing, path="visible_existing")
+    else:
+        style, temporary = _temporary_tick_style(doc, view)
+        if style is None:
+            return None, {"state": "unavailable", "path": "none",
+                          "subcategory_hidden_in_view": None,
+                          "reason": "{0}; {1}".format(existing.get("reason"),
+                                                      temporary.get("reason")),
+                          "existing": existing, "temporary": temporary}
+        record = dict(temporary, path="temporary", existing=existing)
+    hidden, error = _style_subcategory_hidden(view, style)
+    record["subcategory_hidden_in_view"] = hidden
+    if error is not None:
+        record["subcategory_hidden_error"] = error
+    return style, record
+
+
+def create_registration_marks(doc, view, view_basis, layout, diag=None, view_id=None):
     """Draw the registration ticks as DETAIL LINES and paint them MARK_COLOUR.
 
     Inside an open Transaction, inside the capture's TransactionGroup: the
@@ -789,15 +1036,27 @@ def create_registration_marks(doc, view, view_basis, layout):
                 type(ex).__name__, ex)
             record["failed"].append(entry)
             continue
-        # T1: the thinnest line style, chosen once and applied to every tick.
-        # The style is the element's own, so it holds in BOTH passes; the
-        # record says which style and weight the ticks were drawn at.
+        # T1: the thinnest line style THE VIEW DRAWS, chosen once and applied
+        # to every tick (tick_line_style: an existing visible style, else a
+        # temporary subcategory). The style is the element's own, so it holds
+        # in BOTH passes; the record says which path, style and weight.
         try:
             if "line_style" not in record:
-                thinnest, record["line_style"] = _thinnest_line_style(doc, curve)
+                thinnest, record["line_style"] = tick_line_style(
+                    doc, view, curve, diag=diag, view_id=view_id)
             if thinnest is not None:
                 curve.LineStyle = thinnest
-            entry["line_style_applied"] = thinnest is not None
+                # READ BACK (Codex, PR #226): the chosen style is checked for
+                # visibility, so a tick that kept its default -- which may be
+                # the hidden one -- must not pass on the chosen style's word.
+                applied_id = _element_id_int(getattr(curve.LineStyle, "Id", None))
+                entry["line_style_applied"] = applied_id == _element_id_int(thinnest.Id)
+                if not entry["line_style_applied"]:
+                    entry["line_style_error"] = (
+                        "LineStyle reads {0} after setting {1}".format(
+                            applied_id, _element_id_int(thinnest.Id)))
+            else:
+                entry["line_style_applied"] = False
         except Exception as ex:
             entry["line_style_applied"] = False
             entry["line_style_error"] = "{0}: {1}".format(type(ex).__name__, ex)
@@ -805,6 +1064,14 @@ def create_registration_marks(doc, view, view_basis, layout):
                 "state": "unavailable",
                 "reason": "the line style could not be read or set: " + entry[
                     "line_style_error"]})
+        if thinnest is not None and not entry["line_style_applied"]:
+            record.setdefault("line_style_not_applied", []).append(entry.get("id"))
+            if diag is not None:
+                diag.warn(phase="color_id_buffer", callsite="tick_line_style_apply",
+                          message="tick {0}: the chosen line style did not take ({1}); "
+                                  "it may draw in a style the view hides".format(
+                                      entry.get("key"), entry.get("line_style_error")),
+                          view_id=view_id, elem_id=entry.get("id"))
         try:
             geometry_curve = curve.GeometryCurve
             ends = [tuple(view_basis.transform_to_view_uv(

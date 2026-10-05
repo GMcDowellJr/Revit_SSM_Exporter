@@ -116,10 +116,14 @@ def _record(marks):
 
 def _write_pair(tmp_path, marks=None, drop_anno=(), drop_model=(),
                 anno_marks_record=None, with_marks=True, blended_anno_h=False,
-                model_crop_offset=None, extra_anno=None):
-    """A model + annotation capture of one view, as production names them."""
+                model_crop_offset=None, extra_anno=None, shared_anno=False):
+    """A model + annotation capture of one view, as production names them.
+
+    ``shared_anno``: the reserved tick colour (2026-10-02) -- the annotation
+    ticks are MARK_COLOUR, take no palette entry, and the record is shared."""
     marks = marks if marks is not None else _marks()
-    colours = _anno_colours(marks)
+    colours = (dict((m["id"], MARK_COLOUR) for m in marks) if shared_anno
+               else _anno_colours(marks))
     anno = np.full((AH, AW, 3), 255, dtype=np.uint8)
     elements = dict(ELEMENTS)
     elements.update(extra_anno or {})
@@ -141,7 +145,8 @@ def _write_pair(tmp_path, marks=None, drop_anno=(), drop_model=(),
     Image.fromarray(model).save(str(model_tiff), format="TIFF")
     Image.fromarray(anno).save(str(anno_tiff), format="TIFF")
     anno_map = dict((str(eid), list(c)) for eid, (c, _r) in elements.items())
-    anno_map.update((str(k), list(v)) for k, v in colours.items())
+    if not shared_anno:
+        anno_map.update((str(k), list(v)) for k, v in colours.items())
     model_side = {"view_id": 1, "tiff_path": str(model_tiff),
                   "bounds_xy": list(MODEL_BOUNDS),
                   "resolution": {"pixel_size": MW, "requested_pixel_size": MW,
@@ -162,9 +167,11 @@ def _write_pair(tmp_path, marks=None, drop_anno=(), drop_model=(),
     if with_marks:
         model_side["registration_marks"] = _registration_payload(
             "model", _record(marks), shared_colour=MARK_COLOUR)
-        anno_side["registration_marks"] = _registration_payload(
-            "annotation", anno_marks_record or _record(marks),
-            colours_by_id=anno_map)
+        anno_side["registration_marks"] = (
+            _registration_payload("annotation", anno_marks_record or _record(marks),
+                                  shared_colour=MARK_COLOUR) if shared_anno else
+            _registration_payload("annotation", anno_marks_record or _record(marks),
+                                  colours_by_id=anno_map))
     model_path, anno_path = tmp_path / "V_1.json", tmp_path / "V_1_anno.json"
     model_path.write_text(json.dumps(model_side))
     anno_path.write_text(json.dumps(anno_side))
@@ -834,3 +841,96 @@ def test_the_canvas_holds_exactly_what_the_resampler_draws(scale, offset):
         assert ink[0]
     if canvas["canvas_w"] - canvas["shift_x"] > model_w:
         assert ink[-1]
+
+
+# ----------------------------------------------------------------------
+# exact-colour specks far from the tick (run 1001-1950: 1686390, 1686410)
+# ----------------------------------------------------------------------
+
+def test_exact_colour_specks_far_from_the_tick_are_not_the_tick(tmp_path):
+    """A tick's own palette colour turned up as 1-2 px specks inside text,
+    far from the tick, and the exact colour exempted them from every filter:
+    137 and 629 px residuals. They are off the tick's line, so they are not
+    it. Mutation: exempting anchored pieces from the line test again turns
+    this red; the short-exact-piece test above is the control that a piece
+    ON the line still counts."""
+    def draw(img, marks, colours):
+        rgb = colours[_left_mid_h(marks)["id"]]
+        img[300 % img.shape[0], 400:402] = rgb
+        img[150 % img.shape[0], img.shape[1] - 40] = rgb
+    anno_path, marks, colours = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6
+
+
+def test_model_capture_an_exact_speck_of_the_mark_colour_is_not_a_tick(tmp_path):
+    """One shared colour, so no tick line to test: a 1 px exact-colour speck
+    is neither line-shaped nor tick-sized, and is dropped. Mutation: keeping
+    every anchored piece in the shared path turns this red."""
+    def draw(img):
+        img[5, 5] = MARK_COLOUR
+        img[6, 400] = MARK_COLOUR
+    fit = _model_fit_with(tmp_path, draw)
+    assert fit["status"] == "value"
+    assert fit["components"]["components"] == 12
+    assert fit["components"]["merged_into_one_tick"] == 0
+    assert max(fit["residual_max_px"].values()) < 0.6
+
+
+def test_the_line_is_judged_from_the_exact_colour_not_the_biggest_blend(tmp_path):
+    """5166781, 5100330: a line-shaped blend of a tick's colour, with MORE
+    coverage than the tick itself, far from it. Taken as the reference line,
+    it kept itself and the (anchored) tick both: 96 and 426 px residuals. The
+    exact-colour piece is the reference, so the blend is off its line.
+    Mutation: choosing the reference from every kept piece turns this red."""
+    def draw(img, marks, colours):
+        m = _left_mid_h(marks)
+        _stray(img, colours[m["id"]], 200, 300 % img.shape[0], 120, 3, t=0.9)
+    anno_path, marks, _c = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6
+
+
+
+# ----------------------------------------------------------------------
+# the reserved tick colour: a SHARED annotation record (2026-10-02)
+# ----------------------------------------------------------------------
+
+def test_a_shared_annotation_capture_lands_on_the_model_lattice(tmp_path):
+    """The current shape: the annotation ticks are MARK_COLOUR, assigned to
+    ticks by where they fall, exactly as in the model capture. Same answer as
+    the per-tick shape above, from the drawing's own constants."""
+    anno_path, _model, _c = _write_pair(tmp_path, shared_anno=True)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert record["annotation_to_model_px"]["scale_x"] == pytest.approx(M / A_U, rel=1e-3)
+    assert record["annotation_to_model_px"]["scale_y"] == pytest.approx(M / A_U, rel=1e-3)
+    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    assert _bbox_of(out, MARK_COLOUR) is None            # every tick subtracted
+    ox, oy = record["lattice"]["model_image_origin_px"]
+    for eid, (colour, (u0, v0, u1, v1)) in ELEMENTS.items():
+        want = (mx(u0) + ox, my(v1) + oy, mx(u1) + ox, my(v0) + oy)
+        got = _bbox_of(out, colour)
+        assert got is not None, eid
+        for g, w in zip(got, want):
+            assert abs(g - w) <= 1.5, (eid, got, want)
+
+
+def test_a_shared_annotation_capture_with_a_text_speck_still_registers(tmp_path):
+    """1686390's failure, in the current shape: a speck of the tick colour
+    away from every tick is not a tick."""
+    anno_path, _model, _c = _write_pair(tmp_path, shared_anno=True)
+    tiff = tmp_path / "V_1_anno.tiff"
+    img = np.array(Image.open(tiff).convert("RGB"))
+    img[200, 250] = MARK_COLOUR
+    img[201, 251] = blend(MARK_COLOUR, 0.5)
+    Image.fromarray(img).save(str(tiff), format="TIFF")
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6

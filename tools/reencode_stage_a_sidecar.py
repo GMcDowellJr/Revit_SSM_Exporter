@@ -32,7 +32,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa: E402
+from tools.stage_a_sidecar_shapes import capture_integrity, crop_write, frame_record  # noqa: E402
 from vop_interwoven.color_id_buffer import (  # noqa: E402
     SIDECAR_PROBE_ONLY_KEYS, _plain_or_state, _round_ft, _round_geometry,
 )
@@ -79,6 +79,10 @@ def reencode_frame(sidecar: dict[str, Any]) -> dict[str, Any]:
         frame.pop("crop_snapped_uv", None)
     if "frame_uv" in frame and frame.get("raster_bounds_uv") == frame.get("frame_uv"):
         frame.pop("raster_bounds_uv", None)
+    # D: the crop record the old writer never wrote, rebuilt and marked so.
+    rebuilt = crop_write(frame)
+    if rebuilt is not None:
+        frame["crop_write"] = rebuilt
     return frame
 
 
@@ -93,7 +97,12 @@ def reencode(sidecar: dict[str, Any]) -> dict[str, Any]:
     for key in SIDECAR_PROBE_ONLY_KEYS:
         out.pop(key, None)
     if isinstance(sidecar.get("frame"), dict):
-        return out                        # C1-C6 shape already
+        # C1-C6 shape already. A frame written after C5 but before D has no
+        # crop_write: rebuilt and marked, as for a pre-C5 one (Codex, PR #226).
+        rebuilt = crop_write(sidecar["frame"])
+        if rebuilt is not None and "crop_write" not in sidecar["frame"]:
+            out["frame"] = dict(sidecar["frame"], crop_write=rebuilt)
+        return out
     out["frame"] = reencode_frame(sidecar)
     for key in ("resolution", "export_frame", "bounds_xy"):
         out.pop(key, None)

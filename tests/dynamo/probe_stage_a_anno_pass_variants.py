@@ -3192,12 +3192,14 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             _FEC(doc, view.Id).WhereElementIsNotElementType())
         model_members, annotation_members, unresolved, membership_basis = (
             split_stage_a_pass_membership(
-                view_elements, capture_view_id_int=view_id, diag=diag))
+                view_elements, capture_view_id_int=view_id, diag=diag,
+                capture_view_name=getattr(view, "Name", None)))
     except Exception as ex:
         membership_error = "{0}: {1}".format(type(ex).__name__, ex)
         membership_basis = {}
     report["membership"] = {
-        "rule": "OwnerViewId+datum_category (split_stage_a_pass_membership)",
+        "rule": "OwnerViewId+datum_category+view_reference_category "
+                "(split_stage_a_pass_membership)",
         "model_count": len(model_members),
         "annotation_count": len(annotation_members),
         "unresolved_count": len(unresolved),

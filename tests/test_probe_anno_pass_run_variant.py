@@ -58,13 +58,117 @@ class _Line(object):
         return self._ends[index]
 
 
+# LINE STYLES, as far as tick_line_style reads them: each a GraphicsStyle
+# whose GraphicsStyleCategory is an OST_Lines SUBCATEGORY with its own id, so a
+# view can hide the subcategory while OST_Lines stays visible (capture-state
+# probe Q6). (name, style id, subcategory id, projection weight).
+LINE_STYLES = (("Lines", 7001, 7101, 3), ("<Thin Lines>", 7002, 7102, 1),
+               ("<Wide Lines>", 7003, 7103, 5), ("<Overhead>", 7004, 7104, 1))
+THIN_LINES_SUBCAT_ID = 7102
+# <Overhead> is DASHED, as Revit's is (Q6 run 20261001T183711): weight 1 like
+# <Thin Lines>, so only the pattern keeps it out of the choice.
+OVERHEAD_SUBCAT_ID = 7104
+SOLID_PATTERN_ID = -3000010
+DASH_PATTERN_ID = 7900
+DASHED = ("<Overhead>",)
+TEMP_SUBCAT_ID = 7199
+
+
+class _Subcategory(object):
+    def __init__(self, name, sub_id, style_id, weight):
+        from tests.stage_a_capture_fakes import FakeElementId
+        self.Name = name
+        self.Id = FakeElementId(sub_id)
+        self._weight = weight
+        self._pattern = DASH_PATTERN_ID if name in DASHED else SOLID_PATTERN_ID
+        self._style = _LineStyle(name, style_id, self)
+
+    def GetLineWeight(self, _kind):
+        return self._weight
+
+    def GetLinePatternId(self, _kind):
+        from tests.stage_a_capture_fakes import FakeElementId
+        return FakeElementId(self._pattern)
+
+    def SetLinePatternId(self, pattern_id, _kind):
+        self._pattern = int(pattern_id.IntegerValue)
+
+    def SetLineWeight(self, weight, _kind):
+        self._weight = int(weight)
+
+    def GetGraphicsStyle(self, _kind):
+        return self._style
+
+
+class _LineStyle(object):
+    def __init__(self, name, style_id, subcategory):
+        from tests.stage_a_capture_fakes import FakeElementId
+        self.Name = name
+        self.Id = FakeElementId(style_id)
+        self.GraphicsStyleCategory = subcategory
+
+
+class _LinesCategory(object):
+    def __init__(self, doc):
+        self._doc = doc
+        self.Id = LINES_CAT.Id
+        self.Name = LINES_CAT.Name
+
+    @property
+    def SubCategories(self):
+        return list(self._doc._fake_subcategories.values())
+
+
+class _Categories(list):
+    """doc.Settings.Categories: still the iterable of categories the fake doc
+    had, plus get_Item(OST_Lines) and NewSubcategory. A subcategory made here
+    lives in the doc's own dict, so the group's rollback removes it as Revit's
+    would. ``refuse_new`` makes NewSubcategory raise."""
+
+    def __init__(self, doc, categories):
+        list.__init__(self, categories)
+        self._doc = doc
+        self.refuse_new = False
+
+    def get_Item(self, _bic):
+        return _LinesCategory(self._doc)
+
+    def NewSubcategory(self, parent, name):
+        if self.refuse_new:
+            raise RuntimeError("NewSubcategory refused (fake)")
+        sub = _Subcategory(name, TEMP_SUBCAT_ID, TEMP_SUBCAT_ID + 1000, 3)
+        sub._pattern = DASH_PATTERN_ID  # a new subcategory is NOT solid until set
+        subs = dict(self._doc._fake_subcategories)
+        subs[name] = sub
+        self._doc._fake_subcategories = subs
+        return sub
+
+
+def _install_line_styles(doc):
+    doc._fake_subcategories = dict(
+        (name, _Subcategory(name, sub_id, style_id, weight))
+        for name, style_id, sub_id, weight in LINE_STYLES)
+    doc.Settings.Categories = _Categories(doc, doc.Settings.Categories)
+    real_get = doc.GetElement
+
+    def _get(eid):
+        for sub in doc._fake_subcategories.values():
+            if int(eid.IntegerValue) == sub._style.Id.IntegerValue:
+                return sub._style
+        return real_get(eid)
+    doc.GetElement = _get
+
+
 class _Create(object):
     """doc.Create.NewDetailCurve: a view-owned OST_Lines element, registered in
-    the document -- so the group's rollback removes it, as Revit's would."""
+    the document -- so the group's rollback removes it, as Revit's would. Each
+    curve offers the existing LINE_STYLES (plus any temporary subcategory),
+    defaulting to "Lines", as a detail curve in Revit does."""
 
     def __init__(self, doc):
         self._doc = doc
         self.calls = 0
+        _install_line_styles(doc)
 
     def NewDetailCurve(self, view, line):
         self.calls += 1
@@ -75,6 +179,10 @@ class _Create(object):
         elem = FakeElement(MARK_ID_BASE + self.calls, LINES_CAT,
                            owner_view_id=view.Id.IntegerValue, bbox=box)
         elem.GeometryCurve = line
+        doc = self._doc
+        elem.LineStyle = doc._fake_subcategories["Lines"]._style
+        elem.GetLineStyleIds = lambda: [
+            sub._style.Id for sub in doc._fake_subcategories.values()]
         return self._doc.register(elem)
 
 
@@ -151,14 +259,55 @@ def _open_tx():
 
 
 class _Manager(object):
+    """ViewCropRegionShapeManager. Unsplit by default; the OWNER view's
+    ``split_regions`` -- ``[(min, max, offset_x), ...]`` along u (a
+    horizontal split) -- makes it split, and RemoveSplit un-splits it as
+    Revit did in probe Q7. Kept on the view, so the group's rollback (which
+    restores the view's attributes) puts a removed split back."""
     LeftAnnotationCropOffset = 0.25
     RightAnnotationCropOffset = 0.25
     TopAnnotationCropOffset = 0.25
     BottomAnnotationCropOffset = 0.25
     ShapeSet = False
 
+    def __init__(self, owner=None):
+        self._owner = owner
+        self.remove_split_calls = 0
+
+    @property
+    def regions(self):
+        return list(getattr(self._owner, "split_regions", None) or [(0.0, 1.0, 0.0)])
+
     def GetCropShape(self):
         return []
+
+    @property
+    def NumberOfSplitRegions(self):
+        return len(self.regions)
+
+    @property
+    def Split(self):
+        return len(self.regions) > 1
+
+    @property
+    def IsSplitHorizontally(self):
+        return len(self.regions) > 1
+
+    IsSplitVertically = False
+
+    def GetSplitRegionMinimum(self, i):
+        return self.regions[i][0]
+
+    def GetSplitRegionMaximum(self, i):
+        return self.regions[i][1]
+
+    def GetSplitRegionOffset(self, i):
+        from tests.stage_a_capture_fakes import FakeXYZ
+        return FakeXYZ(self.regions[i][2], 0.0, 0.0)
+
+    def RemoveSplit(self):
+        self.remove_split_calls += 1
+        object.__setattr__(self._owner, "split_regions", [(0.0, 1.0, 0.0)])
 
 
 class _ProbeView(FakeViewPlan):
@@ -176,7 +325,7 @@ class _ProbeView(FakeViewPlan):
         self.Origin = FakeXYZ(0, 0, 0)
         self.RightDirection = FakeXYZ(1, 0, 0)
         self.UpDirection = FakeXYZ(0, 1, 0)
-        self._manager = _Manager()
+        self._manager = _Manager(self)
         object.__setattr__(self, "_logging", True)
 
     def __setattr__(self, name, value):
@@ -250,7 +399,8 @@ def _run(tmp_path, monkeypatch, variant, rollback_restores=("view", "doc")):
             raster=raster, geometry_out=geom)
         assert model_out["success"], model_out.get("failure_reason")
         model_members, anno_members, unresolved, _basis = (
-            split_stage_a_pass_membership(elements, capture_view_id_int=VIEW_ID))
+            split_stage_a_pass_membership(elements, capture_view_id_int=VIEW_ID,
+                                          capture_view_name=view.Name))
         candidates = [{"id": 1001, "rect": (25.0, 18.0, 26.0, 19.0),
                        "category": "Walls"},
                       {"id": 1002, "rect": (70.0, 52.0, 71.0, 53.0),

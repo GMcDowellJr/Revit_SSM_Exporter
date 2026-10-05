@@ -69,18 +69,171 @@ def _xyz(point):
             round(float(point.Z), 9)]
 
 
-def view_state(view):
-    """What the capture writes and the rollback must put back, read."""
+def primary_view(doc, view, diag=None, view_id=None):
+    """``(primary, reason)``: the PRIMARY of a dependent view, else None with
+    the reason. The passes detach a dependent view's template on its primary,
+    so that is a view the capture writes and must read back. A primary that
+    will not read or resolve is warned to Diagnostics (Codex, PR #226): the
+    rollback check then cannot see the primary's template."""
+    def _warn(reason):
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite="registered_primary_view",
+                      message="the primary view could not be read, so its template "
+                              "is not read back after the rollback: {0}".format(reason),
+                      view_id=view_id)
+    try:
+        primary_id = view.GetPrimaryViewId()
+        if _element_id_int(primary_id) in (None, -1):
+            return None, "not a dependent view"
+        primary = doc.GetElement(primary_id)
+        if primary is None:
+            reason = "the primary view {0} did not resolve".format(
+                _element_id_int(primary_id))
+            _warn(reason)
+            return None, reason
+        return primary, None
+    except Exception as ex:
+        reason = "{0}: {1}".format(type(ex).__name__, ex)
+        _warn(reason)
+        return None, reason
+
+
+# ---- split crops (probe Q7, run 20261005T084311) --------------------------
+#
+# A split crop shows only some bands of the crop, each moved on the sheet by
+# its region's offset. HIGH ROOF PLAN (3300684): split along its width,
+# region 0 the left 36 % of the crop, region 1 the right 8.6 % moved 115.9 ft
+# left beside it. The export of a split view is neither crop A nor any one
+# band, so its mid ticks did not draw and its two fits disagreed on scale.
+#
+# Removing a region of a two-region split UN-SPLITS the view (R0, R1 and U
+# were pixel-identical, Split False, one region 0-1); the crop box does not
+# move. So the capture removes the split inside its group -- the rollback
+# puts it back, and the probe's restore check saw it put back -- captures
+# the ordinary view, and RECORDS the bands. The analysis keeps only the bands
+# (tools/stage_a_grid.py); the hidden middle is captured but not shown. The
+# offsets only move regions on the sheet, so view-UV analysis ignores them.
+
+def split_crop_state(view):
+    """The view's crop split, as read: ``None`` when the view has no crop
+    region shape manager, else count, flags and each region's fractions and
+    offset. Raises when it will not read."""
+    m = view.GetCropRegionShapeManager()
+    if m is None:
+        return None
+    n = int(m.NumberOfSplitRegions)
+    regions = []
+    for i in range(n):
+        offset = m.GetSplitRegionOffset(i)
+        regions.append({"min": float(m.GetSplitRegionMinimum(i)),
+                        "max": float(m.GetSplitRegionMaximum(i)),
+                        "offset": _xyz(offset)})
+    return {"count": n, "split": bool(m.Split),
+            "horizontal": bool(m.IsSplitHorizontally),
+            "vertical": bool(m.IsSplitVertically), "regions": regions}
+
+
+def split_bands_uv(crop_uv, state):
+    """PURE. ``(bands, reason)``: the view-UV rectangles a split crop shows,
+    one per region, before its offset, or None with the reason.
+
+    A HORIZONTALLY split crop's region fractions run along u from the crop's
+    left edge (measured, Q7: region 0 at 0.00-0.36 showed the left grids).
+    Which end of v a VERTICAL split's fractions start from has not been
+    measured, so it is refused rather than guessed."""
+    if crop_uv is None:
+        return None, "the crop could not be read, so the bands have no extent"
+    if state.get("horizontal") and not state.get("vertical"):
+        u0, v0, u1, v1 = (float(c) for c in crop_uv)
+        w = u1 - u0
+        return [[u0 + r["min"] * w, v0, u0 + r["max"] * w, v1]
+                for r in state["regions"]], None
+    return None, ("a {0} split: which end its fractions start from is not "
+                  "measured".format("vertical" if state.get("vertical") else
+                                    "split in neither direction"))
+
+
+def remove_split_for_capture(doc, view, crop_uv, Transaction, TransactionStatus,
+                             diag=None, view_id=None, fault=None):
+    """Un-split a split crop for the capture, inside the capture's group (the
+    rollback is the restore), and record what the view SHOWS. Returns the
+    record; ``state`` is "not_split", "removed" or "unavailable". Faults:
+
+    * ``split_crop_unverified`` -- the split would not read: a split view
+      captured as is does not register, and nothing can say it is not one;
+    * ``split_crop_not_removed`` -- the removal raised, did not commit, or
+      reads back still split.
+    """
+    def _fail(name, message, ex=None):
+        if fault is not None:
+            fault(name, message, ex)
+        record["state"] = "unavailable"
+        record["reason"] = message
+        return record
+
+    record = {"state": None}
+    try:
+        before = split_crop_state(view)
+    except Exception as ex:
+        return _fail("split_crop_unverified",
+                     "the crop's split state would not read: {0}: {1}".format(
+                         type(ex).__name__, ex), ex)
+    if before is None or before["count"] <= 1:
+        record["state"] = "not_split"
+        return record
+    record["before"] = before
+    record["crop_uv"] = list(crop_uv) if crop_uv is not None else None
+    record["bands_uv"], record["bands_reason"] = split_bands_uv(crop_uv, before)
+    tx = Transaction(doc, "VOP Stage A remove split crop")
+    try:
+        tx.Start()
+        view.GetCropRegionShapeManager().RemoveSplit()
+        status = tx.Commit()
+        if status != TransactionStatus.Committed:
+            raise RuntimeError("Commit returned {0}".format(status))
+    except Exception as ex:
+        try:
+            if not tx.HasEnded():
+                tx.RollBack()
+        except Exception as rollback_ex:
+            if diag is not None:
+                diag.error(phase="color_id_buffer", callsite="remove_split_crop",
+                           message="rolling back the failed split removal also failed",
+                           view_id=view_id, exc=rollback_ex)
+        return _fail("split_crop_not_removed",
+                     "the split could not be removed: {0}: {1}".format(
+                         type(ex).__name__, ex), ex)
+    after = _read(lambda: split_crop_state(view))
+    record["read_back"] = after
+    value = after.get("value") if after.get("state") == "value" else None
+    if value is None or value["count"] > 1 or value["split"]:
+        return _fail("split_crop_not_removed",
+                     "the split reads back {0} after removing it".format(
+                         after.get("value") if value is not None else after))
+    record["state"] = "removed"
+    return record
+
+
+def view_state(view, primary=None):
+    """What the capture writes and the rollback must put back, read. With a
+    ``primary`` (a dependent view's), its template too: the passes detach
+    a dependent view's template there."""
     def _crop_box():
         box = view.CropBox
         return {"min": _xyz(box.Min), "max": _xyz(box.Max)}
-    return {
+    state = {
         "view_template_id": _read(lambda: _element_id_int(view.ViewTemplateId)),
         "display_style": _read(lambda: str(view.DisplayStyle)),
         "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
         "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
         "crop_box": _read(_crop_box),
+        # Q7: the capture un-splits a split crop; the rollback must put it back.
+        "split_crop": _read(lambda: split_crop_state(view)),
     }
+    if primary is not None:
+        state["primary_view_template_id"] = _read(
+            lambda: _element_id_int(primary.ViewTemplateId))
+    return state
 
 
 def view_state_verdict(before, after):
@@ -202,23 +355,19 @@ def mark_fpp_ft(view, raster, cfg):
     lattice is coarser, so a 32 px arm came out 32 * achieved/requested px --
     below the minimum registration_marks is proven to locate (Codex, PR #221).
     This is the model pass's own sizing, composed rather than copied: crop A
-    from compute_model_crop() against the same frame, then
-    resolution_contract.frame_export_geometry() on crop A with the same scale,
-    dpi, fit direction and cap (export_color_id_buffer_view, sizing_frame
-    "crop_a"). tests/test_stage_a_registered_capture.py asserts the two agree
-    on a capped view. Unresolvable -> the requested dpi, with the reason as
-    the basis.
+    from color_id_buffer.resolve_crop_a() -- the one resolution the model
+    pass sizes from (D: an active authored crop AS READ, else the model crop
+    in the frame) -- then resolution_contract.frame_export_geometry() on
+    crop A with the same scale, dpi, fit direction and cap
+    (export_color_id_buffer_view, sizing_frame "crop_a").
+    tests/test_stage_a_registered_capture.py asserts the two agree on a
+    capped view. Unresolvable -> the requested dpi, with the reason as the
+    basis.
     """
-    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, compute_model_crop
-    from .core.math_utils import Bounds2D
+    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, resolve_crop_a
     from .resolution_contract import frame_export_geometry
     try:
-        frame = getattr(raster, "anno_frame_bounds", None) or raster.bounds_xy
-        crop, _offset = compute_model_crop(
-            getattr(raster, "model_clip_bounds", None),
-            Bounds2D(float(frame.xmin), float(frame.ymin),
-                     float(frame.xmax), float(frame.ymax)))
-        crop_uv = (float(crop.xmin), float(crop.ymin), float(crop.xmax), float(crop.ymax))
+        crop_uv, _record = resolve_crop_a(view, raster)
         geom = frame_export_geometry(
             crop_uv, crop_uv, float(view.Scale),
             float(getattr(cfg, "color_id_buffer_export_dpi")),
@@ -238,8 +387,8 @@ def mark_fpp_ft(view, raster, cfg):
 # What total holds beyond their sum -- the membership collection, detail-line
 # hide/show, link-category discovery, the view-state and mark read-backs --
 # is reported as ``unaccounted``, not hidden.
-TIMING_PARTITION = ("authored_override_scan", "mark_layout", "marks_create",
-                    "model_pass", "suppression", "annotation_pass", "rollback",
+TIMING_PARTITION = ("authored_override_scan", "split_remove", "lines_unhide", "mark_layout",
+                    "marks_create", "model_pass", "suppression", "annotation_pass", "rollback",
                     "restore_element_overrides", "view_membership_readback")
 
 
@@ -282,6 +431,99 @@ def view_membership_verdict(before, after, limit=200):
             "added": added[:limit], "removed": removed[:limit]}
 
 
+def unhide_lines_for_ticks(doc, view, Transaction, TransactionStatus, diag=None,
+                           view_id=None, fault=None):
+    """B: make a view that hides OST_Lines draw the ticks, as authored
+    otherwise. Inside the capture's TransactionGroup; the rollback is the
+    restore. Returns the record (``state`` "not_needed" when the view does
+    not hide Lines). ``fault(name, message)`` is called for each failure:
+
+    * ``lines_unhide_failed`` -- the template would not detach, or Lines
+      would not unhide (read back): the ticks will not draw, and
+      ``registration_marks_may_not_draw`` follows from the marks' own read;
+    * ``revealed_lines_not_hidden`` -- a line unhiding revealed could not be
+      hidden: it would draw in both captures, where the author hid it.
+    """
+    from . import stage_a_registration as registration
+    from .color_id_buffer import _detach_view_template
+
+    hidden, error = registration._lines_category_hidden(view)
+    record = {"lines_category_hidden_before": hidden}
+    if error is not None:
+        record["lines_category_hidden_error"] = error
+    if hidden is not True:
+        record["state"] = "not_needed"
+        return record
+
+    def _fail(name, message):
+        record["state"] = "failed"
+        record["reason"] = message
+        if fault is not None:
+            fault(name, message)
+        return record
+
+    detach, _handle = _detach_view_template(
+        doc, view, "VOP Stage A detach template to unhide Lines", diag=diag,
+        view_id=view_id, callsite="registered_lines_detach")
+    record["template_detach"] = detach
+    if detach.get("fault"):
+        return _fail("lines_unhide_failed",
+                     "the view hides OST_Lines and its template would not detach "
+                     "(ViewTemplateId reads {0}), so Lines cannot be unhidden".format(
+                         detach.get("read_back_view_template_id")))
+    try:
+        before = registration.line_ids_in_view(doc, view)
+    except Exception as ex:
+        return _fail("lines_unhide_failed",
+                     "the view's lines could not be read before the unhide: "
+                     "{0}: {1}".format(type(ex).__name__, ex))
+    tx = Transaction(doc, "VOP Stage A unhide Lines for the ticks")
+    tx.Start()
+    try:
+        registration.set_lines_category_hidden(view, False)
+        if tx.Commit() != TransactionStatus.Committed:
+            raise RuntimeError("the unhide Transaction did not commit")
+    except Exception as ex:
+        tx.RollBack()
+        return _fail("lines_unhide_failed", "OST_Lines would not unhide: {0}: {1}".format(
+            type(ex).__name__, ex))
+    after_hidden, after_error = registration._lines_category_hidden(view)
+    record["lines_category_hidden_after"] = after_hidden
+    if after_hidden is not False:
+        return _fail("lines_unhide_failed",
+                     "OST_Lines reads {0} after the unhide{1}".format(
+                         after_hidden, " ({0})".format(after_error) if after_error else ""))
+    try:
+        revealed = sorted(set(registration.line_ids_in_view(doc, view)) - set(before))
+    except Exception as ex:
+        return _fail("revealed_lines_not_hidden",
+                     "the view's lines could not be read after the unhide, so the "
+                     "lines it revealed are unknown: {0}: {1}".format(type(ex).__name__, ex))
+    record.update(lines_before=len(before), revealed=len(revealed))
+    if revealed:
+        tx = Transaction(doc, "VOP Stage A hide the lines the unhide revealed")
+        tx.Start()
+        try:
+            hide = registration.hide_in_view(doc, view, revealed)
+            if tx.Commit() != TransactionStatus.Committed:
+                raise RuntimeError("the hide Transaction did not commit")
+        except Exception as ex:
+            tx.RollBack()
+            return _fail("revealed_lines_not_hidden", "{0}: {1}".format(
+                type(ex).__name__, ex))
+        still, unreadable = registration.still_hidden(doc, view, hide["hidden"])
+        record["revealed_hidden"] = len(still)
+        missed = sorted(set(revealed) - set(still))
+        if hide["error"] or missed or unreadable:
+            record["revealed_not_hidden"] = missed[:200]
+            return _fail("revealed_lines_not_hidden",
+                         "{0} of {1} revealed line(s) do not read hidden ({2}; {3} "
+                         "unreadable); they draw where the author hid them".format(
+                             len(missed), len(revealed), hide["error"], len(unreadable)))
+    record["state"] = "value"
+    return record
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -301,12 +543,22 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # How many annotation bboxes the ticks were kept clear of, and the
         # cost of reading them. Per-tick placement rides on each mark.
         "mark_avoidance": record.get("mark_avoidance"),
+        # B: whether the capture unhid OST_Lines for the ticks, and how.
+        "lines_unhidden": record.get("lines_unhidden"),
+        # Q7: a split crop, un-split for the capture, and the view-UV bands
+        # the view actually SHOWS. tools/stage_a_grid.py keeps only those.
+        "split_crop": record.get("split_crop"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
                           if shared_colour is not None else
                           "this capture's color_assignment_map: the marks are "
                           "view-owned, so the annotation pass painted them"),
+        # "shared": every tick is MARK_COLOUR, in BOTH captures since the
+        # reserved tick colour (2026-10-02); a reader locates them by that one
+        # colour. An annotation record without this key is the older shape,
+        # one palette colour per tick (tools/registration_marks.mark_colours).
+        "colour_mode": "shared" if shared_colour is not None else "per_id",
         "must_be_subtracted": True,
         "is_documentation_content": False,
         "annotation_crop_mode": "authored_else_crop_a",
@@ -369,7 +621,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             if timings.get(key) is not None:
                 record["timings_ms"][label.format(name)] = timings[key]
 
-    before = view_state(view)
+    primary, record["primary_view"] = primary_view(doc, view, diag=diag, view_id=view_id)
+    if primary is not None:
+        record["primary_view"] = _element_id_int(getattr(primary, "Id", None))
+    before = view_state(view, primary)
     group = TransactionGroup(doc, "VOP Stage A registered capture")
     started = False
     t_total = time.time()
@@ -389,7 +644,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             i for i in (_element_id_int(getattr(e, "Id", None)) for e in collected)
             if i is not None)
         model_members, _anno, unresolved, _basis = split_stage_a_pass_membership(
-            collected, capture_view_id_int=view_id, diag=diag)
+            collected, capture_view_id_int=view_id, diag=diag,
+            capture_view_name=getattr(view, "Name", None))
         model_member_ids = [i for i in (_element_id_int(getattr(e, "Id", None))
                                         for e in model_members) if i is not None]
         record["membership"] = {"model": len(model_member_ids),
@@ -405,6 +661,35 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         record["_authored_before"] = _non_blank_override_ids(view, model_member_ids)
         record["timings_ms"]["authored_override_scan"] = round(
             (time.time() - _t) * 1000.0, 3)
+
+        # ---- 0a: a split crop is un-split for the capture -----------------
+        # AFTER membership_before: the unsplit view returns the hidden
+        # middle's elements too (Q7: 826 against 820), and the read-back
+        # after the rollback must compare like with like.
+        _t = time.time()
+        _crop_uv, _crop_err = (None, None)
+        if getattr(raster, "view_basis", None) is not None:
+            from .color_id_buffer import read_crop_uv
+            _crop_uv, _crop_err = read_crop_uv(view, raster.view_basis, diag=diag,
+                                               view_id=view_id)
+        record["split_crop"] = remove_split_for_capture(
+            doc, view, _crop_uv, Transaction, TransactionStatus, diag=diag,
+            view_id=view_id, fault=_fault)
+        record["timings_ms"]["split_remove"] = round((time.time() - _t) * 1000.0, 3)
+
+        # ---- 0b: B -- a view that hides OST_Lines -------------------------
+        # The ticks are detail lines: no line style draws while the view
+        # hides OST_Lines (Q6 run 20261001T183711, 4284900: 0 px changed by
+        # the ticks in every variant, the template detached or not). So the
+        # capture unhides Lines -- which needs the template detached first
+        # ("Category cannot be hidden" otherwise) -- and hides, one by one,
+        # every line that unhiding REVEALED, so both captures still show
+        # the view as authored. All inside the group: the rollback undoes it.
+        _t = time.time()
+        record["lines_unhidden"] = unhide_lines_for_ticks(
+            doc, view, Transaction, TransactionStatus, diag=diag, view_id=view_id,
+            fault=_fault)
+        record["timings_ms"]["lines_unhide"] = round((time.time() - _t) * 1000.0, 3)
 
         # ---- 1: registration marks -----------------------------------------
         _t = time.time()
@@ -428,7 +713,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         tx.Start()
         try:
             marks = registration.create_registration_marks(
-                doc, view, getattr(raster, "view_basis", None), layout)
+                doc, view, getattr(raster, "view_basis", None), layout,
+                diag=diag, view_id=view_id)
             if tx.Commit() != TransactionStatus.Committed:
                 raise RuntimeError("marks Transaction.Commit did not commit")
         except Exception:
@@ -446,6 +732,25 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             _fault("registration_marks_may_not_draw",
                    "the view hides OST_Lines, or its state could not be read "
                    "({0})".format(marks.get("lines_category_hidden_in_view")))
+        # A tick that did not TAKE the chosen style (read back per tick) is
+        # not covered by the chosen style's visibility below (Codex, PR #226).
+        if marks.get("line_style_not_applied"):
+            _fault("registration_mark_style_not_applied",
+                   "{0} tick(s) do not carry the chosen line style ({1}): {2}".format(
+                       len(marks["line_style_not_applied"]),
+                       (marks.get("line_style") or {}).get("name"),
+                       marks["line_style_not_applied"][:12]))
+        # The parent is not enough: a view can hide the ticks' own line-style
+        # subcategory with OST_Lines visible (probe Q6: <Thin Lines> hidden by
+        # the template, 31 views without a tick and no fault).
+        style = marks.get("line_style") or {}
+        if marks.get("expected_count") and style.get("subcategory_hidden_in_view") is not False:
+            _fault("registration_marks_may_not_draw",
+                   "the ticks' line style ({0}, path {1}) has its subcategory hidden "
+                   "in the view, or its state could not be read ({2}): {3}".format(
+                       style.get("name"), style.get("path"),
+                       style.get("subcategory_hidden_in_view"),
+                       style.get("subcategory_hidden_error") or style.get("reason")))
 
         # ---- 1b: the view's OTHER detail lines, hidden for the model pass --
         # OST_Lines stays visible there so the marks draw; without this every
@@ -488,7 +793,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         _t = time.time()
         model_out = export_color_id_buffer_view(
             doc, view, elements, model_cfg, diag=diag, raster=raster,
-            elem_cache=elem_cache, geometry_out=geom)
+            elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True)
         record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
         _pass_timings("model", model_out)
         if detail_lines["hidden"]:
@@ -553,6 +858,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # that cannot turn it off, not the plan. pipeline_0930_0739's
         # annotation sidecars read applied_smooth_edges "not_attempted".
         anno_cfg.color_id_buffer_anno_smooth_edges_off = True
+        _mark_ids = [m.get("id") for m in (record.get("marks") or {}).get("created") or []
+                     if m.get("id") is not None]
         _t = time.time()
         try:
             # The ticks are the capture's own lines, drawn with its own line
@@ -560,9 +867,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             # was exactly the 12 ticks).
             anno_out = export_annotation_color_id_buffer_view(
                 doc, view, anno_cfg, geom, diag=diag, raster=raster,
-                authored_check_exclude_ids=[
-                    m.get("id") for m in (record.get("marks") or {}).get("created") or []
-                    if m.get("id") is not None])
+                authored_check_exclude_ids=_mark_ids,
+                # The reserved tick colour (Greg, 2026-10-02): the ticks are
+                # MARK_COLOUR here as in the model pass, and neither palette
+                # hands out a look-alike.
+                reserve_tick_colour=True, mark_ids=_mark_ids)
         except Exception as ex:
             _fault("annotation_pass_raised", "the annotation pass raised", ex)
             anno_out = {"view_id": view_id, "success": False,
@@ -592,7 +901,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                           "roll back; the view may keep marks, "
                                           "white overrides and filters")
         # ---- 6: READ BACK what the rollback left --------------------------
-        restore["view_state"] = view_state_verdict(before, view_state(view))
+        restore["view_state"] = view_state_verdict(before, view_state(view, primary))
         bad = sorted(k for k, v in restore["view_state"].items()
                      if v["status"] != "restored")
         if bad:
@@ -685,11 +994,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 _registration_payload("model", record,
                                       shared_colour=registration.MARK_COLOUR))
         if anno_out and anno_out.get("sidecar_path"):
-            colours = ((anno_out.get("metadata") or {}).get("color_assignment_map")
-                       or {})
             record["sidecar_writes"]["annotation"] = registration.annotate_sidecar(
                 anno_out["sidecar_path"], "registration_marks",
-                _registration_payload("annotation", record, colours_by_id=colours))
+                _registration_payload("annotation", record,
+                                      shared_colour=registration.MARK_COLOUR))
         # P1: the integrity record, completed with the rollback verdict and
         # the faults above -- still after the read-back, so it is final. A
         # write failure (registration_marks above, or a completion here) is a

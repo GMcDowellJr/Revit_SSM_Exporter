@@ -63,6 +63,15 @@ image's edge pixels had put six of them at −1). With no registered annotation
 capture, the extent is the model image alone and the view is flagged
 `no_registered_annotation`.
 
+**G-3a. A split crop shows only its bands** (probe Q7, 2026-10-05). The
+registered capture takes a split crop un-split, so it registers like any view,
+and records under `registration_marks.split_crop` the view-UV bands the view
+shows (one per region, before its sheet offset). `inside_crop_a` is then crop
+A's cells whose centre lies in a band, and the view is flagged `split_crop`;
+the hidden middle is captured, counted, and reported outside. A split whose
+bands are not recorded (a vertical split, an unread crop) or that the capture
+could not remove is refused, never gridded whole.
+
 A registration is used only if every source it records (model and annotation
 sidecars and TIFFs) still hashes to the file on disk. A stale registration,
 from a view recaptured without re-registering, refuses the view rather than

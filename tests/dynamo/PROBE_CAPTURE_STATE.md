@@ -6,8 +6,13 @@ evidence, **before** any capture code changes. The offline half is
 
 - **Round 1** (probe `2026-10-01.1`): Q1–Q5, run in Revit on 2026-10-01.
 - **Round 2** (probe `2026-10-02.1`, analyzer `1.1.0`): Q1b, Q3b, Q5b and Q6,
-  described under [Round 2](#round-2-probe-2026-10-021). Round 2 is the
-  default question set.
+  described under [Round 2](#round-2-probe-2026-10-021).
+- **Round 3** (probe `2026-10-02.5`, analyzer `1.3.0`): Q7, described under
+  [Round 3](#round-3-probe-2026-10-025). Round 3 is the default question set.
+
+**Round 3 is UNVERIFIED in Revit.** Only its pure parts are tested offline
+(the question set, the IN[9] keys, and the order in which split regions are
+removed); every Revit call in it is the question.
 
 **Round 2 is UNVERIFIED in Revit.** It has been smoke-run only against a
 throwaway fake of the Revit API, including the production code Q3b and Q6
@@ -357,6 +362,72 @@ group. Both views are gated together.
 - **Answers it:** a row with `rendered: false` next to the field that
   differs from 9948's. A hidden line-style subcategory, a filter on
   OST_Lines, or the template controlling V/G would each show there.
+  (Round 2's answer: the template hides `<Thin Lines>`; production change A
+  now picks a style whose subcategory the view does not hide. Since A, S1
+  measures A itself: `create_registration_marks` is production's.)
+
+**Q6b (probe `2026-10-02.2`, analyzer `1.2.0`): the tick-style fix and the
+Lines-hidden case.** Same views, four more groups, every write recorded
+with its read-back. **UNVERIFIED in Revit**, like round 2 was.
+- `detached_twin` -- S6: the template detached with PRODUCTION's detach
+  (`color_id_buffer._detach_view_template`, on the primary for a dependent
+  view), unmarked.
+- `production_order` -- S7: production's marks drawn with the template
+  attached, THEN the template detached, as the capture does it; twin S6.
+  Answers: does the style A chose with the template attached still draw
+  once it is detached?
+- `temporary_style` -- S4 unmarked; S5 the marks retargeted to production's
+  temporary weight-1 Lines subcategory (`_temporary_tick_style`), template
+  attached; then detached, S10. Twins S4 and S6. Answers: does a temporary
+  subcategory draw under a template that controls V/G, and after detaching?
+- `lines_unhidden` (B, not in production) -- S8: template detached,
+  OST_Lines unhidden, then ONLY the OST_Lines elements the unhide made
+  visible (collected after it, not before it) hidden one by one
+  (`stage_a_registration.hide_in_view`), unmarked; S9 marked. Refused
+  (`detach_failed`) when the detach does not take: with the template
+  attached `SetCategoryHidden(OST_Lines)` raises "Category cannot be
+  hidden". The analyzer's `q6_authored` row is S8 against S6, with each
+  write's `state` and `took_effect`: **0 changed pixels** means the view
+  still shows as authored. S9 against S8 is whether the ticks draw. Only
+  meaningful on a view whose template hides OST_Lines -- none of the three
+  defaults does; add one under `q6_extra_views`. On the others nothing is
+  revealed, so nothing is hidden and S8 is a true control.
+
+**Probe `2026-10-02.3` / analyzer `1.2.1`** (after run 20261001T175557, which
+imported a checkout without A and C): Q6 is REFUSED (`production_mismatch`)
+when the imported production lacks `tick_line_style`,
+`_temporary_tick_style`, `TEMPORARY_TICK_SUBCATEGORY` or
+`_detach_view_template`, naming the missing symbols and the checkout's root;
+`production_imports` records `module_files` and `missing_for_q6`. IN[9] must
+point at a checkout of PR #226's branch or later.
+
+## Round 3 (probe 2026-10-02.5)
+
+From run 1001-1950 (529 views). Q7 imports production, like Q3b and Q6, so
+`IN[9]` must point at PR #226's branch.
+
+**Q7 split: can a split crop be captured segment by segment?** HIGH ROOF PLAN
+(3300684) is a split crop: its mid ticks did not draw and its two fits
+disagreed on scale (18.75 and 23.00 px residuals). Steps, each in its own
+rolled-back group: `S0` as authored; `R<i>` with every split region except
+`i` removed (`RemoveSplitRegion`, highest index first); `U` with the split
+removed (`RemoveSplit`). Each step reads the crop box, the crop shape and its
+split regions (count, minimum, maximum, offset), and production's crop A,
+then exports. The answer is whether `R<i>` is a plain one-region view of
+segment `i` that the registered capture could take as it is. The restore
+gate includes `split_regions`, so a region left removed refuses every later
+step.
+
+**Q7 markers: does painting the ElevationMarker colour its text?** CABINET
+TYPES (17732958) painted its markers' viewers and left the marker body (the
+`ElevationMarker` element, which carries the text) black. Recorded: every
+`ElevationMarker` in the document that has a bbox in the view or is returned
+by its collector, and the view's `OST_Viewers` elements, each with its class,
+category, OwnerViewId, collector membership, hidden state and production's
+pass placement. Steps: `S0` as authored; `S1` the markers painted
+`(201, 3, 197)` with production's flat override; `S2` the markers and the
+viewers, the viewers `(3, 157, 203)`. The analyzer counts each colour and
+black per step; `black_removed_by_marker_paint` is S0 black minus S1 black.
 
 ## How to run
 
@@ -380,7 +451,7 @@ group. Both views are gated together.
 | `IN[5]` | Q4 elevation id | `2888380` | only if different |
 | `IN[6]` | Q5 view ids, a list | `[13663964, 11999340]` | only if different |
 | `IN[7]` | export pixel width | `2000` | optional |
-| `IN[8]` | questions: `"round2"`, `"round1"`, `"all"`, or a comma list of `q1_q2,q3,q4,q5,q1b,q3b,q5b,q6` | `"round2"` (empty means round 2) | optional |
+| `IN[8]` | questions: `"round3"`, `"round2"`, `"round1"`, `"all"`, or a comma list of `q1_q2,q3,q4,q5,q1b,q3b,q5b,q6,q7` | `"round3"` (empty means round 3) | optional |
 | `IN[9]` | round-2 options: a Dictionary or a JSON object (keys below). An unknown key is refused. | `{}` | `repo_root` |
 
    `IN[9]` keys:
@@ -393,6 +464,8 @@ group. Both views are gated together.
    | `q5b_views` | Q5b dependent views | `[13663964, 11999340]` |
    | `q6_views` | Q6 views | `[5823803, 9948, 11999340]` |
    | `q6_extra_views` | more Q6 views, appended | `[]` |
+   | `q7_split_views` | Q7 split-crop views | `[3300684]` (HIGH ROOF PLAN) |
+   | `q7_marker_views` | Q7 elevation-marker views | `[17732958]` (CABINET TYPES) |
 
    The simplest `IN[9]` is just the repository folder as a string, which is
    taken as `repo_root` once it is confirmed to hold `vop_interwoven`. For
@@ -534,5 +607,9 @@ instead, as described above.
   FlatColors; B: did the dependent follow the primary:
 - Q6 — `rendered` per mark, and the field that differs between 5823803 and
   9948; with vs without the crop write:
+- Q6b — S1 `rendered` on 5823803, 11999340, 9948 after A (expected true by
+  `changed_anywhere_px`); S7 (production order); S5/S10 (temporary
+  subcategory, attached / detached); `q6_authored` S8 vs S6 and S9 on a view
+  whose template hides OST_Lines:
 - `commit_without_effect`:
 - Verify — any field changed after the rollback?

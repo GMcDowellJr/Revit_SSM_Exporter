@@ -649,3 +649,66 @@ def test_bboxes_are_placed_with_the_registrations_mapping(tmp_path, monkeypatch)
                                     black=[(11.0, 10.5, 12.0, 11.5)])
     assert control["black"]["assigned"] == control["black"]["total"] > 0
     assert rec["black"] == control["black"]
+
+
+# --- split crops (probe Q7): only the bands the view shows --------------------
+#
+# The capture takes a split crop un-split and records the bands it shows; the
+# grid keeps only those. With bands u -1..5 and u 20..end, the model element
+# (u 8..12) is captured but not in the view. Mutations: ignoring the bands ->
+# the split test red; gridding a split whose bands are missing -> the refusal
+# tests red.
+
+BANDS = [[MODEL_BOUNDS[0], MODEL_BOUNDS[1], 5.0, MODEL_BOUNDS[3]],
+         [20.0, MODEL_BOUNDS[1], MODEL_BOUNDS[2], MODEL_BOUNDS[3]]]
+
+
+def _split_view(tmp_path, split_crop):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    anno_path, model_path, _c = _write_pair(tmp_path)
+    side = json.loads(model_path.read_text())
+    side["registration_marks"]["split_crop"] = split_crop
+    model_path.write_text(json.dumps(side))
+    reg.register(anno_path)
+    _run_meta(tmp_path)
+    grid.grid_view(model_path, tmp_path / "out")
+    return json.loads((tmp_path / "out" / "V_1.grid.json").read_text())
+
+
+def _shown_cells(tmp_path, spec):
+    return _cells_with(_arrays(tmp_path)["inside_crop_a"], spec)
+
+
+def test_a_split_view_shows_only_its_bands_in_the_FILE(tmp_path):
+    rec = _split_view(tmp_path, {"state": "removed", "bands_uv": BANDS})
+    assert rec["status"] == "value", rec.get("reason")
+    spec = rec["grid"]
+    assert "split_crop" in spec["flags"] and spec["split_bands_uv"] == BANDS
+    shown = _shown_cells(tmp_path, spec)
+    # Cell i holds u in [i - 1, i); its centre is i - 0.5 (origin u = -1).
+    assert all(c - 0.5 <= 5.0 or c - 0.5 >= 20.0 for c, _j in shown)
+    assert any(c - 0.5 < 5.0 for c, _j in shown) and any(c - 0.5 > 20.0 for c, _j in shown)
+    # The model element lies in the hidden middle: occupied, but not shown.
+    occ = rec["occupancy"]
+    assert occ["inside_crop_a"]["model_only"] + occ["inside_crop_a"]["overlap"] == 0
+    assert occ["outside_crop_a"]["model_only"] + occ["outside_crop_a"]["overlap"] > 0
+
+
+def test_control_an_unsplit_view_shows_all_of_crop_A(tmp_path):
+    rec = _split_view(tmp_path, {"state": "not_split"})
+    spec = rec["grid"]
+    assert "split_crop" not in spec["flags"] and spec["split_bands_uv"] is None
+    occ = rec["occupancy"]
+    assert occ["inside_crop_a"]["model_only"] + occ["inside_crop_a"]["overlap"] > 0
+
+
+@pytest.mark.parametrize("split_crop", [
+    {"state": "removed", "bands_uv": None, "bands_reason": "a vertical split"},
+    # As production writes a failed removal: the bands were computed BEFORE
+    # it, so they are present -- only the state says the view was not
+    # captured un-split.
+    {"state": "unavailable", "reason": "the split could not be removed",
+     "bands_uv": BANDS}])
+def test_a_split_without_usable_bands_is_refused_not_gridded_whole(tmp_path, split_crop):
+    rec = _split_view(tmp_path, split_crop)
+    assert rec["status"] == "refused" and "split" in rec["reason"]
