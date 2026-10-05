@@ -115,7 +115,8 @@ def test_every_registered_tiff_is_lossless_compressed_and_hashed_as_written(both
         assert on_disk["registered_tiff_sha256"] == _sha(path)
     counts = dict((t, tags.count(t)) for t in set(tags))
     print("B-G1: compression tags {0} (8 deflate, 5 lzw, 1 raw)".format(counts))
-    assert set(tags) <= {8, 5} and 1 not in tags
+    accepted = set(v for values in reg.LOSSLESS_TAG_VALUES.values() for v in values)
+    assert set(tags) <= accepted and 1 not in tags
 
 
 # --- B-G2 ---------------------------------------------------------------------------
@@ -264,3 +265,35 @@ def test_a_failed_rewrite_keeps_the_earlier_registered_tiff(tmp_path, monkeypatc
         reg.write_lossless_tiff(_pixels(), path)
     assert path.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == ["x.registered.tiff"]
+
+
+def test_a_rejected_deflate_tag_falls_back_to_lzw(tmp_path, monkeypatch):
+    """Codex, PR #230: a deflate attempt that wrote the wrong tag raised at
+    once, so the documented fallback to LZW was never tried."""
+    real_save = Image.Image.save
+
+    def _save(self, fp, format=None, **params):
+        if params.get("compression") == "tiff_deflate":
+            params.pop("compression")          # deflate accepted, raw written
+        return real_save(self, fp, format=format, **params)
+    monkeypatch.setattr(Image.Image, "save", _save)
+    path = tmp_path / "x.registered.tiff"
+    assert reg.write_lossless_tiff(_pixels(), path) == "tiff_lzw"
+    with Image.open(str(path)) as image:
+        assert image.tag_v2.get(reg.TIFF_COMPRESSION_TAG) == 5
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["x.registered.tiff"]
+
+
+def test_the_gate_accepts_every_tag_the_tool_accepts_and_no_other():
+    """Codex, PR #230: the gate kept its own {5, 8} and would fail a legacy
+    deflate (32946) TIFF the tool deliberately writes as valid. Composed:
+    the gate's verdict over each tag the tool accepts, and over raw."""
+    from tools import gate_registered_tiff_compression as gate
+    clean = {"B-G1_raw_count": 0, "B-G2_pixel_mismatches": [],
+             "B-G3_npz_differences": [], "B-G3_rollup_row_differences": 0}
+    for values in reg.LOSSLESS_TAG_VALUES.values():
+        for tag in values:
+            assert gate.passes(dict(clean, **{"B-G1_compression_tags": {tag: 1}})), tag
+    assert not gate.passes(dict(clean, **{"B-G1_compression_tags": {1: 1},
+                                          "B-G1_raw_count": 1}))
+    assert not gate.passes(dict(clean, **{"B-G1_compression_tags": {7: 1}}))   # JPEG

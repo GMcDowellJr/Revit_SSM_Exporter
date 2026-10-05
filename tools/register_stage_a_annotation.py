@@ -107,7 +107,8 @@ def write_lossless_tiff(pixels, path, codecs=LOSSLESS_TIFF_CODECS):
     Never falls back to raw: the uncompressed write was ~160x larger on a real
     view (241 MB vs a 1.5 MB unregistered capture). Each attempt writes a
     sibling temporary file, reads its compression tag back (a writer that
-    silently ignored the codec is refused), and only then replaces ``path``
+    silently ignored the codec has failed that attempt, and the next codec is
+    tried), and only then replaces ``path``
     -- so a failed write leaves an earlier registration's TIFF, and the
     record that hashes it, untouched (Codex, PR #230). If no codec writes,
     NoLosslessTiffCodec is raised."""
@@ -130,9 +131,11 @@ def write_lossless_tiff(pixels, path, codecs=LOSSLESS_TIFF_CODECS):
             with Image.open(str(tmp)) as written:
                 tag = written.tag_v2.get(TIFF_COMPRESSION_TAG)
             if tag not in LOSSLESS_TAG_VALUES.get(codec, ()):
-                raise NoLosslessTiffCodec(
-                    "{0} was written with TIFF compression tag {1!r}, not {2} "
-                    "({3})".format(path, tag, codec, LOSSLESS_TAG_VALUES.get(codec)))
+                # A failed attempt like any other: the next codec is tried
+                # (Codex, PR #230), and only all of them failing raises.
+                failures.append("{0}: wrote TIFF compression tag {1!r}, not {2}".format(
+                    codec, tag, LOSSLESS_TAG_VALUES.get(codec)))
+                continue
             os.replace(str(tmp), str(path))
             return codec
         finally:

@@ -7,7 +7,7 @@ compression), one with the tool's own lossless writer -- grids and rolls up
 both, and reports:
 
   B-G1  compression tag of every registered TIFF the tool wrote
-        (8 deflate, 5 LZW, 1 raw), as counts;
+        (8 or 32946 deflate, 5 LZW, 1 raw), as counts;
   B-G2  views whose DECODED registered pixels differ from the raw write's
         (shape, dtype, values -- not bytes);
   B-G3  views whose grid .npz arrays differ, and roll-up CSV rows that
@@ -46,6 +46,10 @@ from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 
 PATHLIKE = ("path", "sha256", "dir")
+# The compression tags the registration tool itself accepts -- derived from
+# it, never a second list that could disagree (Codex, PR #230).
+ACCEPTED_TAGS = frozenset(v for values in reg.LOSSLESS_TAG_VALUES.values()
+                          for v in values)
 
 
 def raw_writer(pixels, path, codecs=None):
@@ -158,6 +162,16 @@ def gate(run, work):
     }
 
 
+def passes(result):
+    """B-G1..B-G3 hold: every tag one the tool accepts, no raw, no pixel,
+    array or roll-up difference."""
+    return (result["B-G1_raw_count"] == 0
+            and set(result["B-G1_compression_tags"]) <= ACCEPTED_TAGS
+            and not result["B-G2_pixel_mismatches"]
+            and not result["B-G3_npz_differences"]
+            and result["B-G3_rollup_row_differences"] == 0)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run", help="a run directory (holding color_id_buffer/)")
@@ -174,12 +188,7 @@ def main(argv=None):
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
     if not result["views_registered"]:
         return 2
-    ok = (result["B-G1_raw_count"] == 0
-          and set(result["B-G1_compression_tags"]) <= {5, 8}
-          and not result["B-G2_pixel_mismatches"]
-          and not result["B-G3_npz_differences"]
-          and result["B-G3_rollup_row_differences"] == 0)
-    return 0 if ok else 1
+    return 0 if passes(result) else 1
 
 
 if __name__ == "__main__":
