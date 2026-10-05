@@ -1465,7 +1465,8 @@ def _build_manifest_vop_row_from_metrics(view_result, metrics, manifest_columns,
     return row
 
 
-def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None):
+def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None,
+                           run_id=None):
     """Export pipeline results to core + VOP CSV files.
 
     Args:
@@ -1511,7 +1512,9 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
     # Resolve run id / as-of date: run_id from the execution clock (plus a
     # tag), date the override's when it is a date (run_meta.run_identity).
     from vop_interwoven.run_meta import identity_file_date_str, run_identity
-    _identity = run_identity(date_override)
+    # ``run_id``: the caller's, when it minted one for the whole run (the
+    # pipeline's views_diagnostics carries the same id); else minted here.
+    _identity = run_identity(date_override, run_id=run_id)
     date_str = _identity["as_of_date"]
     run_id = _identity["run_id"]
     run_info_common = {

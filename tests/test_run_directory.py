@@ -25,6 +25,10 @@ from pathlib import Path
 
 import pytest
 
+# Imported HERE, before any test patches vop_interwoven.pipeline: entry_dynamo
+# binds process_document_views at import, so a first import made while a
+# test's fake capture is patched in would keep that fake for the session.
+import vop_interwoven.entry_dynamo  # noqa: F401
 from vop_interwoven import run_meta
 from vop_interwoven.config import Config
 from vop_interwoven.run_meta import (
@@ -458,3 +462,31 @@ def test_the_pipelines_files_join_the_exporters_run_after_midnight(tmp_path, mon
     process_document_views(types.SimpleNamespace(Title="T", PathName="p"), [], cfg)
     assert sorted(os.listdir(str(tmp_path))) == [
         "views_diagnostics_2026-10-05.json", "vop_view_element_map_2026-10-05.json"]
+
+
+def test_diagnostics_and_csv_rows_carry_one_run_id(tmp_path, monkeypatch, clock):
+    """Codex, PR #230 (second review): run_vop_pipeline_with_csv let the
+    pipeline mint the views_diagnostics id before processing and the CSV
+    export mint its own after, seconds apart. Driven through the entry point
+    and the REAL pipeline, with a clock that moves one second per read."""
+    import vop_interwoven.entry_dynamo as entry
+    seen = {}
+    from vop_interwoven import csv_export
+    real_export = csv_export.export_pipeline_to_csv
+
+    def _export(*a, **k):
+        out = real_export(*a, **k)
+        seen.update(out)
+        return out
+    monkeypatch.setattr(csv_export, "export_pipeline_to_csv", _export)
+    entry.run_vop_pipeline_with_csv(
+        types.SimpleNamespace(Title="T", PathName="p"), [],
+        cfg=Config(enable_color_id_buffer_stage_a=True),
+        output_dir=str(tmp_path), export_png=False, export_perf_csv=False,
+        date_override="2025-02-03")
+    # Control: the pipeline really ran (a raise inside it is swallowed by
+    # run_vop_pipeline, and would leave this test asserting on nothing).
+    diag = json.loads((tmp_path / "views_diagnostics_2025-02-03.json").read_text())
+    assert seen["run_id"] == "20261005T103600"
+    assert diag["metadata"]["run_id"] == diag["metadata"]["exporter_run_id"] == seen["run_id"]
+    assert diag["metadata"]["date"] == "2025-02-03"

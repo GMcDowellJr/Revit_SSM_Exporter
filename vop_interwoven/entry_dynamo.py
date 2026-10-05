@@ -518,6 +518,13 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
     except Exception:
         pass
 
+    # ONE identity for the run, minted before the pipeline runs: the
+    # pipeline's views_diagnostics / element map and every CSV row carry it
+    # (Codex, PR #230 -- minted separately, they read the clock seconds apart).
+    from vop_interwoven.run_meta import run_identity
+    run_id = run_identity(date_override)["run_id"]
+    cfg._view_element_map_run_id = run_id
+
     # Run pipeline
     pipeline_result = run_vop_pipeline(doc, view_ids, cfg)
 
@@ -557,7 +564,8 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
 
     # Export CSVs (always)
     t0 = time.perf_counter()
-    csv_result = export_pipeline_to_csv(pipeline_result, output_dir, cfg, doc, date_override=date_override)
+    csv_result = export_pipeline_to_csv(pipeline_result, output_dir, cfg, doc, date_override=date_override,
+                                        run_id=run_id)
     t1 = time.perf_counter()
     result["csv_export_ms"] = (t1 - t0) * 1000.0
 
