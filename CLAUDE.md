@@ -141,7 +141,9 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   element overrides and white link filters.
 - **The annotation TIFF is therefore not on the model lattice.**
   `tools/register_stage_a_annotation.py` fits the ticks in both captures and
-  resamples it onto the model lattice, nearest-neighbour, removing the ticks.
+  resamples it onto the model lattice, nearest-neighbour, removing the ticks,
+  and writes it LOSSLESSLY compressed (deflate, else LZW; no codec is a
+  refusal, never a raw fallback -- `write_lossless_tiff()`).
   Its canvas is union(model crop A, measured annotation rect) on the model's
   pixel phase, origin recorded; the model pass is sized from crop A alone and
   frame B is not recorded (`color_id_buffer_model_frame="crop_a"`).

@@ -14,7 +14,9 @@ in each sidecar under ``registration_marks``. This tool:
      colour becomes white -- and resamples it onto the model image's pixel
      grid, NEAREST NEIGHBOUR: colour IDs are identities, and a blended pixel
      would be a colour no element owns;
-  4. writes ``<annotation stem>.registered.tiff`` and, LAST, a
+  4. writes ``<annotation stem>.registered.tiff`` -- LOSSLESSLY compressed
+     (deflate, else LZW; never raw by silent fallback, never lossy: the
+     decoder reads exact palette colours) -- and, LAST, a
      ``<annotation stem>.registered.json`` record that names the TIFF's hash,
      so the record is never written ahead of the image it describes
      (CLAUDE.md defect class 4).
@@ -82,6 +84,53 @@ def sha256_file(path):
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+# Lossless only, in order of preference. A lossy codec (jpeg, webp) would
+# blend palette colours, and a colour ID no element owns is a wrong answer,
+# not a smaller file.
+LOSSLESS_TIFF_CODECS = ("tiff_deflate", "tiff_lzw")
+# TIFF tag 259 (Compression) values each codec may write: Pillow writes
+# "tiff_deflate" as Adobe Deflate (8); 32946 is the older deflate value.
+TIFF_COMPRESSION_TAG = 259
+LOSSLESS_TAG_VALUES = {"tiff_deflate": (8, 32946), "tiff_lzw": (5,)}
+
+
+class NoLosslessTiffCodec(RuntimeError):
+    """No lossless TIFF codec could write the registered image."""
+
+
+def write_lossless_tiff(pixels, path, codecs=LOSSLESS_TIFF_CODECS):
+    """Write ``pixels`` to ``path`` as a TIFF with the first codec in
+    ``codecs`` that writes, and return that codec's name.
+
+    Never falls back to raw: the uncompressed write was ~160x larger on a real
+    view (241 MB vs a 1.5 MB unregistered capture). If no codec writes --
+    Pillow built without libtiff, say -- any partial file is removed and
+    NoLosslessTiffCodec is raised. The written file's compression tag is
+    read back, so a writer that silently ignored the codec fails too."""
+    path = Path(path)
+    image = Image.fromarray(pixels)
+    failures = []
+    for codec in codecs:
+        try:
+            image.save(str(path), format="TIFF", compression=codec)
+        except (OSError, ValueError, KeyError) as ex:
+            failures.append("{0}: {1}: {2}".format(codec, type(ex).__name__, ex))
+            continue
+        with Image.open(str(path)) as written:
+            tag = written.tag_v2.get(TIFF_COMPRESSION_TAG)
+        if tag not in LOSSLESS_TAG_VALUES.get(codec, ()):
+            path.unlink()
+            raise NoLosslessTiffCodec(
+                "{0} was written with TIFF compression tag {1!r}, not {2} "
+                "({3})".format(path, tag, codec, LOSSLESS_TAG_VALUES.get(codec)))
+        return codec
+    if path.exists():
+        path.unlink()
+    raise NoLosslessTiffCodec(
+        "no lossless TIFF codec could write {0} (tried {1}); refusing to write "
+        "it uncompressed: {2}".format(path, ", ".join(codecs), "; ".join(failures)))
 
 
 def output_paths(anno_sidecar_path):
@@ -340,7 +389,7 @@ def register(anno_sidecar_path, model_sidecar_path=None):
                 "colours_lost_in_resample": [list(rm.unpack(c))
                                              for c in sorted(before - after)],
             }
-            Image.fromarray(out).save(str(tiff_out), format="TIFF")
+            write_lossless_tiff(out, tiff_out)
             record["registered_tiff"] = str(tiff_out)
             record["registered_tiff_sha256"] = sha256_file(tiff_out)
 
