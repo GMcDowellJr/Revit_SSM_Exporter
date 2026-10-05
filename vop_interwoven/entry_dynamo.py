@@ -573,8 +573,7 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
         perf_output_dir = getattr(cfg, "perf_csv_output_dir", None) or output_dir
         os.makedirs(perf_output_dir, exist_ok=True)
 
-        from vop_interwoven.run_meta import output_date_str
-        perf_filename = "views_perf_{0}.csv".format(output_date_str(date_override))
+        perf_filename = "views_perf_{0}.csv".format(csv_result["file_date_str"])
         perf_path = os.path.join(perf_output_dir, perf_filename)
 
         with open(perf_path, "w", newline="") as f:
@@ -583,7 +582,8 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
             for v in (pipeline_result.get("views", []) or []):
                 if not isinstance(v, dict):
                     continue
-                row = view_result_to_perf_row(v, date_override=date_override)
+                row = view_result_to_perf_row(v, date_override=date_override,
+                                              run_id=csv_result["run_id"])
                 if row:
                     w.writerow(row)
 

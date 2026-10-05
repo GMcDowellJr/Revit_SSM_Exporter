@@ -66,7 +66,7 @@ def output_date_str(date_override, now=None):
         return parsed.strftime("%Y-%m-%d")
     if isinstance(date_override, str) and date_override.strip():
         return date_override.strip()
-    return (now or datetime.now()).strftime("%Y-%m-%d")
+    return (now or _clock()).strftime("%Y-%m-%d")
 
 
 RUN_ID_CLOCK_FORMAT = "%Y%m%dT%H%M%S"
@@ -116,6 +116,16 @@ def run_identity(date_override, now=None, run_id=None):
     return {"run_id": run_id,
             "as_of_date": (parsed or clock).strftime("%Y-%m-%d"),
             "run_tag": tag}
+
+
+def identity_file_date_str(date_override, identity):
+    """output_date_str() for a run whose identity is already minted: with no
+    override, the files are named by the identity's as-of date rather than by
+    a second read of the clock, which a run straddling midnight would answer
+    with the next day (Codex, PR #230)."""
+    from datetime import datetime
+    return output_date_str(
+        date_override, now=datetime.strptime(identity["as_of_date"], "%Y-%m-%d"))
 
 
 def run_directory(root, identity):

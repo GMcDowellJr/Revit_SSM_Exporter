@@ -246,3 +246,21 @@ def test_a_failed_write_leaves_no_registered_record(tmp_path, monkeypatch):
         reg.register(anno_path)
     tiff_out, json_out = reg.output_paths(anno_path)
     assert not tiff_out.exists() and not json_out.exists()
+
+
+def test_a_failed_rewrite_keeps_the_earlier_registered_tiff(tmp_path, monkeypatch):
+    """Codex, PR #230: the write went straight to the destination, so a failed
+    re-registration destroyed the earlier TIFF while its record still hashed
+    it. The earlier file survives byte for byte, and no temporary is left."""
+    path = tmp_path / "x.registered.tiff"
+    reg.write_lossless_tiff(_pixels(), path)
+    before = path.read_bytes()
+
+    def _save(self, fp, format=None, **params):
+        Path(fp).write_bytes(b"partial")
+        raise OSError("encoder libtiff not available")
+    monkeypatch.setattr(Image.Image, "save", _save)
+    with pytest.raises(reg.NoLosslessTiffCodec):
+        reg.write_lossless_tiff(_pixels(), path)
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["x.registered.tiff"]

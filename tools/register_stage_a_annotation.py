@@ -105,29 +105,39 @@ def write_lossless_tiff(pixels, path, codecs=LOSSLESS_TIFF_CODECS):
     ``codecs`` that writes, and return that codec's name.
 
     Never falls back to raw: the uncompressed write was ~160x larger on a real
-    view (241 MB vs a 1.5 MB unregistered capture). If no codec writes --
-    Pillow built without libtiff, say -- any partial file is removed and
-    NoLosslessTiffCodec is raised. The written file's compression tag is
-    read back, so a writer that silently ignored the codec fails too."""
+    view (241 MB vs a 1.5 MB unregistered capture). Each attempt writes a
+    sibling temporary file, reads its compression tag back (a writer that
+    silently ignored the codec is refused), and only then replaces ``path``
+    -- so a failed write leaves an earlier registration's TIFF, and the
+    record that hashes it, untouched (Codex, PR #230). If no codec writes,
+    NoLosslessTiffCodec is raised."""
+    import os
+    import tempfile
     path = Path(path)
     image = Image.fromarray(pixels)
     failures = []
     for codec in codecs:
+        fd, tmp = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp",
+                                   dir=str(path.parent))
+        os.close(fd)
+        tmp = Path(tmp)
         try:
-            image.save(str(path), format="TIFF", compression=codec)
-        except (OSError, ValueError, KeyError) as ex:
-            failures.append("{0}: {1}: {2}".format(codec, type(ex).__name__, ex))
-            continue
-        with Image.open(str(path)) as written:
-            tag = written.tag_v2.get(TIFF_COMPRESSION_TAG)
-        if tag not in LOSSLESS_TAG_VALUES.get(codec, ()):
-            path.unlink()
-            raise NoLosslessTiffCodec(
-                "{0} was written with TIFF compression tag {1!r}, not {2} "
-                "({3})".format(path, tag, codec, LOSSLESS_TAG_VALUES.get(codec)))
-        return codec
-    if path.exists():
-        path.unlink()
+            try:
+                image.save(str(tmp), format="TIFF", compression=codec)
+            except (OSError, ValueError, KeyError) as ex:
+                failures.append("{0}: {1}: {2}".format(codec, type(ex).__name__, ex))
+                continue
+            with Image.open(str(tmp)) as written:
+                tag = written.tag_v2.get(TIFF_COMPRESSION_TAG)
+            if tag not in LOSSLESS_TAG_VALUES.get(codec, ()):
+                raise NoLosslessTiffCodec(
+                    "{0} was written with TIFF compression tag {1!r}, not {2} "
+                    "({3})".format(path, tag, codec, LOSSLESS_TAG_VALUES.get(codec)))
+            os.replace(str(tmp), str(path))
+            return codec
+        finally:
+            if tmp.exists():
+                tmp.unlink()
     raise NoLosslessTiffCodec(
         "no lossless TIFF codec could write {0} (tried {1}); refusing to write "
         "it uncompressed: {2}".format(path, ", ".join(codecs), "; ".join(failures)))

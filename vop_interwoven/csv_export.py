@@ -1510,7 +1510,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
     # Resolve run id / as-of date: run_id from the execution clock (plus a
     # tag), date the override's when it is a date (run_meta.run_identity).
-    from vop_interwoven.run_meta import output_date_str, run_identity
+    from vop_interwoven.run_meta import identity_file_date_str, run_identity
     _identity = run_identity(date_override)
     date_str = _identity["as_of_date"]
     run_id = _identity["run_id"]
@@ -1521,7 +1521,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
     # Filenames: the same date part as every other writer of the run (a tag
     # names the files as given; a date-shaped override by its date).
-    file_date_str = output_date_str(date_override)
+    file_date_str = identity_file_date_str(date_override, _identity)
     core_filename = f"views_core_{file_date_str}.csv"
     vop_filename = f"views_vop_{file_date_str}.csv"
     occlusion_filename = f"views_occlusion_{file_date_str}.csv"
@@ -1785,7 +1785,11 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     )
         raise
 
-    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "occlusion_csv_path": occlusion_path, "rows_exported": len(vop_rows)}
+    # run_id / file_date_str: so a caller writing more of this run's files
+    # (entry_dynamo's perf CSV) keys and names them as this run, rather than
+    # minting a second id (Codex, PR #230).
+    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "occlusion_csv_path": occlusion_path, "rows_exported": len(vop_rows),
+            "run_id": run_id, "file_date_str": file_date_str}
 
 # =============================================================================
 # STREAMING SUPPORT - Append to end of csv_export.py

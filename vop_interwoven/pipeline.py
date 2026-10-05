@@ -676,13 +676,17 @@ def process_document_views(
     # minting function). run_id here is per CALL; the run's own id is the
     # exporter's (cfg._view_element_map_run_id).
     date_override = getattr(cfg, "date_override", None)
-    from .run_meta import output_date_str, run_identity
+    from .run_meta import identity_file_date_str, run_identity
     _identity = run_identity(date_override)
     date_str = _identity["as_of_date"]
     run_id = _identity["run_id"]
     # Filenames take the override as views_core does (a tag stays the tag);
     # date_str above stays a date for the payload's "date" field.
-    file_date_str = output_date_str(date_override)
+    # The files are the RUN's (streaming merges every view into one), so they
+    # are named by the exporter's run identity when there is one -- a view
+    # processed after midnight still writes into the run's files.
+    file_date_str = identity_file_date_str(date_override, run_identity(
+        date_override, run_id=getattr(cfg, "_view_element_map_run_id", None)))
 
     # ────────────────────────────────────────────────────────────────────
     # Persistent view-level cache (disk-backed)

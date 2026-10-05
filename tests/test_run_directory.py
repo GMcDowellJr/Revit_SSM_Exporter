@@ -401,3 +401,60 @@ def test_register_grid_rollup_run_unchanged_on_a_new_run_dir(tmp_path, monkeypat
     assert summary["count_invariant"]["difference"] == 0
     assert summary["refused_runs"]["count"] == 0
     assert summary["denominator"] == 2
+
+
+# --- PR #230 review: one identity per run, read once --------------------------------
+
+def _views_payload(n=3):
+    return {"views": [{"view_id": i, "view_name": "V {0}".format(i), "success": True,
+                       "timings": {"total_ms": 1.0}} for i in range(1, n + 1)]}
+
+
+def test_perf_rows_carry_the_runs_one_run_id(tmp_path, monkeypatch, clock):
+    """Codex, PR #230: run_vop_pipeline_with_csv minted a fresh id for every
+    perf row once a date override stopped fixing the id. Driven through the
+    entry point, with a clock that moves one second per read."""
+    import vop_interwoven.entry_dynamo as entry
+    monkeypatch.setattr(entry, "run_vop_pipeline", lambda doc, ids, cfg: _views_payload())
+    out = entry.run_vop_pipeline_with_csv(
+        None, [1, 2, 3], cfg=Config(), output_dir=str(tmp_path), export_png=False,
+        export_perf_csv=True, date_override="2025-02-03")
+    with open(out["perf_csv_path"], newline="", encoding="utf-8") as handle:
+        perf = list(csv.DictReader(handle))
+    assert len(perf) == 3
+    assert {r["RunId"] for r in perf} == {"20261005T103600"}
+    assert {r["Date"] for r in perf} == {"2025-02-03"}
+    assert os.path.basename(out["perf_csv_path"]) == "views_perf_2025-02-03.csv"
+
+
+def test_a_run_straddling_midnight_names_its_files_by_its_own_date(
+        tmp_path, monkeypatch):
+    """Codex, PR #230: the id and the filename read the clock separately, so a
+    run minted at 23:59:59 could name its files for the next day."""
+    ticks = iter([datetime(2026, 10, 5, 23, 59, 59) + timedelta(seconds=s)
+                  for s in range(100)])
+    monkeypatch.setattr(run_meta, "_clock", lambda: next(ticks))
+    from vop_interwoven.streaming import StreamingExporter
+    exp = StreamingExporter(str(tmp_path), Config(enable_color_id_buffer_stage_a=True),
+                            _Doc("Tower.rvt"), export_png=False, export_csv=True,
+                            view_ids=[1])
+    assert exp.run_id == "20261005T235959" and exp.run_meta["date"] == "2026-10-05"
+    assert os.path.basename(exp.core_csv_path) == "views_core_2026-10-05.csv"
+    exp.finalize()
+
+
+def test_the_pipelines_files_join_the_exporters_run_after_midnight(tmp_path, monkeypatch):
+    """The pipeline runs once per view and merges each into the run's
+    views_diagnostics / view-element map files. A view processed after
+    midnight writes into the run's files, named by the exporter's run id --
+    not into a new day's. Driven through the real process_document_views."""
+    from vop_interwoven.pipeline import process_document_views
+    ticks = iter([datetime(2026, 10, 6, 0, 0, 1) + timedelta(seconds=s)
+                  for s in range(1000)])
+    monkeypatch.setattr(run_meta, "_clock", lambda: next(ticks))
+    cfg = Config(enable_color_id_buffer_stage_a=True)
+    cfg.output_dir = str(tmp_path)
+    cfg._view_element_map_run_id = "20261005T235959"
+    process_document_views(types.SimpleNamespace(Title="T", PathName="p"), [], cfg)
+    assert sorted(os.listdir(str(tmp_path))) == [
+        "views_diagnostics_2026-10-05.json", "vop_view_element_map_2026-10-05.json"]

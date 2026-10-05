@@ -305,8 +305,10 @@ class StreamingExporter:
         os.makedirs(perf_output_dir, exist_ok=True)
 
         # Core CSV
-        from vop_interwoven.run_meta import output_date_str
-        date_str = output_date_str(self.date_override)
+        # Named by this run's own as-of date, not a second read of the clock.
+        from vop_interwoven.run_meta import identity_file_date_str
+        date_str = identity_file_date_str(
+            self.date_override, {"as_of_date": self.as_of_date})
         self.date_str = date_str
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(csv_output_dir, core_filename)
