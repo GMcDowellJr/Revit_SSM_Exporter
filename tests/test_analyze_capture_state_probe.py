@@ -702,7 +702,7 @@ def test_a_round_1_probe_json_still_analyzes_with_empty_round_2_sections(tmp_pat
     q3 = [{"view_id": 11, "role": "test", "steps": [s1]}]
     _probe(tmp_path, [e1], {"Q3_S1_11.tiff": _flat(200, 100)}, q3=q3)
     rec = _run(tmp_path)
-    assert rec["status"] == "value" and rec["tool_version"] == "1.3.0"
+    assert rec["status"] == "value" and rec["tool_version"] == "1.3.1"
     assert (rec["writes"], rec["commit_without_effect"]) == ([], [])
     assert (rec["q1b"], rec["q3b"], rec["q5b"], rec["q6"]) == ([], [], [], [])
     assert rec["q6_authored"] == []

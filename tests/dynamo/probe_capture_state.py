@@ -62,7 +62,7 @@ import traceback
 
 
 PROBE_NAME = "capture_state"
-PROBE_VERSION = "2026-10-02.5"
+PROBE_VERSION = "2026-10-05.1"
 SCHEMA = "vop.probe.capture_state.v1"
 
 DEFAULT_Q1_VIEW = 6112047
@@ -1513,6 +1513,30 @@ def purge_cached_modules(package, modules=None):
     return len(names)
 
 
+def checkout_commit(root):
+    """``{"head": ..., "commit": sha or None}`` of the repository at ``root``,
+    read from .git without running git (Dynamo has no shell). A run then says
+    WHICH production it measured: two Q7 runs on 2026-10-05 could not."""
+    git = os.path.join(root, ".git")
+    with open(os.path.join(git, "HEAD")) as fh:
+        head = fh.read().strip()
+    if not head.startswith("ref: "):
+        return {"head": "detached", "commit": head}
+    ref = head[5:]
+    path = os.path.join(git, *ref.split("/"))
+    if os.path.isfile(path):
+        with open(path) as fh:
+            return {"head": ref, "commit": fh.read().strip()}
+    packed = os.path.join(git, "packed-refs")
+    if os.path.isfile(packed):
+        with open(packed) as fh:
+            for line in fh:
+                parts = line.strip().split(" ")
+                if len(parts) == 2 and parts[1] == ref:
+                    return {"head": ref, "commit": parts[0]}
+    return {"head": ref, "commit": None}
+
+
 def import_production(params):
     """``(record, modules)``. Q3b and Q6 call PRODUCTION code -- the crop
     helper and the registration-mark functions -- rather than copies, so the
@@ -1547,6 +1571,7 @@ def import_production(params):
                    "color_id_buffer": color_id_buffer,
                    "split_membership": split_stage_a_pass_membership, "Config": Config}
         return ({"state": "value", "root": root, "purged_cached_modules": purged,
+                 "checkout_commit": read(checkout_commit, root),
                  "module_files": dict((k, getattr(m, "__file__", None))
                                       for k, m in sorted(modules.items())
                                       if hasattr(m, "__file__")),
@@ -2371,6 +2396,40 @@ def run_q7_split_view(ctx, view, baseline):
     return out
 
 
+def bic_names_for(category_id):
+    """Every BuiltInCategory name whose value is ``category_id``."""
+    from Autodesk.Revit.DB import BuiltInCategory
+    names = []
+    for name in dir(BuiltInCategory):
+        if not name.startswith("OST_"):
+            continue
+        try:
+            if int(getattr(BuiltInCategory, name)) == int(category_id):
+                names.append(name)
+        except Exception as ex:
+            names.append("{0} (unreadable: {1})".format(name, type(ex).__name__))
+    return names
+
+
+def production_view_reference(ctx):
+    """The imported production's view-marker names, and what they resolve
+    to on this host: ``{names, resolved {id: name}, error}``."""
+    import sys as _sys
+    annotation = _sys.modules.get("vop_interwoven.revit.annotation")
+    if annotation is None:
+        raise RuntimeError("vop_interwoven.revit.annotation is not imported")
+    resolved = {}
+    ids, error = annotation.stage_a_view_reference_category_ids(names_out=resolved)
+    return {"names": list(annotation.STAGE_A_VIEW_REFERENCE_BIC_NAMES),
+            "resolved": dict((str(k), v) for k, v in sorted(resolved.items())),
+            "error": error}
+
+
+def _element(doc, element_id):
+    from Autodesk.Revit.DB import ElementId
+    return doc.GetElement(ElementId(int(element_id)))
+
+
 def _elevation_markers(doc):
     from Autodesk.Revit.DB import ElevationMarker, FilteredElementCollector
     return list(FilteredElementCollector(doc).OfClass(ElevationMarker))
@@ -2473,6 +2532,18 @@ def run_q7_marker_view(ctx, view, baseline):
                       "rows": viewer_rows}
     viewer_ids = [r["id"] for r in viewer_rows]
     out["colours"] = {"marker": list(Q7_MARKER_COLOUR), "viewer": list(Q7_VIEWER_COLOUR)}
+    # 2026-10-05.1: WHICH BuiltInCategory names the markers' categories have,
+    # and what production resolved its view-marker list to. Run 090757 placed
+    # all 15 ElevationMarkers no_owner_view after OST_Elevations was added,
+    # and nothing recorded whether that name resolves to their category.
+    cat_ids = sorted(set(value_of(r["category_id"]) for r in rows + viewer_rows
+                         if value_of(r["category_id"]) is not None))
+    out["category_names"] = dict((str(c), read(bic_names_for, c)) for c in cat_ids)
+    out["category_builtin"] = dict(
+        (str(value_of(r["category_id"])), read(
+            lambda e=_element(ctx.doc, r["id"]): str(e.Category.BuiltInCategory)))
+        for r in rows[:1] + viewer_rows[:1])
+    out["production_view_reference"] = read(production_view_reference, ctx)
 
     def _s0():
         out["steps"].append(_q7_export(ctx, view, "S0"))

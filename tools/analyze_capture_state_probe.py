@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.capture_state.analysis.v1"
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.3.1"
 ANALYSIS_NAME = "probe_capture_state_analysis.json"
 PROBE_GLOB = "probe_capture_state_*.json"
 
@@ -729,6 +729,12 @@ def q7_marker_rows(report, pixels):
                     "markers_shown": len(shown), "markers_by": _summary(shown),
                     "viewers": len(viewers), "viewers_by": _summary(viewers),
                     "steps": steps,
+                    # Probe 2026-10-05.1: the BuiltInCategory names behind the
+                    # markers' category ids, and what production resolved.
+                    "category_names": dict(
+                        (k, _value(v)) for k, v in (view.get("category_names") or {}).items()),
+                    "production_view_reference": _value(
+                        view.get("production_view_reference")),
                     "black_removed_by_marker_paint": (
                         black["S0"] - black["S1"] if "S0" in black and "S1" in black
                         else None)})
@@ -818,6 +824,8 @@ def analyse(probe_json, probe_dir):
     pairs_by_file = dict((p["file"], p) for p in pairs)
     writes, silent = writes_section(report)
     return {"status": "value", "probe_version": (report.get("probe") or {}).get("version"),
+            "checkout_commit": _value((report.get("production_imports") or {}).get(
+                "checkout_commit")),
             "images": images, "pairs_vs_s0": pairs,
             "failed_exports": failed, "q3": q3_rows(report, measured),
             "writes": writes, "commit_without_effect": silent,
@@ -985,6 +993,15 @@ def _print_round2(record):
                 r.get("refused") or ""))
         print("  black removed by painting the markers (S0 - S1): {0}".format(
             _short(v["black_removed_by_marker_paint"])))
+        for cat, names in sorted((v.get("category_names") or {}).items()):
+            print("  category {0}: BuiltInCategory {1}".format(cat, names))
+        pvr = v.get("production_view_reference") or {}
+        if pvr:
+            print("  production resolves {0}; error {1}".format(
+                pvr.get("resolved"), pvr.get("error")))
+    if record.get("checkout_commit"):
+        print()
+        print("production checkout: {0}".format(record["checkout_commit"]))
 
 
 def main(argv=None):
