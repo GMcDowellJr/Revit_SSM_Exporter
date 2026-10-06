@@ -260,6 +260,151 @@ run is refused, the count invariant fails, or on bad arguments.
 
 ---
 
+### `stage_a_runs_index.py` - One fact row per Stage A run under an export root
+
+Lists every run folder under an export root
+(`<root>/<project>/<model>/<as_of>__<run_id>/`) as one row of facts read from
+that run's own files. A downstream summarizer (Power Query / Power BI) reads
+this index plus the files it names and never has to list the export tree.
+**Facts only:** no "good", "latest" or "included" column; selection belongs
+to the consumer. **Read-only on run folders**: an `--out` at or under any folder
+holding `run_meta.json` is refused, including run folders the scan skipped. Standard library only.
+
+```bash
+python tools/stage_a_runs_index.py --root <Exports> [--out <dir>] [--max-depth 4]
+```
+
+**`--root` is the export root** (`…\VOP\Exports`), not a project or model
+folder. `model_key` is the path from the root to each run folder's parent, so
+pointed at a model folder (`…\Exports\KSRF\Hops_Interior_AR`) every run sits
+directly under the root and its `model_key` is empty. Such rows are still
+indexed, and each is listed under `scan.warnings` ("run folder parent is
+root; model_key undefined") and printed as a `WARNING` line. `model_key` is
+never invented from `doc_title`.
+
+**Discovery.** A run folder is any folder that directly holds `run_meta.json`.
+The walk lists one directory at a time (never a recursive glob), stops at a
+run folder, never enters `color_id_buffer/` or `analysis_grid/`, does not
+follow symlinks, and stops at `--max-depth` (root = 0). Every folder it skips
+is listed under `scan.skipped` with its reason: an unparsable `run_meta.json`,
+a run folder not named `<YYYY-MM-DD>__<run_id>`, a reserved name, a symlink,
+the depth cap, or a folder that cannot be listed.
+
+**Output**, in `--out` (default `<root>`): `runs_index.csv`, then
+`runs_index.json` (written last, naming the CSV's sha256). Each is written to a
+temporary name and atomically replaced, rebuilt from scratch every time. Rows
+are sorted by (`model_key`, `as_of_date`, `run_id`). The CSV is UTF-8 with
+RFC 4180 quoting and every value is a string. **An empty cell means absent or
+not applicable, never zero.** Two runs over an unchanged tree give a
+byte-identical CSV; the JSON differs only in `generated_utc`. The JSON
+carries `schema` (`vop.stage_a.runs_index.v1`), `tool_version`,
+`generated_utc`, `root`, `columns`, `rows` (the JSON-valued columns as real
+objects), `scan` (folders visited, run folders found and indexed, skipped
+folders with reasons, max depth reached) and `csv_sha256`.
+
+**Column contract.** Every `*_path_rel` and `run_dir_rel` is relative to
+`--root` and uses `/`. Each file-derived group has a `*_state` (`value`,
+`absent`, `unreadable`, plus `ambiguous` for a dated file matched more than
+once) and a `*_reason` that is always filled when the state is not `value`. It
+can also annotate a `value`, for example a summary whose CSV is missing. The
+CSV a summary or inventory names is used only if it is a bare file name beside
+the record; an absolute or `..` path is reported in `*_reason`, never followed.
+A summary whose `runs` carry a non-string `run_id` leaves `rollup_run_ids` and
+`chk_rollup_run_id_eq_run_meta` empty, with the reason. A CSV or dated file that
+is a symlink resolving outside its folder is never hashed or counted; it is
+reported in `*_reason`. `n_runs_same_model_as_of` is empty for a run with no
+`as_of_date`, since an unknown date matches nothing.
+
+| group | columns | source |
+|---|---|---|
+| identity | `model_key` (root to the run's parent; never `doc_title`), `run_dir_rel`, `run_dir_name`, `run_id` (opaque, never parsed), `run_tag`, `as_of_date` (run_meta `date`), `doc_title`, `doc_path`, `config_hash`, `git_commit`, `exporter_version`, `revit_version_number`, `run_meta_schema`, `finalized` | `run_meta.json`, keys below |
+| views | `views_requested_count`, `views_count`, `capture_status_counts` (JSON) | `run_meta.json` |
+| roll-up | `rollup_state`, `rollup_reason`, `rollup_location` (`top` \| `analysis_grid`), `rollup_csv_path_rel`, `rollup_summary_path_rel`, `rollup_schema`, `rollup_tool_version`, `rollup_csv_sha256` (re-hashed), `rollup_csv_sha256_match`, `rollup_class_map_sha256`, `rollup_class_map_version`, `rollup_refused_runs_count`, `rollup_count_invariant_difference`, `rollup_row_status_counts`, `rollup_registration_state_counts`, `rollup_flag_counts`, `rollup_run_ids` (JSON) | `grid_rollup.summary.json`, at the run's top level first, then `analysis_grid/` |
+| kinds | `kinds_state`, `kinds_reason`, `kinds_location`, `kinds_csv_path_rel`, `kinds_schema`, `kinds_tool_version`, `kinds_class_map_sha256`, `kinds_csv_sha256`, `kinds_csv_sha256_match`, `kinds_grid_used`, `kinds_grid_denominator` | `kinds_inventory.json`, same search order |
+| per-run files | `views_core_state` / `_reason` / `_path_rel` / `_rows` (data rows), `element_map_*`, `diagnostics_*` | `views_core_<d>.csv`, `vop_view_element_map_<d>.json`, `views_diagnostics_<d>.json` at the run's top level; presence only |
+| consistency | `chk_folder_date_eq_as_of`, `chk_folder_run_id_eq_run_meta`, `chk_rollup_run_id_eq_run_meta` (the summary's run ids are exactly this run's), `chk_kinds_class_map_eq_rollup` | `true` / `false`, empty when not computable |
+| group | `n_runs_same_model_as_of`, `n_config_hash_in_model` (distinct non-empty hashes) | across rows |
+| run_meta | `run_meta_unavailable` (JSON: field -> reason; empty when none) | `run_meta.json` |
+
+The run_meta keys each identity column is read from:
+
+| column | run_meta.json key | shape written by `run_meta.build_run_meta` |
+|---|---|---|
+| `run_id`, `run_tag`, `as_of_date`, `config_hash`, `exporter_version`, `run_meta_schema`, `finalized` | `run_id`, `run_tag`, `date`, `config_hash`, `exporter_version`, `schema`, `finalized` | plain value (`run_tag` is null unless the run had a non-date override such as `PR_221`) |
+| `doc_title`, `doc_path`, `git_commit` | `doc_title.value`, `doc_path.value`, `git_commit.value` | three-valued: `{"state": "value", "value": …}` or `{"state": "unavailable", "reason": …}` |
+| `revit_version_number` | `revit_version.value.version_number` | three-valued, the value an object |
+
+A three-valued field that is `unavailable` gives an empty cell, with its reason
+in `run_meta_unavailable`. A bare value from an older, flat record is read as
+the value when it has the expected shape: a scalar, or an object for
+`revit_version`. Any other shape gives an empty cell, with "malformed: …" in
+`run_meta_unavailable`. `git_commit` is the full 40-character SHA that `run_meta.git_commit()`
+reads from `.git`. `exporter_version` is copied as written. New runs carry
+`<__version__>+src.<12 hex>` (e.g. `1.0.0+src.990afc1a9a68`). The hex is a
+sha256 of the exporter's own `.py` source and the `.json` data it reads at run
+time, such as the metrics manifest (`run_meta.source_fingerprint()`,
+recorded in full under run_meta `exporter_source`), so it changes with any
+code change without a manual bump, and it works in a deployed copy that has no
+`.git`, where `git_commit` is unavailable. Two runs share an `exporter_version`
+exactly when they ran the same code. Older runs carry the package name
+`vop_interwoven` there; that name is now the separate `exporter` key.
+
+The roll-up and kinds file names are read from those tools' own sources, not
+copied, and a test asserts they agree with the imported modules.
+
+Exit 0 when at least one run is indexed and every run is `finalized` with
+`rollup_state` `value`; 1 for anything else indexed; 2 when no run is indexed
+(the index is still written), on bad arguments, or when the output cannot be
+written.
+
+Tests: `tests/test_stage_a_runs_index.py` (fixtures A-I; the roll-up and kinds
+outputs are written by the real producers).
+
+---
+
+### `analysis_version.py` - Release version from declared analysis impact
+
+The exporter's `MAJOR.MINOR.PATCH` (`vop_interwoven/_version.py`) is never
+edited by hand. Every commit that changes `vop_interwoven/` declares whether it
+breaks comparability with earlier runs (`Analysis-Impact: none|breaking`, a `!`
+after the type, or a `BREAKING CHANGE:` footer), and the version is computed
+from those declarations. The rules for writing the declaration are in
+CLAUDE.md ("Analysis impact").
+
+```bash
+# The PR gate (.github/workflows/analysis-impact.yml):
+python tools/analysis_version.py check --base <base sha> --head <head sha>
+# The release decision (.github/workflows/release-version.yml, on push to main):
+python tools/analysis_version.py bump [--write] [--github-output FILE]
+```
+
+**`check`**: every non-merge commit in base..head that changes `vop_interwoven/`
+(the version file aside) must carry a declaration. A declaration that
+contradicts itself (`Analysis-Impact: none` with a `!`) or has an unknown value
+fails. A commit made before this tool existed is exempt, decided by whether the
+commit's parent contains the tool. It prints the commits seen, those touching
+capture code, and how many were checked, exempt, declared and failing. Exit 0,
+1 (undeclared or contradictory), or 2 (git error or bad arguments). The
+workflow then commits an undeclared probe and requires exit 1, so a check that
+has stopped working fails CI rather than staying green.
+
+**`bump`**: the commits since the last `vX.Y.Z` tag decide the release. Any
+breaking commit gives MAJOR; otherwise `feat` gives MINOR; otherwise `fix`,
+`perf` or `refactor` gives PATCH; otherwise there is no release. With no
+`vX.Y.Z` tag yet, the current file version is tagged as the baseline and
+nothing is bumped. A version file that disagrees with the last tag is refused
+(exit 2). Other tags such as `baseline/v1-freeze` are not releases. The
+workflow commits `chore(release): vX.Y.Z` and pushes it together with the tag
+(`--atomic`).
+
+run_meta.json's `exporter_version` is `<this version>+src.<source
+fingerprint>`, so two runs are comparable for analysis when their MAJOR
+matches.
+
+Tests: `tests/test_analysis_version.py` (on throwaway git repositories).
+
+---
+
 ### `compare_golden.py` - Golden Baseline Comparison
 
 Compares current exporter outputs against golden baseline to detect regressions.

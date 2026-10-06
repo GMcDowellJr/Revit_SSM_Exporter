@@ -19,9 +19,23 @@ Every field that is READ from the environment is three-valued: a value, or
 import json
 import os
 
+from . import __version__ as _PACKAGE_VERSION
+
 RUN_META_SCHEMA = "vop.run_meta.v1"
 RUN_META_FILENAME = "run_meta.json"
-EXPORTER_VERSION = "vop_interwoven"
+# The exporter's NAME and its VERSION are separate keys. exporter_version used
+# to hold the package name, which identified nothing. It is now
+# "<__version__>+src.<12 hex>": the package's declared version plus a
+# fingerprint of its own source (source_fingerprint()), so it changes with
+# every code change and nobody has to bump anything. Unlike git_commit it
+# needs no .git -- a copy deployed into Dynamo fingerprints the same.
+EXPORTER_NAME = "vop_interwoven"
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+SOURCE_FINGERPRINT_CHARS = 12
+# What the fingerprint covers: the code, and the data files the code reads at
+# run time (metrics/manifest/metrics_manifest.v1.json selects metrics,
+# invariants and CSV columns). Docs (.md) and scripts (.sh) do not run.
+FINGERPRINT_SUFFIXES = (".py", ".json")
 
 
 def _parse_override_date(date_override):
@@ -234,6 +248,59 @@ def git_commit(start_dir=None):
         os.path.dirname(__file__)))
 
 
+def source_fingerprint(package_dir=None):
+    """The sha256 of the package's own source and runtime data, three-valued.
+
+    Every file with a ``FINGERPRINT_SUFFIXES`` suffix under ``package_dir``
+    (default: this package), skipping ``__pycache__``, in sorted order of its
+    ``/``-separated relative path.
+    Each file contributes its path, its length and its bytes, so a rename, an
+    added or a removed file changes the hash as well as an edit does. CRLF is
+    read as LF: a Windows checkout (git autocrlf) and a POSIX checkout of the
+    same commit fingerprint the same. Returns ``{"state": "value", "value":
+    {"sha256", "files"}}``, or ``unavailable`` with the reason -- a file that
+    cannot be read, and a directory that cannot be listed, are never skipped
+    silently: either makes the fingerprint unavailable."""
+    import hashlib
+    root = os.path.abspath(package_dir or PACKAGE_DIR)
+    paths, walk_errors = [], []
+    # os.walk drops an unlistable directory unless told otherwise; a hash of
+    # the readable subset would claim the identity of code it never saw.
+    for folder, dirs, files in os.walk(root, onerror=walk_errors.append):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for name in files:
+            if name.endswith(FINGERPRINT_SUFFIXES):
+                full = os.path.join(folder, name)
+                paths.append((os.path.relpath(full, root).replace(os.sep, "/"), full))
+    if walk_errors:
+        ex = walk_errors[0]
+        return _unavailable("{0}: {1}".format(type(ex).__name__, ex))
+    if not paths:
+        return _unavailable("no {0} files under {1}".format(
+            "/".join(FINGERPRINT_SUFFIXES), root))
+    digest = hashlib.sha256()
+    try:
+        for rel, full in sorted(paths):
+            with open(full, "rb") as handle:
+                data = handle.read().replace(b"\r\n", b"\n")
+            digest.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode("ascii")
+                          + b"\0" + data)
+    except (IOError, OSError) as ex:
+        return _unavailable("{0}: {1}".format(type(ex).__name__, ex))
+    return _value({"sha256": digest.hexdigest(), "files": len(paths)})
+
+
+def exporter_version(package_dir=None):
+    """``(version, source)``: ``"<__version__>+src.<12 hex>"`` and the
+    three-valued source_fingerprint() it came from. With no fingerprint the
+    version is ``__version__`` alone and ``source`` says why."""
+    source = source_fingerprint(package_dir)
+    if source["state"] != "value":
+        return _PACKAGE_VERSION, source
+    return "{0}+src.{1}".format(
+        _PACKAGE_VERSION, source["value"]["sha256"][:SOURCE_FINGERPRINT_CHARS]), source
+
+
 def revit_version(doc):
     if doc is None:
         return _unavailable("no document")
@@ -252,6 +319,7 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
     compute_config_hash(cfg) -- the value views_core.ConfigHash carries.
     ``date_str`` is the run's AS-OF date (run_identity()), not its
     execution date; ``run_dir`` the run directory (run_directory())."""
+    version, source = exporter_version()
     return {
         "schema": RUN_META_SCHEMA,
         "finalized": False,
@@ -263,7 +331,9 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
         "run_dir": run_dir,
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
-        "exporter_version": EXPORTER_VERSION,
+        "exporter": EXPORTER_NAME,
+        "exporter_version": version,
+        "exporter_source": source,
         "git_commit": git_commit(),
         "revit_version": revit_version(doc),
         "config_hash": config_hash,

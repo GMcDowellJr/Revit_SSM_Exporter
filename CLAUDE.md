@@ -353,6 +353,31 @@ Follow conventional commits:
 
 Scopes include: `pipeline`, `geometry`, `silhouette`, `areal`, `collection`, `diagnostics`, `csv`, `png`
 
+### Analysis impact (required on every commit that changes `vop_interwoven/`)
+
+Say whether the commit breaks comparability with earlier runs. Breaking means
+the same view, captured before and after, could give different analysis
+results: classification, grid, registration, which elements are captured,
+what a field means. Use one of:
+
+- `Analysis-Impact: none` as a trailer: same results, e.g. a refactor, a
+  performance change, a new diagnostic field, or a capture that failed before
+  and now succeeds the same way.
+- `Analysis-Impact: breaking` as a trailer, or `!` after the type
+  (`fix(grid)!: ...`), or a `BREAKING CHANGE: ...` footer.
+
+If in doubt, say `breaking`. A wrongly declared `none` is the costly error:
+analysis would compare runs that are not comparable.
+
+The `analysis-impact` PR check fails any commit that changes `vop_interwoven/`
+without one. `release-version` reads the same declarations on merge to `main`
+and writes `vop_interwoven/_version.py`, tagged `vX.Y.Z`: breaking -> MAJOR,
+`feat` -> MINOR, `fix`/`perf`/`refactor` -> PATCH. Never edit `_version.py` by
+hand; the tool refuses a file that disagrees with the last tag. run_meta.json
+records `exporter_version` as `<that version>+src.<source fingerprint>`, so
+analysis may compare runs that share a MAJOR. Both live in
+`tools/analysis_version.py`.
+
 ### Automated Workflows
 
 **Discarded-exception rule reconciliation** (`.github/workflows/semgrep-reconcile.yml`):

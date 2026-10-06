@@ -10,6 +10,7 @@ import json
 import os
 import types
 
+import vop_interwoven
 from vop_interwoven.config import Config
 from vop_interwoven.csv_export import (
     STAGE_A_CORE_CSV_HEADER, compute_config_hash, stage_a_capture_status,
@@ -71,7 +72,9 @@ def test_stage_a_run_writes_views_core_and_one_snapshot_only(tmp_path):
     assert snap["run_id"] == exp.run_id and snap["date"] == "2026-09-29"
     assert snap["doc_title"] == {"state": "value", "value": "Tower.rvt"}
     assert snap["revit_version"]["value"]["version_number"] == "2024"
-    assert snap["exporter_version"] == "vop_interwoven"
+    assert snap["exporter"] == "vop_interwoven"
+    assert snap["exporter_version"].startswith(vop_interwoven.__version__ + "+src.")
+    assert snap["exporter_source"]["state"] == "value"
     assert snap["git_commit"]["state"] == "value" and len(snap["git_commit"]["value"]) == 40
     assert snap["views_requested"] == [4242, 7]
     assert [(v["view_id"], v["capture_status"]) for v in snap["views"]] == [

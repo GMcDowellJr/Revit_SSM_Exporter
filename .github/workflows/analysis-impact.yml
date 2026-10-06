@@ -1,0 +1,58 @@
+name: Analysis impact declared
+
+on:
+  pull_request:
+
+# Every commit in a PR that changes vop_interwoven/ (the code that runs inside
+# a capture) must say whether it breaks analysis comparability:
+#   Analysis-Impact: none | breaking      (trailer)
+#   or a "!" after the type / a BREAKING CHANGE: footer   (breaking)
+# The release-version workflow reads the same declarations to bump MAJOR, so
+# an undeclared breaking change would ship as a patch. Rules and parser:
+# tools/analysis_version.py (stdlib only; nothing to install).
+
+jobs:
+  analysis-impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The tool prints how many commits it saw, how many touched capture
+      # code, and how many it checked -- a green over zero checked commits
+      # says so rather than passing silently.
+      - name: Check every capture-code commit declares its analysis impact
+        run: |
+          python tools/analysis_version.py check \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+      # FALSIFY THE CHECK ON EVERY RUN. A step that only ever asserts green
+      # cannot tell a working check from one that has stopped looking. Commit
+      # an undeclared change to capture code on a throwaway detached HEAD and
+      # REQUIRE exit 1.
+      - name: Falsify -- an undeclared capture-code commit must fail
+        run: |
+          git config user.email "ci@example.invalid"
+          git config user.name "analysis-impact falsification"
+          git checkout -q --detach HEAD
+          echo "# falsification probe" >> vop_interwoven/__init__.py
+          git commit -q -am "fix(pipeline): probe with no declaration"
+          set +e
+          python tools/analysis_version.py check --base HEAD~1 --head HEAD
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "Expected exit 1 for an undeclared capture-code commit, got $code."
+            echo "The check above is not proving anything."
+            exit 1
+          fi
+          echo "Falsified as expected (exit 1)."
