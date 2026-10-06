@@ -55,7 +55,8 @@ def test_written_version_is_release_plus_source_fingerprint(tmp_path):
     assert on_disk["exporter_source"]["state"] == "value"
     assert on_disk["exporter_source"]["value"]["sha256"].startswith(m.group("src"))
     assert on_disk["exporter_source"]["value"]["files"] == len(
-        [p for p in PACKAGE.rglob("*.py") if "__pycache__" not in p.parts])
+        [p for p in PACKAGE.rglob("*") if p.suffix in run_meta.FINGERPRINT_SUFFIXES
+         and "__pycache__" not in p.parts])
     assert on_disk["exporter"] == "vop_interwoven" == run_meta.EXPORTER_NAME
 
 
@@ -87,7 +88,32 @@ def test_any_code_change_changes_the_version(copy, change):
     assert VERSION.match(after)
 
 
-def test_non_python_files_do_not_change_it(copy):
+def test_the_runtime_metrics_manifest_changes_it(copy):
+    """Config reads this JSON by default to choose metrics and CSV columns."""
+    manifest = copy / "metrics" / "manifest" / "metrics_manifest.v1.json"
+    assert manifest.is_file()
+    before = _sha(copy)
+    manifest.write_text(manifest.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    assert _sha(copy) != before
+
+
+def test_an_unlistable_directory_is_reported_not_skipped(copy, monkeypatch):
+    """os.walk drops a directory it cannot list unless told; the fingerprint
+    must not then hash the readable subset as if it were the package."""
+    real_scandir = os.scandir
+
+    def failing_scandir(path="."):
+        if os.path.basename(str(path)) == "core":
+            raise PermissionError("denied: core")
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", failing_scandir)
+    version, source = run_meta.exporter_version(str(copy))
+    assert source["state"] == "unavailable" and "denied: core" in source["reason"]
+    assert version == vop_interwoven.__version__
+
+
+def test_docs_and_caches_do_not_change_it(copy):
     before = _sha(copy)
     (copy / "notes.md").write_text("doc change\n", encoding="utf-8")
     os.makedirs(str(copy / "__pycache__"), exist_ok=True)

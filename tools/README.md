@@ -310,7 +310,10 @@ can also annotate a `value`, for example a summary whose CSV is missing. The
 CSV a summary or inventory names is used only if it is a bare file name beside
 the record; an absolute or `..` path is reported in `*_reason`, never followed.
 A summary whose `runs` carry a non-string `run_id` leaves `rollup_run_ids` and
-`chk_rollup_run_id_eq_run_meta` empty, with the reason.
+`chk_rollup_run_id_eq_run_meta` empty, with the reason. A CSV or dated file that
+is a symlink resolving outside its folder is never hashed or counted; it is
+reported in `*_reason`. `n_runs_same_model_as_of` is empty for a run with no
+`as_of_date`, since an unknown date matches nothing.
 
 | group | columns | source |
 |---|---|---|
@@ -332,11 +335,14 @@ The run_meta keys each identity column is read from:
 | `revit_version_number` | `revit_version.value.version_number` | three-valued, the value an object |
 
 A three-valued field that is `unavailable` gives an empty cell, with its reason
-in `run_meta_unavailable`. A bare value (an older, flat record) is read as the
-value. `git_commit` is the full 40-character SHA that `run_meta.git_commit()`
+in `run_meta_unavailable`. A bare value from an older, flat record is read as
+the value when it has the expected shape: a scalar, or an object for
+`revit_version`. Any other shape gives an empty cell, with "malformed: …" in
+`run_meta_unavailable`. `git_commit` is the full 40-character SHA that `run_meta.git_commit()`
 reads from `.git`. `exporter_version` is copied as written. New runs carry
 `<__version__>+src.<12 hex>` (e.g. `1.0.0+src.990afc1a9a68`). The hex is a
-sha256 of the exporter's own `.py` source (`run_meta.source_fingerprint()`,
+sha256 of the exporter's own `.py` source and the `.json` data it reads at run
+time, such as the metrics manifest (`run_meta.source_fingerprint()`,
 recorded in full under run_meta `exporter_source`), so it changes with any
 code change without a manual bump, and it works in a deployed copy that has no
 `.git`, where `git_commit` is unavailable. Two runs share an `exporter_version`

@@ -518,3 +518,75 @@ def test_root_as_model_folder_warns_and_never_invents_model_key(tree):
         for r in rows]
     # control: from the export root, no row warns
     assert _index(root)[2]["scan"]["warnings"] == []
+
+
+# --- review findings, second round (PR #231) ---------------------------------------
+
+def test_out_under_root_is_deterministic_from_the_first_run(tree):
+    """--out names a directory under --root that does not exist yet: it is
+    created before the scan, so the first and second runs scan the same tree."""
+    root, _runs = tree
+    out = root / "indexes" / "today"
+    _index(root, "--out", str(out))
+    first = json.loads((out / idx.JSON_NAME).read_text())
+    _index(root, "--out", str(out))
+    second = json.loads((out / idx.JSON_NAME).read_text())
+    first.pop("generated_utc")
+    second.pop("generated_utc")
+    assert first == second
+
+
+def test_symlinked_files_that_escape_the_run_are_not_followed(tree):
+    root, runs = tree
+    outside = root.parent / "elsewhere"
+    outside.mkdir()
+    (outside / "views_core_2025-04-05.csv").write_text("RunId\n1\n2\n3\n4\n5\n")
+    (outside / "grid_rollup.csv").write_text("x\n")
+    a = runs["A"]
+    (a / "views_core_2025-04-05.csv").unlink()
+    (a / "views_core_2025-04-05.csv").symlink_to(outside / "views_core_2025-04-05.csv")
+    (a / idx.ROLLUP_CSV).unlink()
+    (a / idx.ROLLUP_CSV).symlink_to(outside / "grid_rollup.csv")
+    rows = _by_run(_index(root)[1])
+    r = rows["20261006T084152"]
+    assert r["views_core_state"] == "unreadable" and "resolves outside" in r["views_core_reason"]
+    assert r["views_core_rows"] == "" and r["views_core_path_rel"] == ""
+    assert r["rollup_csv_path_rel"] == "" and r["rollup_csv_sha256"] == ""
+    assert "resolves outside" in r["rollup_reason"]
+    # control: a link that stays inside the run is still a value
+    b = runs["B"]
+    real = b / "views_core_2025-04-05.csv"
+    real.rename(b / "views_core_real.data")
+    real.symlink_to(b / "views_core_real.data")
+    assert _by_run(_index(root)[1])["20261006T090000"]["views_core_state"] == "value"
+
+
+@pytest.mark.parametrize("key, bad", [
+    ("doc_title", {"value": "no state key"}),
+    ("git_commit", ["9a6ec75"]),
+    ("revit_version", {"state": "value", "value": "2024"}),     # not an object
+])
+def test_malformed_wrapped_fields_are_reported(tmp_path, key, bad):
+    root = tmp_path / "r"
+    run = make_run(root, "P/M", "2025-01-01", "BAD")
+    meta = json.loads((run / run_meta.RUN_META_FILENAME).read_text())
+    meta[key] = bad
+    (run / run_meta.RUN_META_FILENAME).write_text(json.dumps(meta))
+    r = _index(root)[1][0]
+    column = "revit_version_number" if key == "revit_version" else key
+    assert r[column] == ""
+    assert "malformed" in json.loads(r["run_meta_unavailable"])[key]
+
+
+def test_unknown_dates_are_not_counted_as_the_same_date(tmp_path):
+    root = tmp_path / "r"
+    for rid in ("U1", "U2"):
+        run = make_run(root, "P/M", "2025-01-01", rid)
+        meta = json.loads((run / run_meta.RUN_META_FILENAME).read_text())
+        meta.pop("date")
+        (run / run_meta.RUN_META_FILENAME).write_text(json.dumps(meta))
+    make_run(root, "P/M", "2025-01-02", "K1")
+    make_run(root, "P/M", "2025-01-02", "K2")
+    rows = _by_run(_index(root)[1])
+    assert rows["U1"]["n_runs_same_model_as_of"] == rows["U2"]["n_runs_same_model_as_of"] == ""
+    assert rows["K1"]["n_runs_same_model_as_of"] == "2"                  # control

@@ -300,6 +300,22 @@ def _counts_obj(value):
     return None
 
 
+def _escapes(path, folder):
+    """A reason when ``path`` resolves (through a symlink) to anything but a
+    file directly in ``folder``, else None. The lexical name checks cannot
+    see a link; the index must not hash or count data from outside the run
+    while reporting an in-run path."""
+    try:
+        target = Path(path).resolve()
+        home = Path(folder).resolve()
+    except (OSError, RuntimeError) as ex:
+        return "{0} cannot be resolved: {1}".format(Path(path).name, _err(ex))
+    if target.parent != home:
+        return "{0} resolves outside {1} (a link to {2})".format(
+            Path(path).name, Path(folder).name, target)
+    return None
+
+
 def _named_csv(record, record_path, default):
     """``(path or None, reason or None)``: the CSV a summary / inventory record
     names. It must be a bare file name and a file beside the record; a name
@@ -313,6 +329,9 @@ def _named_csv(record, record_path, default):
     path = record_path.parent / name
     if not path.is_file():
         return None, "{0} named by the record is not beside it".format(name)
+    escape = _escapes(path, record_path.parent)
+    if escape:
+        return None, escape
     return path, None
 
 
@@ -450,6 +469,9 @@ def dated_file_facts(run_dir, root, names):
         elif len(found) > 1:
             out[key + "_state"] = "ambiguous"
             out[key + "_reason"] = "{0} files: {1}".format(len(found), ", ".join(found))
+        elif _escapes(run_dir / found[0], run_dir):
+            out[key + "_state"] = "unreadable"
+            out[key + "_reason"] = _escapes(run_dir / found[0], run_dir)
         else:
             out[key + "_state"], out[key + "_reason"] = "value", ""
             out[key + "_path_rel"] = _rel(run_dir / found[0], root)
@@ -484,17 +506,31 @@ WRAPPED_FIELDS = ("doc_title", "doc_path", "git_commit", "revit_version")
 ROOT_PARENT_WARNING = "run folder parent is root; model_key undefined"
 
 
+# The one field whose VALUE is an object (and whose legacy flat shape is too).
+OBJECT_FIELDS = ("revit_version",)
+_SCALARS = (str, int, float, bool)
+
+
 def meta_field(meta, key):
-    """``(value or None, unavailable reason or None)`` for one run_meta field,
-    unwrapping the three-valued shape. A dict that is neither shape is
-    reported, not guessed at."""
+    """``(value or None, reason or None)`` for one run_meta field, unwrapping
+    the three-valued shape. A bare legacy value is accepted only in its
+    expected shape (a scalar; an object for ``OBJECT_FIELDS``). Anything else
+    -- a dict with no ``state``, a list -- is reported as malformed, never
+    blanked silently, so corrupt metadata stays distinguishable from absent."""
     raw = meta.get(key)
+    if raw is None:
+        return None, None
     if isinstance(raw, dict) and "state" in raw:
         if raw.get("state") == "value":
-            return raw.get("value"), None
-        if raw.get("state") == "unavailable":
+            raw = raw.get("value")
+        elif raw.get("state") == "unavailable":
             return None, str(raw.get("reason") or "unavailable (no reason recorded)")
-        return None, "unrecognised state {0!r}".format(raw.get("state"))
+        else:
+            return None, "unrecognised state {0!r}".format(raw.get("state"))
+    expected = dict if key in OBJECT_FIELDS else _SCALARS
+    if raw is not None and not isinstance(raw, expected):
+        return None, "malformed: a {0} where {1} was expected".format(
+            type(raw).__name__, "an object" if key in OBJECT_FIELDS else "a value")
     return raw, None
 
 
@@ -562,12 +598,15 @@ def group_facts(rows):
     """The two across-row counts, filled in place."""
     same, hashes = {}, {}
     for r in rows:
-        k = (r["model_key"], r["as_of_date"])
-        same[k] = same.get(k, 0) + 1
+        if r["as_of_date"]:
+            k = (r["model_key"], r["as_of_date"])
+            same[k] = same.get(k, 0) + 1
         if r["config_hash"]:
             hashes.setdefault(r["model_key"], set()).add(r["config_hash"])
     for r in rows:
-        r["n_runs_same_model_as_of"] = str(same[(r["model_key"], r["as_of_date"])])
+        # An unknown date equals nothing, itself included: not computable.
+        r["n_runs_same_model_as_of"] = (str(same[(r["model_key"], r["as_of_date"])])
+                                        if r["as_of_date"] else "")
         r["n_config_hash_in_model"] = str(len(hashes.get(r["model_key"], ())))
 
 
@@ -671,6 +710,14 @@ def main(argv=None):
         print("--out {0} is inside the run folder {1}; the index never writes "
               "there".format(out, holder))
         return 2
+    # Created BEFORE the scan: an --out under --root that the first run made
+    # would otherwise be scanned only from the second run on, and two runs
+    # over one tree would disagree on scan.folders_visited.
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as ex:
+        print("could not create --out {0}: {1}".format(out, _err(ex)))
+        return 2
     rows, json_rows, scan = build_index(root, args.max_depth)
     for r in rows:
         print("{0}  {1}  {2}  finalized={3}  rollup={4}  kinds={5}".format(
@@ -681,7 +728,6 @@ def main(argv=None):
     for w in scan["warnings"]:
         print("WARNING {0}: {1}".format(w["path_rel"], w["reason"]))
     try:
-        out.mkdir(parents=True, exist_ok=True)
         csv_path, json_path = write_index(root, out, rows, json_rows, scan)
     except OSError as ex:
         print("could not write the index to {0}: {1}".format(out, _err(ex)))

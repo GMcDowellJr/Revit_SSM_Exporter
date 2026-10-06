@@ -32,6 +32,10 @@ RUN_META_FILENAME = "run_meta.json"
 EXPORTER_NAME = "vop_interwoven"
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 SOURCE_FINGERPRINT_CHARS = 12
+# What the fingerprint covers: the code, and the data files the code reads at
+# run time (metrics/manifest/metrics_manifest.v1.json selects metrics,
+# invariants and CSV columns). Docs (.md) and scripts (.sh) do not run.
+FINGERPRINT_SUFFIXES = (".py", ".json")
 
 
 def _parse_override_date(date_override):
@@ -245,27 +249,35 @@ def git_commit(start_dir=None):
 
 
 def source_fingerprint(package_dir=None):
-    """The sha256 of the package's own Python source, three-valued.
+    """The sha256 of the package's own source and runtime data, three-valued.
 
-    Every ``*.py`` under ``package_dir`` (default: this package), skipping
-    ``__pycache__``, in sorted order of its ``/``-separated relative path.
+    Every file with a ``FINGERPRINT_SUFFIXES`` suffix under ``package_dir``
+    (default: this package), skipping ``__pycache__``, in sorted order of its
+    ``/``-separated relative path.
     Each file contributes its path, its length and its bytes, so a rename, an
     added or a removed file changes the hash as well as an edit does. CRLF is
     read as LF: a Windows checkout (git autocrlf) and a POSIX checkout of the
     same commit fingerprint the same. Returns ``{"state": "value", "value":
     {"sha256", "files"}}``, or ``unavailable`` with the reason -- a file that
-    cannot be read is never skipped silently."""
+    cannot be read, and a directory that cannot be listed, are never skipped
+    silently: either makes the fingerprint unavailable."""
     import hashlib
     root = os.path.abspath(package_dir or PACKAGE_DIR)
-    paths = []
-    for folder, dirs, files in os.walk(root):
+    paths, walk_errors = [], []
+    # os.walk drops an unlistable directory unless told otherwise; a hash of
+    # the readable subset would claim the identity of code it never saw.
+    for folder, dirs, files in os.walk(root, onerror=walk_errors.append):
         dirs[:] = sorted(d for d in dirs if d != "__pycache__")
         for name in files:
-            if name.endswith(".py"):
+            if name.endswith(FINGERPRINT_SUFFIXES):
                 full = os.path.join(folder, name)
                 paths.append((os.path.relpath(full, root).replace(os.sep, "/"), full))
+    if walk_errors:
+        ex = walk_errors[0]
+        return _unavailable("{0}: {1}".format(type(ex).__name__, ex))
     if not paths:
-        return _unavailable("no .py files under {0}".format(root))
+        return _unavailable("no {0} files under {1}".format(
+            "/".join(FINGERPRINT_SUFFIXES), root))
     digest = hashlib.sha256()
     try:
         for rel, full in sorted(paths):
