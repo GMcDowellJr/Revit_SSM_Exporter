@@ -334,9 +334,11 @@ The run_meta keys each identity column is read from:
 A three-valued field that is `unavailable` gives an empty cell, with its reason
 in `run_meta_unavailable`. A bare value (an older, flat record) is read as the
 value. `git_commit` is the full 40-character SHA that `run_meta.git_commit()`
-reads from `.git`. `exporter_version` is copied as written, and the exporter
-writes the constant `run_meta.EXPORTER_VERSION`, which is the package name
-`vop_interwoven`, not a version. Use `git_commit` to identify the code.
+reads from `.git`. `exporter_version` is copied as written. Runs from before
+`run_meta.py` took it from the package's `__version__` (e.g. `1.0.0`) carry the
+package name `vop_interwoven` there instead; that name is now the separate
+`exporter` key. The release version moves only when `__version__` is bumped,
+so `git_commit` is what identifies the exact code.
 
 The roll-up and kinds file names are read from those tools' own sources, not
 copied, and a test asserts they agree with the imported modules.

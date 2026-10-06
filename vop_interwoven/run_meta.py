@@ -19,9 +19,16 @@ Every field that is READ from the environment is three-valued: a value, or
 import json
 import os
 
+from . import __version__ as _PACKAGE_VERSION
+
 RUN_META_SCHEMA = "vop.run_meta.v1"
 RUN_META_FILENAME = "run_meta.json"
-EXPORTER_VERSION = "vop_interwoven"
+# The exporter's NAME and its VERSION are separate keys. exporter_version used
+# to hold the package name, which identified nothing. It is now the package's
+# own __version__, the one version string the package declares (not a copy).
+# The commit that produced a run is git_commit; this is the release version.
+EXPORTER_NAME = "vop_interwoven"
+EXPORTER_VERSION = _PACKAGE_VERSION
 
 
 def _parse_override_date(date_override):
@@ -263,6 +270,7 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
         "run_dir": run_dir,
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
+        "exporter": EXPORTER_NAME,
         "exporter_version": EXPORTER_VERSION,
         "git_commit": git_commit(),
         "revit_version": revit_version(doc),
