@@ -21,7 +21,7 @@ Modules:
 
 """
 
-__version__ = "1.0.0"
+from ._version import __version__  # noqa: F401  (written by tools/analysis_version.py)
 __author__ = "Claude Code"
 
 from .config import Config

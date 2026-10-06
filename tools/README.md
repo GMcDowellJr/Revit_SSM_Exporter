@@ -356,6 +356,49 @@ outputs are written by the real producers).
 
 ---
 
+### `analysis_version.py` - Release version from declared analysis impact
+
+The exporter's `MAJOR.MINOR.PATCH` (`vop_interwoven/_version.py`) is never
+edited by hand. Every commit that changes `vop_interwoven/` declares whether it
+breaks comparability with earlier runs (`Analysis-Impact: none|breaking`, a `!`
+after the type, or a `BREAKING CHANGE:` footer), and the version is computed
+from those declarations. The rules for writing the declaration are in
+CLAUDE.md ("Analysis impact").
+
+```bash
+# The PR gate (.github/workflows/analysis-impact.yml):
+python tools/analysis_version.py check --base <base sha> --head <head sha>
+# The release decision (.github/workflows/release-version.yml, on push to main):
+python tools/analysis_version.py bump [--write] [--github-output FILE]
+```
+
+**`check`**: every non-merge commit in base..head that changes `vop_interwoven/`
+(the version file aside) must carry a declaration. A declaration that
+contradicts itself (`Analysis-Impact: none` with a `!`) or has an unknown value
+fails. A commit made before this tool existed is exempt, decided by whether the
+commit's parent contains the tool. It prints the commits seen, those touching
+capture code, and how many were checked, exempt, declared and failing. Exit 0,
+1 (undeclared or contradictory), or 2 (git error or bad arguments). The
+workflow then commits an undeclared probe and requires exit 1, so a check that
+has stopped working fails CI rather than staying green.
+
+**`bump`**: the commits since the last `vX.Y.Z` tag decide the release. Any
+breaking commit gives MAJOR; otherwise `feat` gives MINOR; otherwise `fix`,
+`perf` or `refactor` gives PATCH; otherwise there is no release. With no
+`vX.Y.Z` tag yet, the current file version is tagged as the baseline and
+nothing is bumped. A version file that disagrees with the last tag is refused
+(exit 2). Other tags such as `baseline/v1-freeze` are not releases. The
+workflow commits `chore(release): vX.Y.Z` and pushes it together with the tag
+(`--atomic`).
+
+run_meta.json's `exporter_version` is `<this version>+src.<source
+fingerprint>`, so two runs are comparable for analysis when their MAJOR
+matches.
+
+Tests: `tests/test_analysis_version.py` (on throwaway git repositories).
+
+---
+
 ### `compare_golden.py` - Golden Baseline Comparison
 
 Compares current exporter outputs against golden baseline to detect regressions.
