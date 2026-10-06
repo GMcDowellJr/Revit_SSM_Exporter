@@ -32,7 +32,10 @@ import pytest
 from tools import stage_a_grid_rollup as rollup
 from tools import stage_a_kinds as kinds
 from tools import stage_a_runs_index as idx
+from types import SimpleNamespace as NS
+
 from vop_interwoven import run_meta
+from vop_interwoven.config import Config
 
 REPO = Path(__file__).resolve().parent.parent
 TOOL = REPO / "tools" / "stage_a_runs_index.py"
@@ -46,27 +49,48 @@ ROLLUP_COUNT_COLUMNS = ("rollup_refused_runs_count", "rollup_count_invariant_dif
 
 # --- fixtures ------------------------------------------------------------------
 
+def fake_doc(title, path, version="2024"):
+    """The three attributes run_meta.build_run_meta reads from a Revit document."""
+    return NS(Title=title, PathName=path,
+              Application=NS(VersionNumber=version, VersionBuild="24.2.0",
+                             VersionName="Autodesk Revit " + version))
+
+
+# Per-view results as finalize_run_meta receives them (stage_a_capture_status
+# turns these into success / failed / failed).
+VIEW_RESULTS = [{"view_id": 101, "view_name": "A"},
+                {"view_id": 102, "view_name": "B", "success": False, "failure_reason": "x"},
+                {"view_id": 103, "view_name": "C", "success": False, "failure_reason": "y"}]
+_DOC = object()
+
+
+def producer_meta(run_id, as_of, doc, finalized=True, run_tag=None, run_dir=None):
+    """run_meta.json's record exactly as the exporter builds it: the real
+    build_run_meta (three-valued doc / git / Revit fields) and, for a
+    finished run, finalize_run_meta."""
+    meta = run_meta.build_run_meta(Config(), doc, run_id, as_of, [101, 102, 103],
+                                   "abcd1234", run_tag=run_tag, run_dir=run_dir)
+    return run_meta.finalize_run_meta(meta, VIEW_RESULTS) if finalized else meta
+
+
 def make_run(root, model_key, as_of, run_id, *, finalized=True, meta_date=None,
-             outputs="top", views_core_rows=2, run_meta_text=None):
-    """One run folder, named as the exporter names it. ``outputs`` is
+             outputs="top", views_core_rows=2, run_meta_text=None, doc=_DOC,
+             run_tag=None):
+    """One run folder, named as the exporter names it, with a run_meta.json
+    written by the real producer (``producer_meta``). ``outputs`` is
     ``"top"``, ``"analysis_grid"`` or None (no roll-up, no kinds)."""
     run = Path(run_meta.run_directory(str(root / model_key),
                                       {"as_of_date": as_of, "run_id": run_id}))
     (run / "color_id_buffer").mkdir(parents=True)
     (run / "color_id_buffer" / "V_1.json").write_text("{}")
-    meta = {"schema": run_meta.RUN_META_SCHEMA, "finalized": finalized, "run_id": run_id,
-            "date": meta_date or as_of, "run_tag": None, "doc_title": "Doc " + model_key,
-            "doc_path": "C:\\models\\" + model_key.replace("/", "\\") + ".rvt",
-            "exporter_version": run_meta.EXPORTER_VERSION, "git_commit": "c0ffee",
-            "revit_version": {"version_number": "2024", "version_build": "x",
-                              "version_name": "Autodesk Revit 2024"},
-            "config_hash": "abcd1234",
-            "views_requested": [101, 102, 103],
-            "views": [{"view_id": 101, "capture_status": "success"},
-                      {"view_id": 102, "capture_status": "failed"},
-                      {"view_id": 103, "capture_status": "failed"}]}
-    (run / run_meta.RUN_META_FILENAME).write_text(
-        run_meta_text if run_meta_text is not None else json.dumps(meta))
+    if doc is _DOC:
+        doc = fake_doc("Doc " + model_key,
+                       "C:\\models\\" + model_key.replace("/", "\\") + ".rvt")
+    meta = producer_meta(run_id, meta_date or as_of, doc, finalized, run_tag, str(run))
+    if run_meta_text is None:
+        run_meta.write_run_meta(meta, str(run))
+    else:
+        (run / run_meta.RUN_META_FILENAME).write_text(run_meta_text)
     d = as_of
     with open(run / "views_core_{0}.csv".format(d), "w", newline="") as h:
         w = csv.writer(h)
@@ -430,3 +454,67 @@ def test_non_string_rollup_run_id_does_not_stop_the_index(tree):
     assert a["chk_rollup_run_id_eq_run_meta"] == "" and a["rollup_run_ids"] == ""
     assert "not a string" in a["rollup_reason"]
     assert _by_run(rows)["20261006T090000"]["chk_rollup_run_id_eq_run_meta"] == "true"
+
+
+# --- run_meta's real key layout; root = a model folder ------------------------------
+
+def test_three_valued_run_meta_fields_are_unwrapped(tree):
+    """doc_title, doc_path, git_commit and revit_version are written by
+    build_run_meta as {"state": "value", "value": ...}; the record on disk is
+    asserted to have that shape, so the fixture cannot drift back to flat."""
+    root, runs = tree
+    on_disk = json.loads((runs["A"] / run_meta.RUN_META_FILENAME).read_text())
+    for key in idx.WRAPPED_FIELDS:
+        assert on_disk[key]["state"] in ("value", "unavailable"), key
+    a = _by_run(_index(root)[1])["20261006T084152"]
+    assert a["doc_title"] == "Doc KSRF/Model_A"
+    assert a["doc_path"] == "C:\\models\\KSRF\\Model_A.rvt"
+    assert a["revit_version_number"] == "2024"
+    expected_commit = run_meta.git_commit()
+    if expected_commit["state"] == "value":
+        assert a["git_commit"] == expected_commit["value"] != ""
+    else:
+        assert a["git_commit"] == ""
+        assert "git_commit" in json.loads(a["run_meta_unavailable"])
+    assert a["exporter_version"] == run_meta.EXPORTER_VERSION
+
+
+def test_unavailable_field_is_empty_with_its_reason(tmp_path):
+    root = tmp_path / "r"
+    make_run(root, "P/M", "2025-01-01", "NODOC", doc=None)
+    _code, rows, record = _index(root)
+    r = rows[0]
+    assert r["doc_title"] == "" and r["doc_path"] == "" and r["revit_version_number"] == ""
+    why = json.loads(r["run_meta_unavailable"])
+    assert why["doc_title"] == why["doc_path"] == why["revit_version"] == "no document"
+    assert record["rows"][0]["run_meta_unavailable"]["doc_title"] == "no document"
+
+
+def test_run_tag_and_flat_legacy_fields(tmp_path):
+    root = tmp_path / "r"
+    make_run(root, "P/M", "2025-01-01", "20261006T090000_PR_221", run_tag="PR_221")
+    flat = make_run(root, "P/M", "2025-01-02", "FLAT")
+    meta = json.loads((flat / run_meta.RUN_META_FILENAME).read_text())
+    meta.update(doc_title="Flat title", git_commit="9a6ec75",
+                revit_version={"version_number": "2023"})      # an older, flat record
+    (flat / run_meta.RUN_META_FILENAME).write_text(json.dumps(meta))
+    rows = _by_run(_index(root)[1])
+    assert rows["20261006T090000_PR_221"]["run_tag"] == "PR_221"
+    assert rows["FLAT"]["doc_title"] == "Flat title"
+    assert rows["FLAT"]["git_commit"] == "9a6ec75"
+    assert rows["FLAT"]["revit_version_number"] == "2023"
+    assert rows["FLAT"]["run_meta_unavailable"] == ""
+
+
+def test_root_as_model_folder_warns_and_never_invents_model_key(tree):
+    root, runs = tree
+    model = runs["H1"].parent                      # Proj/Model_H: two runs directly under it
+    _code, rows, record = _index(model)
+    assert len(rows) == 2
+    assert all(r["model_key"] == "" for r in rows)
+    assert not any(r["model_key"] == r["doc_title"] for r in rows if r["doc_title"])
+    assert record["scan"]["warnings"] == [
+        {"path_rel": r["run_dir_rel"], "reason": "run folder parent is root; model_key undefined"}
+        for r in rows]
+    # control: from the export root, no row warns
+    assert _index(root)[2]["scan"]["warnings"] == []

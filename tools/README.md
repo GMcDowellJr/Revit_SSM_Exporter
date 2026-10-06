@@ -271,8 +271,16 @@ to the consumer. **Read-only on run folders**: an `--out` at or under any folder
 holding `run_meta.json` is refused, including run folders the scan skipped. Standard library only.
 
 ```bash
-python tools/stage_a_runs_index.py --root <dir> [--out <dir>] [--max-depth 4]
+python tools/stage_a_runs_index.py --root <Exports> [--out <dir>] [--max-depth 4]
 ```
+
+**`--root` is the export root** (`…\VOP\Exports`), not a project or model
+folder. `model_key` is the path from the root to each run folder's parent, so
+pointed at a model folder (`…\Exports\KSRF\Hops_Interior_AR`) every run sits
+directly under the root and its `model_key` is empty. Such rows are still
+indexed, and each is listed under `scan.warnings` ("run folder parent is
+root; model_key undefined") and printed as a `WARNING` line. `model_key` is
+never invented from `doc_title`.
 
 **Discovery.** A run folder is any folder that directly holds `run_meta.json`.
 The walk lists one directory at a time (never a recursive glob), stops at a
@@ -306,13 +314,29 @@ A summary whose `runs` carry a non-string `run_id` leaves `rollup_run_ids` and
 
 | group | columns | source |
 |---|---|---|
-| identity | `model_key` (root to the run's parent; never `doc_title`), `run_dir_rel`, `run_dir_name`, `run_id` (opaque, never parsed), `run_tag`, `as_of_date` (run_meta `date`), `doc_title`, `doc_path`, `config_hash`, `git_commit`, `exporter_version`, `revit_version_number`, `run_meta_schema`, `finalized` | `run_meta.json`; an `{"state": "unavailable"}` field is empty |
+| identity | `model_key` (root to the run's parent; never `doc_title`), `run_dir_rel`, `run_dir_name`, `run_id` (opaque, never parsed), `run_tag`, `as_of_date` (run_meta `date`), `doc_title`, `doc_path`, `config_hash`, `git_commit`, `exporter_version`, `revit_version_number`, `run_meta_schema`, `finalized` | `run_meta.json`, keys below |
 | views | `views_requested_count`, `views_count`, `capture_status_counts` (JSON) | `run_meta.json` |
 | roll-up | `rollup_state`, `rollup_reason`, `rollup_location` (`top` \| `analysis_grid`), `rollup_csv_path_rel`, `rollup_summary_path_rel`, `rollup_schema`, `rollup_tool_version`, `rollup_csv_sha256` (re-hashed), `rollup_csv_sha256_match`, `rollup_class_map_sha256`, `rollup_class_map_version`, `rollup_refused_runs_count`, `rollup_count_invariant_difference`, `rollup_row_status_counts`, `rollup_registration_state_counts`, `rollup_flag_counts`, `rollup_run_ids` (JSON) | `grid_rollup.summary.json`, at the run's top level first, then `analysis_grid/` |
 | kinds | `kinds_state`, `kinds_reason`, `kinds_location`, `kinds_csv_path_rel`, `kinds_schema`, `kinds_tool_version`, `kinds_class_map_sha256`, `kinds_csv_sha256`, `kinds_csv_sha256_match`, `kinds_grid_used`, `kinds_grid_denominator` | `kinds_inventory.json`, same search order |
 | per-run files | `views_core_state` / `_reason` / `_path_rel` / `_rows` (data rows), `element_map_*`, `diagnostics_*` | `views_core_<d>.csv`, `vop_view_element_map_<d>.json`, `views_diagnostics_<d>.json` at the run's top level; presence only |
 | consistency | `chk_folder_date_eq_as_of`, `chk_folder_run_id_eq_run_meta`, `chk_rollup_run_id_eq_run_meta` (the summary's run ids are exactly this run's), `chk_kinds_class_map_eq_rollup` | `true` / `false`, empty when not computable |
 | group | `n_runs_same_model_as_of`, `n_config_hash_in_model` (distinct non-empty hashes) | across rows |
+| run_meta | `run_meta_unavailable` (JSON: field -> reason; empty when none) | `run_meta.json` |
+
+The run_meta keys each identity column is read from:
+
+| column | run_meta.json key | shape written by `run_meta.build_run_meta` |
+|---|---|---|
+| `run_id`, `run_tag`, `as_of_date`, `config_hash`, `exporter_version`, `run_meta_schema`, `finalized` | `run_id`, `run_tag`, `date`, `config_hash`, `exporter_version`, `schema`, `finalized` | plain value (`run_tag` is null unless the run had a non-date override such as `PR_221`) |
+| `doc_title`, `doc_path`, `git_commit` | `doc_title.value`, `doc_path.value`, `git_commit.value` | three-valued: `{"state": "value", "value": …}` or `{"state": "unavailable", "reason": …}` |
+| `revit_version_number` | `revit_version.value.version_number` | three-valued, the value an object |
+
+A three-valued field that is `unavailable` gives an empty cell, with its reason
+in `run_meta_unavailable`. A bare value (an older, flat record) is read as the
+value. `git_commit` is the full 40-character SHA that `run_meta.git_commit()`
+reads from `.git`. `exporter_version` is copied as written, and the exporter
+writes the constant `run_meta.EXPORTER_VERSION`, which is the package name
+`vop_interwoven`, not a version. Use `git_commit` to identify the code.
 
 The roll-up and kinds file names are read from those tools' own sources, not
 copied, and a test asserts they agree with the imported modules.

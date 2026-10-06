@@ -32,6 +32,14 @@ IDENTITY. ``run_id`` is opaque and comes from run_meta.json; it is never
 parsed. ``as_of_date`` is run_meta ``date``. The folder name is split only
 for the ``chk_folder_*`` consistency facts. ``model_key`` is the path from
 the root to the run folder's parent, ``/``-separated -- never ``doc_title``.
+A run directly under ``--root`` (``--root`` was a model folder, not the
+export root) has an empty ``model_key`` and is listed under ``scan.warnings``.
+
+RUN_META FIELDS. ``doc_title``, ``doc_path``, ``git_commit`` and
+``revit_version`` are written three-valued by ``run_meta.build_run_meta``
+(``{"state": "value", "value": ...}`` or ``{"state": "unavailable",
+"reason": ...}``); they are unwrapped, a bare value is accepted too, and an
+unavailable field is an empty cell with its reason in ``run_meta_unavailable``.
 
 CELLS. Every value is a string. An empty cell means absent / not applicable,
 never zero. Each file-derived group has a ``*_state`` (``value``, ``absent``,
@@ -76,7 +84,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from vop_interwoven.run_meta import RUN_META_FILENAME  # noqa: E402
 
 SCHEMA = "vop.stage_a.runs_index.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 CSV_NAME = "runs_index.csv"
 JSON_NAME = "runs_index.json"
@@ -149,11 +157,14 @@ COLUMNS = [
     "chk_rollup_run_id_eq_run_meta", "chk_kinds_class_map_eq_rollup",
     # group facts
     "n_runs_same_model_as_of", "n_config_hash_in_model",
+    # appended (1.1.0): the run_meta fields recorded as unavailable, with reasons
+    "run_meta_unavailable",
 ]
 
 # Columns holding JSON in the CSV; real objects in runs_index.json.
 JSON_COLUMNS = ("capture_status_counts", "rollup_row_status_counts",
-                "rollup_registration_state_counts", "rollup_flag_counts", "rollup_run_ids")
+                "rollup_registration_state_counts", "rollup_flag_counts", "rollup_run_ids",
+                "run_meta_unavailable")
 
 
 def _err(ex):
@@ -466,6 +477,27 @@ def _capture_status_counts(views):
     return counts
 
 
+# Fields run_meta.build_run_meta() writes THREE-VALUED: {"state": "value",
+# "value": ...} or {"state": "unavailable", "reason": ...} (run_meta._read).
+# A bare scalar (an older or hand-written record) is accepted as the value.
+WRAPPED_FIELDS = ("doc_title", "doc_path", "git_commit", "revit_version")
+ROOT_PARENT_WARNING = "run folder parent is root; model_key undefined"
+
+
+def meta_field(meta, key):
+    """``(value or None, unavailable reason or None)`` for one run_meta field,
+    unwrapping the three-valued shape. A dict that is neither shape is
+    reported, not guessed at."""
+    raw = meta.get(key)
+    if isinstance(raw, dict) and "state" in raw:
+        if raw.get("state") == "value":
+            return raw.get("value"), None
+        if raw.get("state") == "unavailable":
+            return None, str(raw.get("reason") or "unavailable (no reason recorded)")
+        return None, "unrecognised state {0!r}".format(raw.get("state"))
+    return raw, None
+
+
 def run_row(run_dir, meta, root):
     """``(csv_row, json_objects)`` for one run folder."""
     run_dir, root = Path(run_dir), Path(root)
@@ -474,13 +506,19 @@ def run_row(run_dir, meta, root):
     parent_rel = _rel(run_dir.parent, root) if run_dir != root else ""
     row.update(model_key=parent_rel, run_dir_rel=_rel(run_dir, root) or ".",
                run_dir_name=run_dir.name)
-    revit = meta.get("revit_version")
+    unwrapped, unavailable = {}, {}
+    for key in WRAPPED_FIELDS:
+        unwrapped[key], why = meta_field(meta, key)
+        if why is not None:
+            unavailable[key] = why
+    revit = unwrapped["revit_version"]
+    objs["run_meta_unavailable"] = unavailable or None
     row.update({
         "run_id": _cell(meta.get("run_id")), "run_tag": _cell(meta.get("run_tag")),
         "as_of_date": _cell(meta.get("date")),
-        "doc_title": _cell(meta.get("doc_title")), "doc_path": _cell(meta.get("doc_path")),
+        "doc_title": _cell(unwrapped["doc_title"]), "doc_path": _cell(unwrapped["doc_path"]),
         "config_hash": _cell(meta.get("config_hash")),
-        "git_commit": _cell(meta.get("git_commit")),
+        "git_commit": _cell(unwrapped["git_commit"]),
         "exporter_version": _cell(meta.get("exporter_version")),
         "revit_version_number": _cell(revit.get("version_number"))
         if isinstance(revit, dict) else "",
@@ -565,6 +603,10 @@ def build_index(root, max_depth=4):
     built.sort(key=lambda ro: (ro[0]["model_key"], ro[0]["as_of_date"], ro[0]["run_id"],
                                ro[0]["run_dir_rel"]))
     rows = [r for r, _o in built]
+    # A run directly under --root has no model folder between them: its
+    # model_key is undefined and left empty -- never invented from doc_title.
+    scan["warnings"] = [{"path_rel": r["run_dir_rel"], "reason": ROOT_PARENT_WARNING}
+                        for r in rows if r["model_key"] == ""]
     json_rows = []
     for r, objs in built:
         jr = dict(r)
@@ -636,6 +678,8 @@ def main(argv=None):
             r["finalized"] or "-", r["rollup_state"], r["kinds_state"]))
     for s in scan["skipped"]:
         print("SKIPPED {0}: {1}".format(s["path_rel"], s["reason"]))
+    for w in scan["warnings"]:
+        print("WARNING {0}: {1}".format(w["path_rel"], w["reason"]))
     try:
         out.mkdir(parents=True, exist_ok=True)
         csv_path, json_path = write_index(root, out, rows, json_rows, scan)
