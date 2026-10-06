@@ -289,6 +289,22 @@ def _counts_obj(value):
     return None
 
 
+def _named_csv(record, record_path, default):
+    """``(path or None, reason or None)``: the CSV a summary / inventory record
+    names. It must be a bare file name and a file beside the record; a name
+    with a separator, ``..`` or an absolute path is reported, never followed
+    (a hand-edited record must not point the index outside the run)."""
+    name = record.get("csv", default)
+    if not isinstance(name, str) or not name or name in (".", "..") \
+            or "/" in name or "\\" in name or Path(name).name != name:
+        return None, "the record names csv {0!r}, which is not a file name beside " \
+                     "it".format(name)
+    path = record_path.parent / name
+    if not path.is_file():
+        return None, "{0} named by the record is not beside it".format(name)
+    return path, None
+
+
 def _sha_match(csv_path, recorded):
     """``(sha256 of the CSV, "true"/"false")``; empty where not computable."""
     if csv_path is None:
@@ -322,11 +338,8 @@ def rollup_facts(run_dir, root):
     if summary is None:
         out["rollup_state"], out["rollup_reason"] = "unreadable", why
         return out, objs
-    csv_name = summary.get("csv") if isinstance(summary.get("csv"), str) else ROLLUP_CSV
-    csv_path = summary_path.parent / csv_name
-    if not csv_path.is_file():
-        csv_path = None
-    else:
+    csv_path, csv_err = _named_csv(summary, summary_path, ROLLUP_CSV)
+    if csv_path is not None:
         out["rollup_csv_path_rel"] = _rel(csv_path, root)
     actual, match, hash_err = _sha_match(csv_path, summary.get("csv_sha256"))
     out["rollup_csv_sha256"], out["rollup_csv_sha256_match"] = actual, match
@@ -347,12 +360,16 @@ def rollup_facts(run_dir, root):
     objs["rollup_registration_state_counts"] = _counts_obj(summary.get("registration_state"))
     objs["rollup_flag_counts"] = _counts_obj(summary.get("flag_counts"))
     runs = summary.get("runs")
-    if isinstance(runs, list):
-        objs["rollup_run_ids"] = [r.get("run_id") if isinstance(r, dict) else None
-                                  for r in runs]
     reasons = []
-    if csv_path is None:
-        reasons.append("{0} named by the summary is not beside it".format(csv_name))
+    if isinstance(runs, list):
+        ids = [r.get("run_id") if isinstance(r, dict) else None for r in runs]
+        if all(isinstance(i, str) for i in ids):
+            objs["rollup_run_ids"] = ids
+        else:
+            # Recorded as found in the JSON; not used for the consistency fact.
+            reasons.append("the summary's runs carry a run_id that is not a string")
+    if csv_err:
+        reasons.append(csv_err)
     if hash_err:
         reasons.append(hash_err)
     out["rollup_state"] = "value"
@@ -378,12 +395,9 @@ def kinds_facts(run_dir, root):
     if record is None:
         out["kinds_state"], out["kinds_reason"] = "unreadable", why
         return out
-    csv_name = record.get("csv") if isinstance(record.get("csv"), str) else KINDS_CSV
-    csv_path = json_path.parent / csv_name
-    if csv_path.is_file():
+    csv_path, csv_err = _named_csv(record, json_path, KINDS_CSV)
+    if csv_path is not None:
         out["kinds_csv_path_rel"] = _rel(csv_path, root)
-    else:
-        csv_path = None
     actual, match, hash_err = _sha_match(csv_path, record.get("csv_sha256"))
     cmap = record.get("class_map") if isinstance(record.get("class_map"), dict) else {}
     grids = record.get("grid_records") if isinstance(record.get("grid_records"), dict) else {}
@@ -396,8 +410,8 @@ def kinds_facts(run_dir, root):
         "kinds_grid_denominator": _cell(grids.get("denominator")),
     })
     reasons = []
-    if csv_path is None:
-        reasons.append("{0} named by the record is not beside it".format(csv_name))
+    if csv_err:
+        reasons.append(csv_err)
     if hash_err:
         reasons.append(hash_err)
     out["kinds_state"] = "value"
@@ -579,9 +593,17 @@ def write_index(root, out_dir, rows, json_rows, scan):
     return csv_path, json_path
 
 
-def _inside(path, folder):
-    path, folder = Path(path).resolve(), Path(folder).resolve()
-    return path == folder or folder in path.parents
+def run_folder_holding(path):
+    """The nearest folder at or above ``path`` that holds ``run_meta.json``,
+    or None. Checked on the path itself, not against the indexed rows: a run
+    folder that discovery skipped (unreadable run_meta, beyond --max-depth,
+    under a reserved name) is still a run folder the index must not write
+    into."""
+    path = Path(path).resolve()
+    for folder in [path] + list(path.parents):
+        if (folder / RUN_META_FILENAME).is_file():
+            return folder
+    return None
 
 
 def main(argv=None):
@@ -602,12 +624,12 @@ def main(argv=None):
         print("--max-depth must be >= 0")
         return 2
     out = Path(args.out) if args.out else root
+    holder = run_folder_holding(out)
+    if holder is not None:
+        print("--out {0} is inside the run folder {1}; the index never writes "
+              "there".format(out, holder))
+        return 2
     rows, json_rows, scan = build_index(root, args.max_depth)
-    for r in rows:
-        if _inside(out, root / r["run_dir_rel"]):
-            print("--out {0} is inside the run folder {1}; the index never writes "
-                  "there".format(out, r["run_dir_rel"]))
-            return 2
     for r in rows:
         print("{0}  {1}  {2}  finalized={3}  rollup={4}  kinds={5}".format(
             r["model_key"] or ".", r["as_of_date"] or "-", r["run_id"] or "-",

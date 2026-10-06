@@ -374,3 +374,59 @@ def test_file_names_match_the_producers():
     assert idx.KINDS_CSV == kinds.INVENTORY_CSV
     assert idx.KINDS_JSON == kinds.INVENTORY_JSON
     assert idx.RUN_META_FILENAME == run_meta.RUN_META_FILENAME
+
+
+# --- review findings (PR #231) ---------------------------------------------------
+
+def test_out_inside_a_skipped_run_folder_is_refused(tmp_path, tree):
+    """The refusal is decided on --out's own path, not on the indexed rows: I
+    is skipped (unreadable run_meta) and a run beyond --max-depth is never
+    seen, yet both are run folders."""
+    root, runs = tree
+    deep = make_run(root, "a/b/c/d", "2025-01-01", "DEEP", outputs=None)
+    for target in (runs["I"] / "idx", deep / "idx", runs["I"]):
+        before = _snapshot(root)
+        assert idx.main(["--root", str(root), "--out", str(target)]) == 2
+        assert _snapshot(root) == before
+        assert not (target / idx.CSV_NAME).exists()
+
+
+def _edit_json(path, **changes):
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.update(changes)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_record_csv_name_is_never_followed_outside_its_folder(tree):
+    root, runs = tree
+    outside = root.parent / "outside.csv"
+    outside.write_text("x\n")
+    a, b = runs["A"], runs["B"] / "analysis_grid"
+    _edit_json(a / idx.ROLLUP_SUMMARY, csv=str(outside))                    # absolute
+    _edit_json(a / idx.KINDS_JSON, csv="../../../../outside.csv")           # traversal
+    _edit_json(b / idx.ROLLUP_SUMMARY, csv="..\\..\\outside.csv")          # Windows form
+    code, rows, _record = _index(root)
+    rows = _by_run(rows)
+    for rid, prefix in (("20261006T084152", "rollup"), ("20261006T084152", "kinds"),
+                        ("20261006T090000", "rollup")):
+        r = rows[rid]
+        assert r[prefix + "_state"] == "value"
+        assert r[prefix + "_csv_path_rel"] == ""
+        assert r[prefix + "_csv_sha256"] == "" and r[prefix + "_csv_sha256_match"] == ""
+        assert "not a file name beside it" in r[prefix + "_reason"]
+    # control: the untouched kinds record beside B's edited summary still resolves
+    assert rows["20261006T090000"]["kinds_csv_sha256_match"] == "true"
+
+
+def test_non_string_rollup_run_id_does_not_stop_the_index(tree):
+    root, runs = tree
+    summary = json.loads((runs["A"] / idx.ROLLUP_SUMMARY).read_text())
+    summary["runs"][0]["run_id"] = ["not", "a", "string"]
+    (runs["A"] / idx.ROLLUP_SUMMARY).write_text(json.dumps(summary))
+    code, rows, _record = _index(root)
+    assert len(rows) == 8
+    a = _by_run(rows)["20261006T084152"]
+    assert a["rollup_state"] == "value"
+    assert a["chk_rollup_run_id_eq_run_meta"] == "" and a["rollup_run_ids"] == ""
+    assert "not a string" in a["rollup_reason"]
+    assert _by_run(rows)["20261006T090000"]["chk_rollup_run_id_eq_run_meta"] == "true"

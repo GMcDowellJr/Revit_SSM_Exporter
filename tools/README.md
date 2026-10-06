@@ -267,8 +267,8 @@ Lists every run folder under an export root
 that run's own files. A downstream summarizer (Power Query / Power BI) reads
 this index plus the files it names and never has to list the export tree.
 **Facts only:** no "good", "latest" or "included" column; selection belongs
-to the consumer. **Read-only on run folders**, and an `--out` inside a run
-folder is refused. Standard library only.
+to the consumer. **Read-only on run folders**: an `--out` at or under any folder
+holding `run_meta.json` is refused, including run folders the scan skipped. Standard library only.
 
 ```bash
 python tools/stage_a_runs_index.py --root <dir> [--out <dir>] [--max-depth 4]
@@ -298,7 +298,11 @@ folders with reasons, max depth reached) and `csv_sha256`.
 `--root` and uses `/`. Each file-derived group has a `*_state` (`value`,
 `absent`, `unreadable`, plus `ambiguous` for a dated file matched more than
 once) and a `*_reason` that is always filled when the state is not `value`. It
-can also annotate a `value`, for example a summary whose CSV is missing.
+can also annotate a `value`, for example a summary whose CSV is missing. The
+CSV a summary or inventory names is used only if it is a bare file name beside
+the record; an absolute or `..` path is reported in `*_reason`, never followed.
+A summary whose `runs` carry a non-string `run_id` leaves `rollup_run_ids` and
+`chk_rollup_run_id_eq_run_meta` empty, with the reason.
 
 | group | columns | source |
 |---|---|---|
