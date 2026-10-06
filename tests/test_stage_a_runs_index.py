@@ -476,7 +476,7 @@ def test_three_valued_run_meta_fields_are_unwrapped(tree):
     else:
         assert a["git_commit"] == ""
         assert "git_commit" in json.loads(a["run_meta_unavailable"])
-    assert a["exporter_version"] == run_meta.EXPORTER_VERSION
+    assert a["exporter_version"] == run_meta.exporter_version()[0]
 
 
 def test_unavailable_field_is_empty_with_its_reason(tmp_path):

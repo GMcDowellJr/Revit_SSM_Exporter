@@ -24,11 +24,14 @@ from . import __version__ as _PACKAGE_VERSION
 RUN_META_SCHEMA = "vop.run_meta.v1"
 RUN_META_FILENAME = "run_meta.json"
 # The exporter's NAME and its VERSION are separate keys. exporter_version used
-# to hold the package name, which identified nothing. It is now the package's
-# own __version__, the one version string the package declares (not a copy).
-# The commit that produced a run is git_commit; this is the release version.
+# to hold the package name, which identified nothing. It is now
+# "<__version__>+src.<12 hex>": the package's declared version plus a
+# fingerprint of its own source (source_fingerprint()), so it changes with
+# every code change and nobody has to bump anything. Unlike git_commit it
+# needs no .git -- a copy deployed into Dynamo fingerprints the same.
 EXPORTER_NAME = "vop_interwoven"
-EXPORTER_VERSION = _PACKAGE_VERSION
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+SOURCE_FINGERPRINT_CHARS = 12
 
 
 def _parse_override_date(date_override):
@@ -241,6 +244,51 @@ def git_commit(start_dir=None):
         os.path.dirname(__file__)))
 
 
+def source_fingerprint(package_dir=None):
+    """The sha256 of the package's own Python source, three-valued.
+
+    Every ``*.py`` under ``package_dir`` (default: this package), skipping
+    ``__pycache__``, in sorted order of its ``/``-separated relative path.
+    Each file contributes its path, its length and its bytes, so a rename, an
+    added or a removed file changes the hash as well as an edit does. CRLF is
+    read as LF: a Windows checkout (git autocrlf) and a POSIX checkout of the
+    same commit fingerprint the same. Returns ``{"state": "value", "value":
+    {"sha256", "files"}}``, or ``unavailable`` with the reason -- a file that
+    cannot be read is never skipped silently."""
+    import hashlib
+    root = os.path.abspath(package_dir or PACKAGE_DIR)
+    paths = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for name in files:
+            if name.endswith(".py"):
+                full = os.path.join(folder, name)
+                paths.append((os.path.relpath(full, root).replace(os.sep, "/"), full))
+    if not paths:
+        return _unavailable("no .py files under {0}".format(root))
+    digest = hashlib.sha256()
+    try:
+        for rel, full in sorted(paths):
+            with open(full, "rb") as handle:
+                data = handle.read().replace(b"\r\n", b"\n")
+            digest.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode("ascii")
+                          + b"\0" + data)
+    except (IOError, OSError) as ex:
+        return _unavailable("{0}: {1}".format(type(ex).__name__, ex))
+    return _value({"sha256": digest.hexdigest(), "files": len(paths)})
+
+
+def exporter_version(package_dir=None):
+    """``(version, source)``: ``"<__version__>+src.<12 hex>"`` and the
+    three-valued source_fingerprint() it came from. With no fingerprint the
+    version is ``__version__`` alone and ``source`` says why."""
+    source = source_fingerprint(package_dir)
+    if source["state"] != "value":
+        return _PACKAGE_VERSION, source
+    return "{0}+src.{1}".format(
+        _PACKAGE_VERSION, source["value"]["sha256"][:SOURCE_FINGERPRINT_CHARS]), source
+
+
 def revit_version(doc):
     if doc is None:
         return _unavailable("no document")
@@ -259,6 +307,7 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
     compute_config_hash(cfg) -- the value views_core.ConfigHash carries.
     ``date_str`` is the run's AS-OF date (run_identity()), not its
     execution date; ``run_dir`` the run directory (run_directory())."""
+    version, source = exporter_version()
     return {
         "schema": RUN_META_SCHEMA,
         "finalized": False,
@@ -271,7 +320,8 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
         "exporter": EXPORTER_NAME,
-        "exporter_version": EXPORTER_VERSION,
+        "exporter_version": version,
+        "exporter_source": source,
         "git_commit": git_commit(),
         "revit_version": revit_version(doc),
         "config_hash": config_hash,

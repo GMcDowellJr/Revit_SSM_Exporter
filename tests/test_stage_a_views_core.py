@@ -73,7 +73,8 @@ def test_stage_a_run_writes_views_core_and_one_snapshot_only(tmp_path):
     assert snap["doc_title"] == {"state": "value", "value": "Tower.rvt"}
     assert snap["revit_version"]["value"]["version_number"] == "2024"
     assert snap["exporter"] == "vop_interwoven"
-    assert snap["exporter_version"] == vop_interwoven.__version__ != "vop_interwoven"
+    assert snap["exporter_version"].startswith(vop_interwoven.__version__ + "+src.")
+    assert snap["exporter_source"]["state"] == "value"
     assert snap["git_commit"]["state"] == "value" and len(snap["git_commit"]["value"]) == 40
     assert snap["views_requested"] == [4242, 7]
     assert [(v["view_id"], v["capture_status"]) for v in snap["views"]] == [
