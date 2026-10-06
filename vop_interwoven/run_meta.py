@@ -24,6 +24,30 @@ RUN_META_FILENAME = "run_meta.json"
 EXPORTER_VERSION = "vop_interwoven"
 
 
+def _parse_override_date(date_override):
+    """The datetime a date override names, or None when it names none (a
+    tag, or nothing). Accepts a datetime, or a string "2026-10-01",
+    "20261001" or ISO "2026-10-01T12:34:56". The one parser behind both
+    output_date_str() and run_identity(), so the two cannot disagree on
+    which overrides are dates."""
+    from datetime import datetime
+    if isinstance(date_override, datetime):
+        return date_override
+    if isinstance(date_override, str) and date_override.strip():
+        s = date_override.strip()
+        parsers = [lambda v: datetime.strptime(v, "%Y-%m-%d")]
+        if len(s) == 8 and s.isdigit():
+            parsers.append(lambda v: datetime.strptime(v, "%Y%m%d"))
+        if hasattr(datetime, "fromisoformat"):   # absent on IronPython 2
+            parsers.append(datetime.fromisoformat)
+        for parse in parsers:
+            try:
+                return parse(s)
+            except ValueError:
+                continue   # not this shape; the next parser, else a tag
+    return None
+
+
 def output_date_str(date_override, now=None):
     """The date part of every dated per-run filename (views_core_<d>.csv,
     views_diagnostics_<d>.json, vop_view_element_map_<d>.json).
@@ -37,22 +61,126 @@ def output_date_str(date_override, now=None):
     pipeline used to fall back to today on a tag.
     """
     from datetime import datetime
-    if isinstance(date_override, datetime):
-        return date_override.strftime("%Y-%m-%d")
+    parsed = _parse_override_date(date_override)
+    if parsed is not None:
+        return parsed.strftime("%Y-%m-%d")
     if isinstance(date_override, str) and date_override.strip():
-        s = date_override.strip()
-        parsers = [lambda v: datetime.strptime(v, "%Y-%m-%d")]
-        if len(s) == 8 and s.isdigit():
-            parsers.append(lambda v: datetime.strptime(v, "%Y%m%d"))
-        if hasattr(datetime, "fromisoformat"):   # absent on IronPython 2
-            parsers.append(datetime.fromisoformat)
-        for parse in parsers:
-            try:
-                return parse(s).strftime("%Y-%m-%d")
-            except ValueError:
-                continue   # not this shape; the next parser, else a tag
-        return s
-    return (now or datetime.now()).strftime("%Y-%m-%d")
+        return date_override.strip()
+    return (now or _clock()).strftime("%Y-%m-%d")
+
+
+RUN_ID_CLOCK_FORMAT = "%Y%m%dT%H%M%S"
+
+
+def _clock():
+    """The execution clock run ids are minted from (a seam for tests)."""
+    from datetime import datetime
+    return datetime.now()
+
+
+def run_identity(date_override, now=None, run_id=None):
+    """``{run_id, as_of_date, run_tag}`` for one run: WHO the run is, kept
+    apart from WHAT DATE its data is as of.
+
+    * ``run_id`` is minted from the execution clock, ``now`` (default
+      datetime.now()), as YYYYMMDDTHHMMSS, plus ``_<tag>`` when the override
+      is a tag. A date override never enters it: with the override in it,
+      two re-runs of one archive snapshot (or two archive models with the
+      same snapshot date) shared ``<date>T000000`` and one run's files
+      replaced the other's. A ``run_id`` passed in (a later thinrunner
+      batch) is returned as given, never re-minted.
+    * ``as_of_date`` (YYYY-MM-DD) is the override's date when it parses as
+      one, else the execution date -- for a passed-in ``run_id`` of the
+      minted shape, the date it was minted on, so a batched run that crosses
+      midnight keeps one as-of date and one run directory.
+    * ``run_tag`` is the override when it is a tag ("PR_221"), else None.
+    """
+    from datetime import datetime
+    parsed = _parse_override_date(date_override)
+    tag = None
+    if parsed is None and date_override is not None:
+        text = str(date_override).strip()
+        tag = text or None
+    if run_id:
+        clock = None
+        try:
+            clock = datetime.strptime(str(run_id)[:15], RUN_ID_CLOCK_FORMAT)
+        except ValueError:
+            clock = None   # not a minted id; the as-of date falls back to now
+        clock = clock or now or _clock()
+    else:
+        clock = now or _clock()
+        run_id = clock.strftime(RUN_ID_CLOCK_FORMAT)
+        if tag:
+            run_id = "{0}_{1}".format(run_id, tag)
+    return {"run_id": run_id,
+            "as_of_date": (parsed or clock).strftime("%Y-%m-%d"),
+            "run_tag": tag}
+
+
+def identity_file_date_str(date_override, identity):
+    """output_date_str() for a run whose identity is already minted: with no
+    override, the files are named by the identity's as-of date rather than by
+    a second read of the clock, which a run straddling midnight would answer
+    with the next day (Codex, PR #230)."""
+    from datetime import datetime
+    return output_date_str(
+        date_override, now=datetime.strptime(identity["as_of_date"], "%Y-%m-%d"))
+
+
+def run_directory(root, identity):
+    """``<root>/<as_of_date>__<run_id>``: the ONE directory a run writes into.
+    Derived from the identity alone, so every batch of one run (same run_id,
+    same override) resolves to the same directory."""
+    return os.path.join(root, "{0}__{1}".format(identity["as_of_date"],
+                                                identity["run_id"]))
+
+
+class RunDirectoryConflict(Exception):
+    """The run directory already holds another run, or something that cannot
+    be shown to be this run."""
+
+
+def check_run_directory(run_dir, run_id, continuing=False):
+    """Refuse, BEFORE any capture work, to write into a directory that is not
+    this run's:
+
+    * absent -> proceed;
+    * holds a run_meta.json naming this ``run_id`` -> proceed, but only when
+      ``continuing`` (the caller passed an existing run's id in: a batch
+      continuing its own run). A run that has just MINTED its id and finds
+      its directory already there is a second run started in the same
+      second with the same override -- it is refused, not merged;
+    * holds a run_meta.json naming another run_id, or an unreadable one ->
+      RunDirectoryConflict naming both;
+    * exists with no run_meta.json -> RunDirectoryConflict (nothing shows
+      whose it is).
+    """
+    if not os.path.exists(run_dir):
+        return
+    path = os.path.join(run_dir, RUN_META_FILENAME)
+    if not os.path.isfile(path):
+        raise RunDirectoryConflict(
+            "run directory {0} already exists and holds no {1}, so it cannot be "
+            "shown to be run {2}'s; refusing to write into it".format(
+                run_dir, RUN_META_FILENAME, run_id))
+    try:
+        with open(path) as handle:
+            existing = json.load(handle).get("run_id")
+    except (IOError, OSError, ValueError, AttributeError) as ex:
+        raise RunDirectoryConflict(
+            "run directory {0} holds an unreadable {1} ({2}: {3}); refusing to "
+            "write run {4} into it".format(run_dir, RUN_META_FILENAME,
+                                           type(ex).__name__, ex, run_id))
+    if existing != run_id:
+        raise RunDirectoryConflict(
+            "run directory {0} holds run {1!r}; this run is {2!r}; refusing to "
+            "write into it".format(run_dir, existing, run_id))
+    if not continuing:
+        raise RunDirectoryConflict(
+            "run directory {0} already holds run {1!r}, and this run minted the "
+            "same id rather than continuing it (two runs started in the same "
+            "second); refusing to write into it".format(run_dir, run_id))
 
 
 def _value(v):
@@ -118,9 +246,12 @@ def revit_version(doc):
     return _read(_v)
 
 
-def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=None):
+def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=None,
+                   run_dir=None):
     """The run's record at its start. ``config_hash`` is csv_export's
-    compute_config_hash(cfg) -- the value views_core.ConfigHash carries."""
+    compute_config_hash(cfg) -- the value views_core.ConfigHash carries.
+    ``date_str`` is the run's AS-OF date (run_identity()), not its
+    execution date; ``run_dir`` the run directory (run_directory())."""
     return {
         "schema": RUN_META_SCHEMA,
         "finalized": False,
@@ -129,6 +260,7 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
         # The caller's non-date override (thinrunner's tag, e.g. "PR_221"),
         # or None. Never written into "date".
         "run_tag": run_tag,
+        "run_dir": run_dir,
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
         "exporter_version": EXPORTER_VERSION,

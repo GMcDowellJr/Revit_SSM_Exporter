@@ -171,7 +171,8 @@ class StreamingExporter:
                  date_override=None,
                  root_cache=None,
                  view_ids=None,
-                 run_id=None):
+                 run_id=None,
+                 run_dir=None):
         """Initialize streaming exporter.
 
         Args:
@@ -184,6 +185,9 @@ class StreamingExporter:
             export_view_raster: Write raw Revit view PNGs for comparison (output: view_raster/)
             pixels_per_cell: PNG resolution
             date_override: Optional date for CSV export
+            run_id: An existing run's id (a later batch); minted when None
+            run_dir: The run directory to record in run_meta, when
+                ``output_dir`` is a batch subdirectory of it
         """
         self.root_cache = root_cache
 
@@ -238,31 +242,19 @@ class StreamingExporter:
         # Full results if JSON export requested (memory-heavy)
         self.full_results = [] if export_json else None
 
-        # Generate run_id once for consistency across all views
-        from datetime import datetime
-        run_dt = datetime.now()
-        tag = None
-
-        if date_override:
-            if isinstance(date_override, str):
-                s = date_override.strip()
-                try:
-                    if len(s) == 10:
-                        run_dt = datetime.strptime(s, "%Y-%m-%d")
-                    else:
-                        run_dt = datetime.fromisoformat(s)
-                except Exception as e:
-                    tag = s
-            else:
-                tag = str(date_override)
-
-        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-        self.run_id = f"{base_run_id}_{tag}" if tag else base_run_id
-        # A caller running one run in several batches (thinrunner) passes the
-        # first batch's id, so every views_core row of the run keys into ONE
-        # run_meta.
-        if run_id:
-            self.run_id = run_id
+        # Generate run_id once for consistency across all views. The run id
+        # is the EXECUTION clock (plus a tag); the as-of date is the date
+        # override's, kept apart (run_meta.run_identity). A caller running one
+        # run in several batches (thinrunner) passes the first batch's id, so
+        # every views_core row of the run keys into ONE run_meta.
+        from vop_interwoven.run_meta import run_identity
+        identity = run_identity(date_override, run_id=run_id)
+        self.run_id = identity["run_id"]
+        self.as_of_date = identity["as_of_date"]
+        self.run_tag = identity["run_tag"]
+        # The run directory run_meta records; the directory written to,
+        # unless this exporter writes one batch's subdirectory of it.
+        self.run_dir = run_dir or output_dir
         # The pipeline runs once per view and merges each view into the
         # run's view-element map and views_diagnostics file; this is what
         # scopes those merges to THIS run (a prior run's file in the same
@@ -275,15 +267,13 @@ class StreamingExporter:
             from vop_interwoven.csv_export import compute_config_hash
             from vop_interwoven.run_meta import build_run_meta, write_run_meta
             self.config_hash = compute_config_hash(cfg)
-            # run_dt is the override when it parsed as a date and now()
-            # otherwise; ``tag`` is the override when it did NOT parse (e.g.
-            # "PR_221"). The date is always a date -- pipeline_0930_0739
-            # wrote the tag into it -- and the tag is recorded beside it.
-            is_dt = isinstance(date_override, datetime)
+            # "date" is the AS-OF date: the override's when it parses as a
+            # date, today otherwise; a tag ("PR_221") is recorded beside it,
+            # never in it -- pipeline_0930_0739 wrote the tag into it.
             self.run_meta = build_run_meta(
-                cfg, doc, self.run_id,
-                (date_override if is_dt else run_dt).strftime("%Y-%m-%d"),
-                view_ids, self.config_hash, run_tag=None if is_dt else tag)
+                cfg, doc, self.run_id, self.as_of_date,
+                view_ids, self.config_hash, run_tag=self.run_tag,
+                run_dir=self.run_dir)
             self.run_meta_path = write_run_meta(self.run_meta, output_dir)
         # Stage A returns from on_view_complete before either PNG export, so
         # it writes nothing to vop_raster/ or view_raster/ -- and creates
@@ -315,8 +305,10 @@ class StreamingExporter:
         os.makedirs(perf_output_dir, exist_ok=True)
 
         # Core CSV
-        from vop_interwoven.run_meta import output_date_str
-        date_str = output_date_str(self.date_override)
+        # Named by this run's own as-of date, not a second read of the clock.
+        from vop_interwoven.run_meta import identity_file_date_str
+        date_str = identity_file_date_str(
+            self.date_override, {"as_of_date": self.as_of_date})
         self.date_str = date_str
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(csv_output_dir, core_filename)
@@ -1199,7 +1191,8 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
                                 pixels_per_cell=4, date_override=None,
-                                export_view_raster=False, run_id=None):
+                                export_view_raster=False, run_id=None,
+                                run_subdir=None):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
     This is the recommended entry point for large view sets where memory
@@ -1216,6 +1209,17 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         export_view_raster: Export raw Revit view PNGs for comparison (output: view_raster/)
         pixels_per_cell: PNG resolution (default: 4)
         date_override: Optional date for CSV export
+        run_id: An existing run's id (a later batch of one run); minted when None
+        run_subdir: Write into this subdirectory of the run directory instead
+            of the run directory itself (thinrunner's batches). The caller
+            owns the run directory's guard (run_meta.check_run_directory).
+
+    ``output_dir`` is a ROOT: the run writes into its own run directory,
+    ``<output_dir>/<as_of_date>__<run_id>`` (run_meta.run_directory), so two
+    runs -- two models, or one archive snapshot re-run -- never share a
+    file. A run directory that already exists and is not this run's is
+    refused before any view is processed. The cross-run view cache
+    (vop_view_cache.json) stays in the root.
 
     Returns:
         Dict with export summary:
@@ -1249,6 +1253,21 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
 
+    # One run, one directory: derived ONCE from the run's identity, and
+    # guarded before anything is written or captured.
+    from vop_interwoven.run_meta import (
+        run_identity, run_directory, check_run_directory)
+    run_root = output_dir
+    continuing = bool(run_id)
+    identity = run_identity(date_override, run_id=run_id)
+    run_id = identity["run_id"]
+    run_dir = run_directory(run_root, identity)
+    if run_subdir:
+        output_dir = os.path.join(run_dir, run_subdir)
+    else:
+        check_run_directory(run_dir, run_id, continuing=continuing)
+        output_dir = run_dir
+
     # Keep pipeline-side exports aligned with streaming output directory by default
     try:
         cfg.output_dir = output_dir
@@ -1269,7 +1288,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     config_hash = compute_config_hash(cfg)
     
     root_cache = RootStyleCache(
-        output_dir=output_dir,
+        output_dir=run_root,
         project_guid=project_guid,
         exporter_version=exporter_version,
         config_hash=config_hash
@@ -1292,6 +1311,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         root_cache=root_cache,
         view_ids=view_ids,
         run_id=run_id,
+        run_dir=run_dir,
     )
     
     # Process with streaming callback
@@ -1310,6 +1330,8 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # Finalize and get results
     result = exporter.finalize()
     result["total_time_sec"] = t1 - t0
+    result["run_dir"] = run_dir
+    result["output_dir"] = output_dir
     
     # Persist root cache
     try:

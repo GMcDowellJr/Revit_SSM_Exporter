@@ -1465,7 +1465,8 @@ def _build_manifest_vop_row_from_metrics(view_result, metrics, manifest_columns,
     return row
 
 
-def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None):
+def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None,
+                           run_id=None):
     """Export pipeline results to core + VOP CSV files.
 
     Args:
@@ -1508,37 +1509,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                 )
             doc = None
 
-    # Resolve run datetime / date string
-    run_dt = datetime.now()
-    tag = None
-
-    if date_override:
-        if isinstance(date_override, str):
-            s = date_override.strip()
-            # Try strict date / datetime parsing first
-            try:
-                if len(s) == 10:
-                    run_dt = datetime.strptime(s, "%Y-%m-%d")
-                else:
-                    run_dt = datetime.fromisoformat(s)
-            except Exception as e:
-                if diag is not None:
-                    diag.error(
-                        phase="export",
-                        callsite="export_pipeline_to_csv",
-                        message="Exception in export_pipeline_to_csv: {}".format(e),
-                        exc=e,
-                    )
-                # Treat as opaque tag (commit hash, label, etc.)
-                tag = s
-        else:
-            tag = str(date_override)
-
-    date_str = run_dt.strftime("%Y-%m-%d")
-
-    # RunId: deterministic but tag-aware
-    base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-    run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    # Resolve run id / as-of date: run_id from the execution clock (plus a
+    # tag), date the override's when it is a date (run_meta.run_identity).
+    from vop_interwoven.run_meta import identity_file_date_str, run_identity
+    # ``run_id``: the caller's, when it minted one for the whole run (the
+    # pipeline's views_diagnostics carries the same id); else minted here.
+    _identity = run_identity(date_override, run_id=run_id)
+    date_str = _identity["as_of_date"]
+    run_id = _identity["run_id"]
     run_info_common = {
         "date": date_str,
         "run_id": run_id,
@@ -1546,8 +1524,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
     # Filenames: the same date part as every other writer of the run (a tag
     # names the files as given; a date-shaped override by its date).
-    from vop_interwoven.run_meta import output_date_str
-    file_date_str = output_date_str(date_override, now=run_dt)
+    file_date_str = identity_file_date_str(date_override, _identity)
     core_filename = f"views_core_{file_date_str}.csv"
     vop_filename = f"views_vop_{file_date_str}.csv"
     occlusion_filename = f"views_occlusion_{file_date_str}.csv"
@@ -1811,7 +1788,11 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     )
         raise
 
-    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "occlusion_csv_path": occlusion_path, "rows_exported": len(vop_rows)}
+    # run_id / file_date_str: so a caller writing more of this run's files
+    # (entry_dynamo's perf CSV) keys and names them as this run, rather than
+    # minting a second id (Codex, PR #230).
+    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "occlusion_csv_path": occlusion_path, "rows_exported": len(vop_rows),
+            "run_id": run_id, "file_date_str": file_date_str}
 
 # =============================================================================
 # STREAMING SUPPORT - Append to end of csv_export.py
@@ -1866,23 +1847,10 @@ def view_result_to_occlusion_row(view_result, date_override=None, run_id=None):
 
     # Resolve date/run id consistently with other streaming row helpers
     if run_id is None:
-        run_dt = datetime.now()
-        tag = None
-        if date_override:
-            if isinstance(date_override, str):
-                s = date_override.strip()
-                try:
-                    if len(s) == 10:
-                        run_dt = datetime.strptime(s, "%Y-%m-%d")
-                    else:
-                        run_dt = datetime.fromisoformat(s)
-                except Exception:
-                    tag = s
-            else:
-                tag = str(date_override)
-        date_str = run_dt.strftime("%Y-%m-%d")
-        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+        from vop_interwoven.run_meta import run_identity
+        _identity = run_identity(date_override)
+        date_str = _identity["as_of_date"]
+        run_id = _identity["run_id"]
     else:
         if date_override and isinstance(date_override, str):
             s = date_override.strip()
@@ -1967,25 +1935,10 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
 
     # Resolve run datetime and run_id (use provided run_id if available for consistency)
     if run_id is None:
-        run_dt = datetime.now()
-        tag = None
-
-        if date_override:
-            if isinstance(date_override, str):
-                s = date_override.strip()
-                try:
-                    if len(s) == 10:
-                        run_dt = datetime.strptime(s, "%Y-%m-%d")
-                    else:
-                        run_dt = datetime.fromisoformat(s)
-                except Exception as e:
-                    tag = s
-            else:
-                tag = str(date_override)
-
-        date_str = run_dt.strftime("%Y-%m-%d")
-        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+        from vop_interwoven.run_meta import run_identity
+        _identity = run_identity(date_override)
+        date_str = _identity["as_of_date"]
+        run_id = _identity["run_id"]
     else:
         # Extract date from run_id if provided
         if date_override:
@@ -2110,25 +2063,10 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
 
     # Resolve run datetime and run_id (use provided run_id if available for consistency)
     if run_id is None:
-        run_dt = datetime.now()
-        tag = None
-
-        if date_override:
-            if isinstance(date_override, str):
-                s = date_override.strip()
-                try:
-                    if len(s) == 10:
-                        run_dt = datetime.strptime(s, "%Y-%m-%d")
-                    else:
-                        run_dt = datetime.fromisoformat(s)
-                except Exception as e:
-                    tag = s
-            else:
-                tag = str(date_override)
-
-        date_str = run_dt.strftime("%Y-%m-%d")
-        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+        from vop_interwoven.run_meta import run_identity
+        _identity = run_identity(date_override)
+        date_str = _identity["as_of_date"]
+        run_id = _identity["run_id"]
     else:
         # Extract date from run_id if provided
         if date_override:
@@ -2445,25 +2383,10 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
 
     # Resolve run datetime and run_id (use provided run_id if available for consistency)
     if run_id is None:
-        run_dt = datetime.now()
-        tag = None
-
-        if date_override:
-            if isinstance(date_override, str):
-                s = date_override.strip()
-                try:
-                    if len(s) == 10:
-                        run_dt = datetime.strptime(s, "%Y-%m-%d")
-                    else:
-                        run_dt = datetime.fromisoformat(s)
-                except Exception as e:
-                    tag = s
-            else:
-                tag = str(date_override)
-
-        date_str = run_dt.strftime("%Y-%m-%d")
-        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+        from vop_interwoven.run_meta import run_identity
+        _identity = run_identity(date_override)
+        date_str = _identity["as_of_date"]
+        run_id = _identity["run_id"]
     else:
         # Extract date from run_id if provided
         if date_override:

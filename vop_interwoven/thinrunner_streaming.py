@@ -530,6 +530,18 @@ try:
     # Use STREAMING pipeline (no cache, minimal memory)
     from vop_interwoven.streaming import run_vop_pipeline_streaming
     
+    # One run, one directory: output_dir is the ROOT, and the run writes
+    # into <output_dir>/<as_of_date>__<run_id>. The identity is minted ONCE
+    # here and handed to every batch, and the directory is refused BEFORE
+    # any view is captured if it holds another run.
+    from vop_interwoven.run_meta import (
+        run_identity, run_directory, check_run_directory)
+    run_identity_ = run_identity(tag_override)
+    shared_run_id = run_identity_["run_id"]
+    run_dir = run_directory(output_dir, run_identity_)
+    check_run_directory(run_dir, shared_run_id)
+    print("[VOP] Run {} -> {}".format(shared_run_id, run_dir))
+
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
     try:
         batches = _chunk_list(view_ids, batch_size)
@@ -552,6 +564,7 @@ try:
                 export_view_raster=export_view_raster,
                 pixels_per_cell=10,
                 date_override=tag_override,
+                run_id=shared_run_id,
             )
         else:
             print("[VOP] Streaming exporter rewrites CSVs per run; enabling batch CSV append merge.")
@@ -569,10 +582,10 @@ try:
                 "perf_csv_path": None,
             }
 
-            # C9: one run, one RunId, one run_meta.json -- the first batch's
-            # id is handed to every later batch, and their run_meta files are
-            # merged into output_dir at the end.
-            shared_run_id = None
+            # C9: one run, one RunId, one run_meta.json -- the run's id is
+            # handed to every batch, each batch writes into its own
+            # _batch_tmp_<n>/ inside the run directory, and their run_meta
+            # files are merged into the run directory.
             batch_meta_paths = []
             for batch_index, batch_view_ids in enumerate(batches):
                 start_idx = batch_index * batch_size + 1
@@ -581,14 +594,11 @@ try:
                     batch_index + 1, len(batches), start_idx, end_idx, len(batch_view_ids)
                 ))
 
-                batch_output_dir = os.path.join(output_dir, "_batch_tmp_{}".format(batch_index + 1))
-                os.makedirs(batch_output_dir, exist_ok=True)
-
                 batch_result = run_vop_pipeline_streaming(
                     doc=doc,
                     view_ids=batch_view_ids,
                     cfg=cfg,
-                    output_dir=batch_output_dir,
+                    output_dir=output_dir,
                     export_png=True,
                     export_csv=True,
                     export_json=False,
@@ -596,8 +606,13 @@ try:
                     pixels_per_cell=10,
                     date_override=tag_override,
                     run_id=shared_run_id,
+                    run_subdir="_batch_tmp_{}".format(batch_index + 1),
                 )
-                shared_run_id = shared_run_id or batch_result.get("run_id")
+                if batch_result.get("run_dir") != run_dir:
+                    raise RuntimeError(
+                        "batch {0} resolved run directory {1!r}, not the run's "
+                        "{2!r}".format(batch_index + 1, batch_result.get("run_dir"), run_dir))
+                batch_output_dir = batch_result["output_dir"]
                 if batch_result.get("run_meta_path"):
                     batch_meta_paths.append(batch_result["run_meta_path"])
 
@@ -614,7 +629,7 @@ try:
                     chunk_csv = batch_result.get(key)
                     if not chunk_csv:
                         continue
-                    target_csv = os.path.join(output_dir, os.path.basename(chunk_csv))
+                    target_csv = os.path.join(run_dir, os.path.basename(chunk_csv))
                     _append_csv(chunk_csv, target_csv)
                     merged[key] = target_csv
 
@@ -628,9 +643,9 @@ try:
                     # has a run_meta.json above it, even if a later batch
                     # raises (finalized stays false until the loop ends).
                     from vop_interwoven.run_meta import write_merged_run_meta
-                    write_merged_run_meta(batch_meta_paths, output_dir, run_complete=False)
+                    write_merged_run_meta(batch_meta_paths, run_dir, run_complete=False)
                     _relocate_batch_stage_a_outputs(
-                        batch_output_dir, output_dir, batch_result.get("view_summaries", [])
+                        batch_output_dir, run_dir, batch_result.get("view_summaries", [])
                     )
 
                 _run_gc_between_chunks()
@@ -638,8 +653,9 @@ try:
             if batch_meta_paths:
                 from vop_interwoven.run_meta import write_merged_run_meta
                 merged["run_meta_path"] = write_merged_run_meta(
-                    batch_meta_paths, output_dir, run_complete=True)
+                    batch_meta_paths, run_dir, run_complete=True)
             merged["run_id"] = shared_run_id
+            merged["run_dir"] = run_dir
 
             result = merged
 
@@ -748,6 +764,7 @@ try:
     vop_csv = result.get('vop_csv_path', 'N/A')
     
     lines.append("")
+    lines.append("Run directory: {}".format(run_dir))
     lines.append("CSV Output:")
     lines.append("  Core: {}".format(core_csv))
     lines.append("  VOP:  {}".format(vop_csv))

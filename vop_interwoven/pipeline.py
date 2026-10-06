@@ -671,33 +671,25 @@ def process_document_views(
     gc_freed_total_mb = 0.0
     clr_gc_call_count = 0
 
-    # Run/date identity for dated exports and metadata
-    # Keep this aligned with CSV/PERF naming date semantics.
+    # Run/date identity for dated exports and metadata: run_id from the
+    # execution clock, date_str the as-of date (run_meta.run_identity, the one
+    # minting function). The run's id is the caller's when it set one
+    # (cfg._view_element_map_run_id: the streaming exporter, and
+    # run_vop_pipeline_with_csv) -- so views_diagnostics' metadata.run_id is
+    # the id every CSV row of the run carries (Codex, PR #230); minted here
+    # only when no caller did.
     date_override = getattr(cfg, "date_override", None)
-    run_dt = datetime.now()
-    if date_override:
-        try:
-            if isinstance(date_override, datetime):
-                run_dt = date_override
-            elif isinstance(date_override, str):
-                ds = date_override.strip()
-                if len(ds) == 10:
-                    run_dt = datetime.strptime(ds, "%Y-%m-%d")
-                elif len(ds) == 8 and ds.isdigit():
-                    run_dt = datetime.strptime(ds, "%Y%m%d")
-                else:
-                    run_dt = datetime.fromisoformat(ds)
-            else:
-                run_dt = datetime.fromisoformat(str(date_override))
-        except Exception:
-            pass
-
-    date_str = run_dt.strftime("%Y-%m-%d")
-    run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+    from .run_meta import identity_file_date_str, run_identity
+    _identity = run_identity(
+        date_override, run_id=getattr(cfg, "_view_element_map_run_id", None))
+    date_str = _identity["as_of_date"]
+    run_id = _identity["run_id"]
     # Filenames take the override as views_core does (a tag stays the tag);
     # date_str above stays a date for the payload's "date" field.
-    from .run_meta import output_date_str
-    file_date_str = output_date_str(date_override, now=run_dt)
+    # The files are the RUN's (streaming merges every view into one), so they
+    # are named by the run's identity -- a view processed after midnight
+    # still writes into the run's files.
+    file_date_str = identity_file_date_str(date_override, _identity)
 
     # ────────────────────────────────────────────────────────────────────
     # Persistent view-level cache (disk-backed)
@@ -1682,9 +1674,9 @@ def process_document_views(
                 "metadata": {
                     "date": date_str,
                     "run_id": run_id,
-                    # The StreamingExporter's run id (the one views_core and
-                    # run_meta.json key on); run_id above is per CALL, and
-                    # streaming makes one call per view.
+                    # The caller's run id (the one views_core and run_meta.json
+                    # key on), which run_id above equals whenever a caller set
+                    # one; None when the pipeline minted its own.
                     "exporter_run_id": exporter_run_id,
                     "doc_title": getattr(doc, "Title", "Unknown"),
                     "doc_path": getattr(doc, "PathName", None),
