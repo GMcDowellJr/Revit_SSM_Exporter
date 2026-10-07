@@ -10,6 +10,9 @@ Per run:
 Then, across all runs:
   4. inventory  -- stage_a_kinds inventory
   5. rollup     -- stage_a_grid_rollup
+Then, per run again:
+  6. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
+                   named as views_core is and written beside it
 
 Each stage is the tool's own ``main()``, called as it would be from the
 command line: nothing is reimplemented here, and every stage prints its own
@@ -17,7 +20,9 @@ lines. A view a stage refuses (exit 1) does not stop the run -- the later
 stages see the refusal and the roll-up reports it. A stage that cannot run
 at all (exit 2: nothing found, bad arguments, a broken invariant) stops
 everything after it, because what follows would read missing or partial
-inputs.
+inputs. The timing report reads only run_meta, views_core and the model
+sidecars -- nothing the other stages write -- so it runs last, and a run it
+cannot report (exit 2: no views_core, say) costs nothing else.
 
 ``--out`` is where the cross-run products go (inventory, roll-up). With one
 run it defaults to that run's ``analysis_grid/``, as each tool's own default
@@ -38,8 +43,9 @@ from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
+from tools import stage_a_timing_report as timing  # noqa: E402
 
-STAGES = ("register", "grid", "derive", "inventory", "rollup")
+STAGES = ("register", "grid", "derive", "inventory", "rollup", "timing")
 
 
 def _stage(name, label, fn, argv, results):
@@ -60,8 +66,10 @@ def analyze(runs, out=None):
     if len(runs) > 1 and out is None:
         raise ValueError("--out is required with more than one run")
     results = []
+    run_dirs = []
     for run in runs:
         _sidecars, folder = grid.model_sidecars(run)
+        run_dirs.append(folder.parent if folder.name == "color_id_buffer" else folder)
         for name, fn, argv in (("register", reg.main, [folder]),
                                ("grid", grid.main, [run]),
                                ("derive", kinds.main, ["derive", run])):
@@ -72,6 +80,8 @@ def analyze(runs, out=None):
                            ("rollup", rollup.main, runs + out_args)):
         if _stage(name, "all runs", fn, argv, results) >= 2:
             return 2, results
+    for run, run_dir in zip(runs, run_dirs):
+        _stage("timing", str(run), timing.main, [run_dir], results)
     return max(r["exit"] for r in results), results
 
 
