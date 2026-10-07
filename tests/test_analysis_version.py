@@ -99,14 +99,16 @@ def commit(repo, message, files):
 @pytest.fixture
 def repo(tmp_path):
     """A repository whose first commit predates the rule and whose second
-    introduces it (the real tool and version file are copied in)."""
+    introduces it: the real tool is copied in, and the version file is
+    PINNED at 1.0.0. Copying the live _version.py made every bump test
+    depend on the current release -- main went red at its own v1.1.0."""
     r = tmp_path / "repo"
     r.mkdir()
     git(r, "init", "-q", "-b", "main")
     commit(r, "feat: before the rule", {"vop_interwoven/a.py": "A = 1\n"})
     commit(r, "chore: add the rule", {
         av.CHECKER: (REPO / av.CHECKER).read_text(encoding="utf-8"),
-        av.VERSION_FILE: (REPO / av.VERSION_FILE).read_text(encoding="utf-8")})
+        av.VERSION_FILE: '__version__ = "1.0.0"\n'})
     return r
 
 
