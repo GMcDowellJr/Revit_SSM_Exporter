@@ -23,7 +23,19 @@ refused.
 Nothing is hidden: a view whose sidecar carries no timings (a run before P2)
 is reported with the reason, never dropped. Standard library only.
 
+Every run writes the report into the run directory, beside views_core, named
+as the run's other dated files are: ``views_timing_<suffix>.csv`` and
+``views_timing_<suffix>.json``, where ``<suffix>`` is whatever the
+thinrunner's date/override named views_core_<suffix>.csv by -- a tag such as
+``PR_221`` as given, a date as YYYY-MM-DD. It is read from that file's name;
+run_meta's run_tag, else its date, stands in only when no views_core file
+names one, and a run that names none (or two) is refused rather than named by
+guess. The files are written only after every row is built.
+
     python tools/stage_a_timing_report.py <run_dir> [--json]
+
+Exit: 0 written; 2 the run could not be reported (no run_meta.json, no
+run_id, no views_core, no date/override to name it by).
 """
 from __future__ import annotations
 
@@ -66,11 +78,86 @@ def _model_sidecars(run_dir):
     return out
 
 
+TIMING_STEM = "views_timing"
+_CORE_NAME = re.compile(r"^views_core_(.+)\.csv$")
+
+# Fixed CSV columns; the per-phase columns follow, one per phase key.
+CSV_COLUMNS = ("run_id", "view_id", "view_name", "elapsed_ms", "capture_total_ms",
+               "outside_capture_ms", "unaccounted_ms", "reason")
+
+
+def _run_meta(run_dir):
+    path = os.path.join(run_dir, "run_meta.json")
+    with open(path) as handle:
+        return json.load(handle)
+
+
+def file_date_str(run_dir):
+    """The suffix of the run's dated filenames -- what the thinrunner's
+    date/override named them by (run_meta.identity_file_date_str(): the
+    override as given when it is a tag such as "PR_221", its YYYY-MM-DD when
+    it is a date, else the run's as-of date).
+
+    Read from the name the exporter actually wrote, views_core_<suffix>.csv,
+    so the report cannot drift from it. Only when no views_core file names
+    one does run_meta stand in: its ``run_tag`` (the override, when a tag),
+    else its ``date``. Raises when neither tells it, or when views_core files
+    name more than one suffix."""
+    suffixes = set()
+    for core in glob.glob(os.path.join(run_dir, "views_core*.csv")):
+        match = _CORE_NAME.match(os.path.basename(core))
+        if match:
+            suffixes.add(match.group(1))
+    if len(suffixes) == 1:
+        return suffixes.pop()
+    if len(suffixes) > 1:
+        raise ValueError("views_core files under {0} name more than one date/override "
+                         "({1}); not guessed between".format(run_dir, sorted(suffixes)))
+    meta = _run_meta(run_dir)
+    named = meta.get("run_tag") or meta.get("date")
+    if named:
+        return str(named)
+    raise ValueError("neither a views_core_<date>.csv nor run_meta.json's run_tag/date "
+                     "under {0} names the run; refusing to name the timing report "
+                     "by guess".format(run_dir))
+
+
+def output_paths(run_dir):
+    """``(csv_path, json_path)`` the report is written to."""
+    stem = os.path.join(run_dir, "{0}_{1}".format(TIMING_STEM, file_date_str(run_dir)))
+    return stem + ".csv", stem + ".json"
+
+
+def _phase_keys(rows):
+    keys = set()
+    for row in rows:
+        keys.update(row.get("phases_ms") or {})
+    return sorted(keys - {"total", "unaccounted"})
+
+
+def write_report(run_dir, rows):
+    """Write ``rows`` (finished) as CSV and JSON into the run directory;
+    returns ``(csv_path, json_path)``."""
+    csv_path, json_path = output_paths(run_dir)
+    phases = _phase_keys(rows)
+    with open(csv_path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(list(CSV_COLUMNS) + ["phase_{0}_ms".format(k) for k in phases])
+        for row in rows:
+            timed = row.get("phases_ms") or {}
+            writer.writerow([("" if row.get(c) is None else row.get(c)) for c in CSV_COLUMNS]
+                            + [("" if timed.get(k) is None else timed.get(k)) for k in phases])
+    with open(json_path, "w") as handle:
+        json.dump({"run_id": _run_identity(run_dir)[0],
+                   "file_date": file_date_str(run_dir), "views": rows},
+                  handle, indent=2, sort_keys=True)
+    return csv_path, json_path
+
+
 def _run_identity(run_dir):
     """``(run_id, {view_id: capture_status})`` from run_meta.json, or raises."""
     path = os.path.join(run_dir, "run_meta.json")
-    with open(path) as handle:
-        meta = json.load(handle)
+    meta = _run_meta(run_dir)
     run_id = meta.get("run_id")
     if not run_id:
         raise ValueError("{0} carries no run_id; refusing to join timings "
@@ -137,7 +224,13 @@ def main(argv=None):
     parser.add_argument("run_dir")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    rows = timing_rows(args.run_dir)
+    try:
+        rows = timing_rows(args.run_dir)
+        csv_path, json_path = write_report(args.run_dir, rows)
+    except (OSError, ValueError) as ex:      # FileNotFoundError is an OSError
+        print("timing report refused: {0}: {1}".format(type(ex).__name__, ex),
+              file=sys.stderr)
+        return 2
     if args.json:
         json.dump(rows, sys.stdout, indent=2, sort_keys=True)
         return 0
@@ -150,6 +243,7 @@ def main(argv=None):
             str(row["view_name"])[:28], _f(row["elapsed_ms"]),
             _f(row["capture_total_ms"]), _f(row["outside_capture_ms"]),
             _f(row["unaccounted_ms"]), row["reason"] or ""))
+    print("wrote {0}\nwrote {1}".format(csv_path, json_path))
     return 0
 
 

@@ -163,3 +163,81 @@ def test_p2_two_model_sidecars_for_one_view_are_not_guessed_between(tmp_path):
     [row] = timing_rows(str(run))
     assert row["capture_total_ms"] is None
     assert "more than one model sidecar" in row["reason"]
+
+
+def _rename_core(run, suffix):
+    (run / "views_core_x.csv").rename(run / "views_core_{0}.csv".format(suffix))
+
+
+def test_p2_the_report_is_WRITTEN_beside_views_core_named_by_its_override(tmp_path):
+    """main() writes views_timing_<suffix>.csv/.json into the run directory,
+    <suffix> being what the thinrunner's override named views_core by -- a
+    tag as given, not run_meta's as-of date. Asserts the FILES (defect class
+    4), and that they carry the rows timing_rows() returns."""
+    import csv
+    from tools import stage_a_timing_report as report
+
+    out, run, view_id = _report_run(tmp_path, {999: "success"},
+                                    extra_rows=[["RUN_B", 999, "never_captured", "2.0"]])
+    _rename_core(run, "PR_221")
+    meta = json.loads((run / "run_meta.json").read_text())
+    meta.update(date="2026-10-07", run_tag="PR_221")
+    (run / "run_meta.json").write_text(json.dumps(meta))
+    assert report.main([str(run)]) == 0
+    assert sorted(p.name for p in run.glob("views_timing*")) == [
+        "views_timing_PR_221.csv", "views_timing_PR_221.json"]
+    written = json.loads((run / "views_timing_PR_221.json").read_text())
+    assert written["run_id"] == "RUN_B" and written["file_date"] == "PR_221"
+    assert written["views"] == json.loads(json.dumps(report.timing_rows(str(run))))
+    with open(str(run / "views_timing_PR_221.csv"), newline="") as handle:
+        rows = dict((r["view_name"], r) for r in csv.DictReader(handle))
+    timings = _file(out["sidecar_path"])["registration_marks"]["timings_ms"]
+    assert float(rows["v"]["capture_total_ms"]) == timings["total"]
+    for phase in set(timings) - {"total", "unaccounted"}:
+        assert float(rows["v"]["phase_{0}_ms".format(phase)]) == timings[phase]
+    # Reported, never dropped -- blank cells, the reason kept.
+    assert rows["never_captured"]["capture_total_ms"] == ""
+    assert rows["never_captured"]["reason"] == "no model sidecar"
+
+
+def test_p2_the_views_core_name_wins_over_run_meta(tmp_path):
+    """A dated override: views_core_2026-09-01.csv names the report even
+    though run_meta's date says otherwise -- the file name is ground truth."""
+    from tools import stage_a_timing_report as report
+
+    _out, run, _vid = _report_run(tmp_path, {})
+    _rename_core(run, "2026-09-01")
+    meta = json.loads((run / "run_meta.json").read_text())
+    meta.update(date="2026-10-07")
+    (run / "run_meta.json").write_text(json.dumps(meta))
+    assert report.file_date_str(str(run)) == "2026-09-01"
+
+
+def test_p2_run_meta_names_the_report_only_when_views_core_cannot(tmp_path):
+    from tools import stage_a_timing_report as report
+
+    _out, run, _vid = _report_run(tmp_path, {})
+    (run / "views_core_x.csv").rename(run / "views_core.csv")   # names nothing
+    meta = json.loads((run / "run_meta.json").read_text())
+    meta.update(date="2026-10-07", run_tag="PR_221")
+    (run / "run_meta.json").write_text(json.dumps(meta))
+    assert report.file_date_str(str(run)) == "PR_221"           # the tag, not the date
+    meta["run_tag"] = None
+    (run / "run_meta.json").write_text(json.dumps(meta))
+    assert report.file_date_str(str(run)) == "2026-10-07"
+
+
+def test_p2_a_run_whose_name_cannot_be_told_is_refused_and_nothing_written(tmp_path):
+    import shutil
+    from tools import stage_a_timing_report as report
+
+    _out, run, _vid = _report_run(tmp_path, {})
+    shutil.copy(str(run / "views_core_x.csv"), str(run / "views_core_y.csv"))
+    assert report.main([str(run)]) == 2                         # two names: not guessed
+    (run / "views_core_y.csv").unlink()
+    (run / "views_core_x.csv").rename(run / "views_core.csv")   # none, and no run_meta date
+    assert report.main([str(run)]) == 2
+    assert not list(run.glob("views_timing*"))
+    # And without run_meta.json, main refuses rather than raising.
+    (run / "run_meta.json").unlink()
+    assert report.main([str(run)]) == 2
