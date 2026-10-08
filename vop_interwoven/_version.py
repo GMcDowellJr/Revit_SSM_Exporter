@@ -5,4 +5,4 @@ merge to main, from the commit messages since the last release tag: a commit
 declared analysis-breaking raises MAJOR. Do not edit by hand -- the tool
 refuses a file that disagrees with the last vX.Y.Z tag.
 """
-__version__ = "1.1.1"
+__version__ = "1.2.0"
