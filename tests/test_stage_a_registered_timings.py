@@ -165,6 +165,65 @@ def test_p2_two_model_sidecars_for_one_view_are_not_guessed_between(tmp_path):
     assert "more than one model sidecar" in row["reason"]
 
 
+# The model pass's own steps, in pass order (color_id_buffer.export_color_id_
+# buffer_view's _lap calls). Each reaches timings_ms as model_<step>.
+MODEL_STEPS = ("setup", "graphics_state", "template_detach", "suppress_setup",
+               "expand", "link_filters", "link_proxies", "near_face_w", "paint",
+               "suppress_commit", "restore", "restore_commit", "finish")
+
+
+def _slow(monkeypatch, name, ms=25.0):
+    """Make color_id_buffer.<name> take at least ``ms``: a known quantity the
+    step timings must attribute to exactly one step."""
+    import time
+    from vop_interwoven import color_id_buffer as cib
+    real = getattr(cib, name)
+
+    def slow(*a, **k):
+        time.sleep(ms / 1000.0)
+        return real(*a, **k)
+    monkeypatch.setattr(cib, name, slow)
+
+
+def test_model_pass_steps_are_in_both_sidecar_FILES_nested_in_the_pass(tmp_path):
+    out, _v, _d, _e, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        timings = _file(path)["registration_marks"]["timings_ms"]
+        steps = dict((s, timings.get("model_" + s)) for s in MODEL_STEPS)
+        assert all(isinstance(v, (int, float)) and v >= 0 for v in steps.values()), steps
+        # Nested in model_pass, never beside it, and not in the partition.
+        nested = sum(steps.values()) + timings["model_export"] + timings["sidecar_write_model"]
+        assert nested <= timings["model_pass"] + 1e-2
+        from vop_interwoven.stage_a_registered_capture import TIMING_PARTITION
+        assert not set("model_" + s for s in MODEL_STEPS) & set(TIMING_PARTITION)
+
+
+def test_model_pass_steps_account_for_the_whole_pass_without_double_counting(
+        tmp_path, monkeypatch):
+    """The laps are contiguous: steps + export + sidecar write == the pass's
+    own clock. A slow export makes the check discriminate: a lap clock not
+    restarted after the export would count those 25 ms twice."""
+    _slow(monkeypatch, "_export_tiff")
+    out, _v, _d, _e, _diag = _run(tmp_path)
+    t = out["timings"]
+    assert list(t["steps_ms"]) == list(MODEL_STEPS)
+    assert t["export_ms"] >= 25.0
+    total = sum(t["steps_ms"].values()) + t["export_ms"] + t["sidecar_write_ms"]
+    assert abs(total - t["color_id_buffer_ms"]) < 1.0, (total, t)
+
+
+def test_a_slow_step_lands_in_its_own_lap(tmp_path, monkeypatch):
+    """25 ms injected into the near-face/bbox collection appears in
+    model_near_face_w and in no neighbouring step."""
+    _slow(monkeypatch, "_collect_near_face_w_data")
+    out, _v, _d, _e, _diag = _run(tmp_path)
+    steps = out["timings"]["steps_ms"]
+    assert steps["near_face_w"] >= 25.0
+    assert all(v < 25.0 for k, v in steps.items() if k != "near_face_w"), steps
+    persisted = _file(out["sidecar_path"])["registration_marks"]["timings_ms"]
+    assert persisted["model_near_face_w"] == steps["near_face_w"]
+
+
 def _rename_core(run, suffix):
     (run / "views_core_x.csv").rename(run / "views_core_{0}.csv".format(suffix))
 

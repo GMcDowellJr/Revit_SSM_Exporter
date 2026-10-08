@@ -3662,6 +3662,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     from Autodesk.Revit.DB import Transaction, Color, ElementId, BuiltInParameter
 
     t0 = time.time()
+    # Per-step wall time of this pass, for the registered capture's
+    # timings_ms (model_<step>). CONTIGUOUS: each lap closes where the next
+    # begins, so the steps plus export_ms and sidecar_write_ms account for
+    # the whole pass -- nothing between two laps can go unmeasured. A list,
+    # not nonlocal: IronPython 2.
+    steps_ms = {}
+    _lap_at = [t0]
+
+    def _lap(step):
+        now = time.time()
+        steps_ms[step] = round((now - _lap_at[0]) * 1000.0, 3)
+        _lap_at[0] = now
+
     base_output_dir = getattr(cfg, "output_dir", None) or getattr(
         cfg, "debug_dump_path", "C:\\temp\\vop_output"
     )
@@ -3950,6 +3963,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # underlay and display settings included. Read it after the detach and it
     # would describe Stage A's own scratch state instead. Purely additive: it
     # feeds one sidecar key and nothing else.
+    _lap("setup")
     try:
         view_graphics_state = _capture_view_graphics_state(
             doc, view, elements, diag=diag, view_id=view_id)
@@ -3978,10 +3992,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # every restore step writes back) the view's real instance-level state.
     # C: the primary's template for a dependent view, and the read-back is
     # the record (_detach_view_template).
+    _lap("graphics_state")
     view_template_detach, view_template_handle = _detach_view_template(
         doc, view, "VOP Stage A DETACH view template", diag=diag, view_id=view_id,
         callsite="detach_view_template")
     view_template_detached = bool(view_template_detach["detached"])
+    _lap("template_detach")
 
     # The detach above COMMITTED; a raise from here to the suppress
     # transaction's Start would leave the template detached (Codex, PR #226).
@@ -4706,6 +4722,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # unusable view bbox, a per-import failure, or a scan that failed
         # outright) land here so the sidecar can say an import was omitted
         # rather than leaving "not in the drawing" and "dropped" identical.
+        _lap("suppress_setup")
         dwg_imports_omitted = []
         try:
             from .revit.collection import expand_host_link_import_model_elements as _expand_elements
@@ -4757,6 +4774,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         )
         _scan_view_specific_imports(doc, view, view_specific_imports,
                                     diag=diag, view_id=view_id)
+        _lap("expand")
         count_host = len(resolved_ids)
 
         # One colorability answer for this whole capture, resolved once here
@@ -4881,11 +4899,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # painted/exported below. Additive-only sidecar data; never touches
         # color_assignment_map or link_category_color_map. The view-scoped
         # LINK scan it needs is collected once here and handed in.
+        # Colorable predicate, link-category discovery, palette and the link
+        # category filters applied to the view.
+        _lap("link_filters")
         link_proxies = []
         if link_category_color_map:
             link_proxies, _link_status = _collect_view_scoped_link_proxies(
                 doc, view, cfg, diag=diag, view_id=view_id,
             )
+        _lap("link_proxies")
         rotation_stats = _new_rotation_stats()
         near_face_w_map = _collect_near_face_w_data(
             doc, view, raster, cfg, resolved_ids, link_category_color_map,
@@ -4893,6 +4915,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             host_source_types=host_source_types, rotation_stats=rotation_stats,
         )
         rotation_stats["elapsed_ms"] = round(rotation_stats["elapsed_ms"], 3)
+        _lap("near_face_w")
 
         # Paint per-element, but never let one element's failure (some categories/
         # nested sub-components legitimately reject graphic overrides) roll back
@@ -4928,6 +4951,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
         _hide_view_specific_imports(doc, view, view_specific_imports,
                                     diag=diag, view_id=view_id)
+        _lap("paint")
 
         suppress_tx.Commit()
     except Exception:
@@ -4947,7 +4971,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "dim_check_ceiling_px": MAX_STAGE_A_AXIS_PX,
         "attempts": [],
     }
-    _export_t0 = time.time()
+    _lap("suppress_commit")
+    # The export starts exactly where the last lap ended, and the lap clock
+    # restarts where it ends: export_ms is its own figure, never a step's.
+    _export_t0 = _lap_at[0]
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
@@ -4957,7 +4984,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     finally:
         # P2: the export alone (every dimension-check attempt), for the
         # registered capture's timings_ms. In memory only.
-        export_ms = round((time.time() - _export_t0) * 1000.0, 3)
+        _lap_at[0] = time.time()
+        export_ms = round((_lap_at[0] - _export_t0) * 1000.0, 3)
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
         model_restore_failures = []
@@ -5145,11 +5173,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             _restore_step("restore_view_template",
                           lambda: _reattach_view_template(view_template_handle))
 
+        _lap("restore")
         try:
             restore_tx.Commit()
         except Exception:
             restore_tx.RollBack()
             raise
+        _lap("restore_commit")
         _read_back_view_specific_imports(doc, view, view_specific_imports,
                                          diag=diag, view_id=view_id)
 
@@ -5462,6 +5492,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     state_out["capture_integrity"] = _capture_integrity(
         "model_pass", model_faults, len(model_restore_failures), paint_failures)
     state_out["failure_reason"] = failure_reason
+    # Post-export read-backs, dimension checks and building the record.
+    _lap("finish")
     _write_t0 = time.time()
     _write_sidecar(json_path, out_dir, state_out)
     sidecar_write_ms = round((time.time() - _write_t0) * 1000.0, 3)
@@ -5479,8 +5511,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "color_assignment_count": count_host + count_link_categories,
         # export_ms / sidecar_write_ms: P2, read by the registered capture
         # into its timings_ms. The sidecar cannot carry its own write time.
+        # steps_ms: the contiguous per-step laps above (model_<step>).
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
-                    "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms},
+                    "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms,
+                    "steps_ms": dict(steps_ms)},
         "metadata": state_out,
     }
 

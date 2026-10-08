@@ -666,6 +666,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                            ("sidecar_write_ms", "sidecar_write_{0}")):
             if timings.get(key) is not None:
                 record["timings_ms"][label.format(name)] = timings[key]
+        # The pass's own steps (the model pass: setup, graphics_state, ...,
+        # restore_commit, finish), nested in the pass like the export.
+        for step, ms in sorted((timings.get("steps_ms") or {}).items()):
+            record["timings_ms"]["{0}_{1}".format(name, step)] = ms
 
     primary, record["primary_view"] = primary_view(doc, view, diag=diag, view_id=view_id)
     if primary is not None:
