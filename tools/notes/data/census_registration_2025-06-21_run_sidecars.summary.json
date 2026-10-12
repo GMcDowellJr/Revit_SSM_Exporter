@@ -1,0 +1,277 @@
+{
+  "csv": "census_registration.csv",
+  "csv_sha256": "193153ffc7a11b3780a47c0e64551f1a0b47a918b906599b78acceda6f228f4b",
+  "denominator": 157,
+  "denominator_rule": "one row per model sidecar stage_a_grid.model_sidecars finds in each run",
+  "partition_rule": "registration_state counts by each column's value, over the rows whose provenance is this_run; a blank key is a row the column could not be filled for (see its notes). No model is fitted.",
+  "partitions": {
+    "anno_tick_windows_white": {
+      "": {
+        "refused": 53,
+        "registered": 102
+      }
+    },
+    "crop_source": {
+      "authored_read": {
+        "refused": 53,
+        "registered": 68
+      },
+      "model_crop_a": {
+        "registered": 18
+      },
+      "no_crop_region": {
+        "registered": 16
+      }
+    },
+    "line_style_id": {
+      "32262": {
+        "refused": 53,
+        "registered": 102
+      }
+    },
+    "line_style_path": {
+      "visible_existing": {
+        "refused": 53,
+        "registered": 102
+      }
+    },
+    "model_tick_windows_white": {
+      "": {
+        "refused": 53,
+        "registered": 102
+      }
+    },
+    "orig_view_template_id": {
+      "-1": {
+        "refused": 16,
+        "registered": 42
+      },
+      "1191608": {
+        "refused": 1
+      },
+      "1193650": {
+        "refused": 1
+      },
+      "142020": {
+        "registered": 1
+      },
+      "146920": {
+        "registered": 4
+      },
+      "146922": {
+        "registered": 1
+      },
+      "1776561": {
+        "registered": 4
+      },
+      "1910803": {
+        "refused": 16
+      },
+      "1965737": {
+        "refused": 6
+      },
+      "2042181": {
+        "refused": 2
+      },
+      "2101953": {
+        "refused": 2
+      },
+      "2113873": {
+        "refused": 2
+      },
+      "2126582": {
+        "refused": 2
+      },
+      "266897": {
+        "registered": 1
+      },
+      "266899": {
+        "registered": 1
+      },
+      "3642843": {
+        "registered": 1
+      },
+      "3834987": {
+        "refused": 1
+      },
+      "4150756": {
+        "registered": 1
+      },
+      "4153686": {
+        "registered": 4
+      },
+      "4292926": {
+        "registered": 4
+      },
+      "4299428": {
+        "refused": 2
+      },
+      "4314568": {
+        "registered": 8
+      },
+      "4369688": {
+        "registered": 8
+      },
+      "4807129": {
+        "refused": 1,
+        "registered": 2
+      },
+      "6176384": {
+        "registered": 7
+      },
+      "68922": {
+        "registered": 1
+      },
+      "69006": {
+        "registered": 1
+      },
+      "7117190": {
+        "registered": 1
+      },
+      "848270": {
+        "registered": 2
+      },
+      "872966": {
+        "registered": 1
+      },
+      "929567": {
+        "registered": 2
+      },
+      "929618": {
+        "registered": 3
+      },
+      "930021": {
+        "refused": 1,
+        "registered": 2
+      }
+    },
+    "scale": {
+      "1": {
+        "registered": 6
+      },
+      "120": {
+        "registered": 1
+      },
+      "1200": {
+        "refused": 12
+      },
+      "128": {
+        "refused": 8,
+        "registered": 14
+      },
+      "192": {
+        "refused": 4,
+        "registered": 23
+      },
+      "1920": {
+        "registered": 2
+      },
+      "240": {
+        "refused": 3
+      },
+      "360": {
+        "refused": 1,
+        "registered": 6
+      },
+      "3600": {
+        "registered": 1
+      },
+      "384": {
+        "refused": 8,
+        "registered": 17
+      },
+      "48": {
+        "registered": 4
+      },
+      "4800": {
+        "registered": 1
+      },
+      "600": {
+        "refused": 16,
+        "registered": 2
+      },
+      "720": {
+        "refused": 1,
+        "registered": 1
+      },
+      "96": {
+        "registered": 24
+      }
+    },
+    "split_crop_state": {
+      "no_crop_region": {
+        "registered": 16
+      },
+      "not_split": {
+        "refused": 53,
+        "registered": 86
+      }
+    },
+    "ticks_inside_polygon_predicted": {
+      "": {
+        "refused": 53,
+        "registered": 102
+      }
+    },
+    "ticks_predicted_vs_found_model": {
+      "": {
+        "refused": 53,
+        "registered": 102
+      }
+    },
+    "view_type": {
+      "AreaPlan": {
+        "registered": 7
+      },
+      "CeilingPlan": {
+        "registered": 3
+      },
+      "DraftingView": {
+        "registered": 6
+      },
+      "Elevation": {
+        "registered": 13
+      },
+      "FloorPlan": {
+        "refused": 53,
+        "registered": 47
+      },
+      "Legend": {
+        "registered": 10
+      },
+      "Section": {
+        "registered": 16
+      }
+    }
+  },
+  "provenance": {
+    "not_this_run": {
+      "refused": 2
+    },
+    "this_run": {
+      "refused": 53,
+      "registered": 102
+    }
+  },
+  "registration_state": {
+    "refused": {
+      "refused": 53
+    },
+    "registered": {
+      "registered": 102
+    }
+  },
+  "runs": [
+    {
+      "capture_dir": "/tmp/claude-0/-home-user-Revit-SSM-Exporter/e12044e7-4aea-5af5-a831-6a60e8273fc4/scratchpad/run0621_full/2025-06-21__20261008T093539/color_id_buffer",
+      "model_sidecars": 157,
+      "run": "/tmp/claude-0/-home-user-Revit-SSM-Exporter/e12044e7-4aea-5af5-a831-6a60e8273fc4/scratchpad/run0621_full/2025-06-21__20261008T093539",
+      "run_id": "20261008T093539",
+      "run_meta_found": true,
+      "run_meta_refused": null,
+      "views_core": "/tmp/claude-0/-home-user-Revit-SSM-Exporter/e12044e7-4aea-5af5-a831-6a60e8273fc4/scratchpad/run0621_full/2025-06-21__20261008T093539"
+    }
+  ],
+  "schema": "vop.stage_a.census_registration.v1",
+  "tool_version": "1.0.0"
+}

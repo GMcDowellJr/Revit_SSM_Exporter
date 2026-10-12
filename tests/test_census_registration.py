@@ -102,8 +102,10 @@ def test_a_registration_record_of_other_files_is_stale_not_reported(tmp_path):
     census.main([str(run), "--out", str(out)])
     by_stem, summary = _rows(out)
     assert by_stem["V_1"]["registration_state"] == "registered"
+    assert by_stem["V_1"]["registration_sources_verified"] == "true"
     r2 = by_stem["V_2"]
     assert r2["registration_state"] == "stale"
+    assert r2["registration_sources_verified"] == "false"
     assert "source_annotation_tiff_sha256 does not match" in r2["registration_reason"]
     assert (r2["anno_found_count"], r2["model_found_count"]) == ("", "")
     assert (r2["ticks_found_model"], r2["ticks_predicted_vs_found_model"]) == ("", "")
@@ -111,6 +113,23 @@ def test_a_registration_record_of_other_files_is_stale_not_reported(tmp_path):
     assert r2["anno_nonwhite_px"] != ""           # the pixels ARE measured, on the file as is
     assert summary["registration_state"] == {"registered": {"registered": 1},
                                              "stale": {"stale": 1}}
+
+
+def test_an_absent_source_leaves_the_record_unverified_not_stale(tmp_path):
+    """An archive shipped without its TIFFs: the record's hashes cannot be
+    checked, which is not a mismatch. Its fit counts are reported, the
+    sources are marked unverified, and the absent file is named."""
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})
+    (run / "color_id_buffer" / "V_1_anno.tiff").unlink()
+    out = tmp_path / "census"
+    census.main([str(run), "--out", str(out), "--no-pixels"])
+    by_stem, _summary = _rows(out)
+    r = by_stem["V_1"]
+    assert r["registration_state"] == "registered"
+    assert r["registration_sources_verified"] == "false"
+    assert (r["anno_found_count"], r["model_found_count"]) == ("12", "12")
+    assert "registration sources: the annotation TIFF cannot be hashed now" in r["notes"]
 
 
 def test_a_sidecar_of_a_failed_capture_is_not_this_runs(tmp_path):
@@ -152,9 +171,13 @@ def test_no_pixels_leaves_every_image_column_blank(tmp_path):
     by_stem, _summary = _rows(out)
     r = by_stem["V_1"]
     for column in ("model_tick_px", "anno_tick_px", "anno_palette_px",
-                   "anno_tick_windows_white", "anno_ink_rect_angle_deg"):
+                   "anno_tick_windows_white", "anno_ink_rect_angle_deg",
+                   "content_tilt_deg", "ticks_inside_polygon_predicted",
+                   "ticks_predicted_vs_found_model"):
         assert r[column] == ""
     assert r["registration_state"] == "registered"
+    # The found ticks come from the record, so they are reported without images.
+    assert r["ticks_found_model"].count("|") == 11 and r["ticks_found_anno"].count("|") == 11
 
 
 # --- the rendered region (2026-10-12 follow-up) ---------------------------------

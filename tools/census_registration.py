@@ -58,9 +58,12 @@ says which (``provenance``: ``this_run``, ``not_this_run``,
 roll-up reads it (``stage_a_grid_rollup.run_identity``); the partitions count
 ``this_run`` rows only. A registration record is used only when the four
 source hashes it names (both sidecars, both TIFFs) still match the files on
-disk; otherwise its state is ``stale``, its reason names the mismatch, and
-its fit counts stay blank rather than being set beside pixels they were not
-fitted on.
+disk; a hash that does NOT match makes its state ``stale``, its reason names
+the mismatch, and its fit counts stay blank rather than being set beside
+pixels they were not fitted on. A source file that is ABSENT (an archive
+shipped without its TIFFs) is a different fact: the record is kept, its fit
+counts are reported, and ``registration_sources_verified`` is false with the
+absent file named in ``notes``.
 
 ABSENCE is named, never blank: ``notes`` lists each file that was looked for
 and not found, by name, and every column that file would have filled stays
@@ -110,7 +113,7 @@ COLUMNS = [
     # provenance: is this sidecar the run's own capture of the view?
     "provenance", "run_meta_capture_status",
     # registration
-    "registration_state", "registration_reason",
+    "registration_state", "registration_reason", "registration_sources_verified",
     "anno_found_count", "anno_expected_count", "model_found_count",
     "model_expected_count",
     # the capture's own records
@@ -386,13 +389,23 @@ def rendered_region_columns(masks, marks, crop, fits):
     cols["ticks_inside_polygon_names"] = "|".join(predicted) or "none"
     for which in ("anno", "model"):
         found = found_ticks((fits or {}).get(which), marks)
+        if found is not None:
+            cols["ticks_predicted_vs_found_" + which] = confusion(predicted, found, keys)
+    return cols, notes
+
+
+def found_tick_columns(fits, marks, notes):
+    """``ticks_found_anno`` / ``ticks_found_model`` from the registration
+    record alone (no image needed); a fit that cannot be read is noted."""
+    cols = {}
+    for which in ("anno", "model"):
+        found = found_ticks((fits or {}).get(which), marks) if marks else None
         if found is None:
             notes.append("ticks_found_{0}: no usable {1}_fit in the registration "
                          "record".format(which, "annotation" if which == "anno" else "model"))
             continue
         cols["ticks_found_" + which] = "|".join(found) or "none"
-        cols["ticks_predicted_vs_found_" + which] = confusion(predicted, found, keys)
-    return cols, notes
+    return cols
 
 
 def _pack(rgb):
@@ -520,12 +533,13 @@ def crop_columns(model_sidecar):
 
 
 def registration_staleness(registered, model_path, model, anno_path, anno):
-    """Why a registration record no longer describes the files beside it:
-    each of the four source hashes it names (``source_*_sha256``) that does
-    not match the file on disk now, or whose file cannot be hashed. Empty
-    when every hash matches. A record naming no hash for a source is stale
-    for that source: nothing ties it to the file."""
-    reasons = []
+    """``(stale, unverified)``: why a registration record no longer describes
+    the files beside it -- each of the four source hashes it names
+    (``source_*_sha256``) that does NOT match the file on disk now, or that
+    the record does not name -- and, separately, each source whose file is
+    absent or unreadable, which proves nothing either way. Both empty when
+    every hash matches."""
+    reasons, unverified = [], []
     sources = [("source_model_sidecar_sha256", "model sidecar", lambda: model_path),
                ("source_annotation_sidecar_sha256", "annotation sidecar",
                 lambda: anno_path)]
@@ -544,11 +558,11 @@ def registration_staleness(registered, model_path, model, anno_path, anno):
         try:
             now = grid.sha256_file(resolve())
         except (OSError, ValueError, FileNotFoundError) as ex:
-            reasons.append("the {0} cannot be hashed now ({1})".format(what, _err(ex)))
+            unverified.append("the {0} cannot be hashed now ({1})".format(what, _err(ex)))
             continue
         if now != recorded:
             reasons.append("{0} does not match the {1} on disk".format(key, what))
-    return reasons
+    return reasons, unverified
 
 
 def provenance(ident, view_id):
@@ -614,12 +628,17 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
     else:
         notes.append("no {0}".format(reg_path.name))
     if registered is not None:
-        stale = registration_staleness(registered, model_sidecar_path, model,
-                                       anno_path, anno)
+        stale, unverified = registration_staleness(registered, model_sidecar_path, model,
+                                                   anno_path, anno)
         if stale:
             row["registration_state"] = "stale"
             row["registration_reason"] = "; ".join(stale)
+            row["registration_sources_verified"] = False
             registered = None
+        else:
+            row["registration_sources_verified"] = not unverified
+            for why in unverified:
+                notes.append("registration sources: " + why)
     fits = {}
     if registered is not None:
         for name, prefix in (("annotation_fit", "anno"), ("model_fit", "model")):
@@ -640,6 +659,7 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
     if not crop:
         notes.append("{0} frame carries no crop_uv".format(model_sidecar_path.name))
 
+    row.update(found_tick_columns(fits, marks, notes))
     if pixels:
         masks = {}
         for which, side, side_path in (("model", model, model_sidecar_path),
