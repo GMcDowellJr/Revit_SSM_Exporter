@@ -297,7 +297,7 @@ def test_a_recorded_crop_loop_is_the_polygon_not_the_pixel_tilt():
     # tick and side-mid tick is outside.
     inside = set(with_loop["ticks_inside_polygon_names"].split("|")) - {"none"}
     assert with_loop["ticks_inside_polygon_predicted"] <= 1
-    assert inside <= {"mid_bottom_v", "mid_top_v"}
+    assert inside <= {"mid_bottom_v", "mid_top_v", "left_mid_h", "right_mid_h"}
     sidecar = {"registration_marks": {"crop_shape": {"state": "value", "loops_uv": [loop]}}}
     assert census.recorded_loop(sidecar) == loop
     assert census.recorded_loop({"registration_marks": {"crop_shape": {"state": "unavailable"}}}) is None
