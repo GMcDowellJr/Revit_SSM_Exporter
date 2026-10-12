@@ -255,6 +255,24 @@ ticks would still lie outside the crop loop before it exports anything
 (`failure_reason: recapture_refused`): its files, row and entry stay as they
 were, and the refusal is listed under `recaptures[].refused_view_ids`.
 
+**Batch capture across archives** (`vop_interwoven/batch_capture.py`,
+`tools/plan_capture_batch.py`, `pyrevit/VOP.extension`, 2026-10-12): a
+pyRevit button opens each archive of a `capture_plan.json` (planned from a
+Fingerprint manifest of Desktop Connector paths plus `recapture_lists.json`
+and the runs on disk), runs `capture_run.run_capture` (a new run, views by
+`select_views`: every non-template view of `DEFAULT_VIEW_TYPES`, recorded as
+`view_selection`) or `recapture.run_recapture`, closes it, goes on; a durable
+`batch_capture_<clock>.json` is written after every job and each run's
+`run_meta.json` gains `opened_from` (detached, which worksets, the title
+Revit gave the document). Documents are opened `DetachAndPreserveWorksets`
+with ALL worksets open, never `CloseAllWorksets` (closed worksets hide
+model elements), so a batch-made run is a different capture environment
+from an interactive one, and `opened_from` says so. `title_matches` accepts
+a run's title with the `_detached` suffix; whether Revit titles a detached
+document that way is unconfirmed and `opened_from.title` records it. The
+thinrunner's batched run loop moved verbatim to `capture_run.run_capture`
+so both entry points run the same loop.
+
 `color_id_buffer_registered_capture=False` selects the frame-B two-pass
 capture, kept as the named fallback: the crop is widened to frame B and model
 categories are hidden. Its knobs are `Config` parameters too:

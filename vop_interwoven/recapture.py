@@ -106,7 +106,8 @@ def recapture_plan(meta, view_ids, doc_title):
     * the run is not finalized, or has no run_id or date;
     * the open document's title is not the run's ``doc_title`` (a recapture
       from another archive would be another run's capture under this run's
-      id);
+      id) -- ``batch_capture.title_matches``: the title, or the title with
+      Revit's ``_detached`` suffix, since the batch runner opens detached;
     * an id is not in ``views_requested``, or the list is empty.
     """
     if meta.get("finalized") is not True:
@@ -118,7 +119,8 @@ def recapture_plan(meta, view_ids, doc_title):
     if recorded is None:
         raise RecaptureRefused("the run records no document title to check the open "
                                "document against")
-    if str(recorded) != str(doc_title):
+    from .batch_capture import title_matches
+    if not title_matches(recorded, doc_title):
         raise RecaptureRefused("the open document is {0!r}; the run was captured from "
                                "{1!r}".format(doc_title, recorded))
     ids = [_vid(v) for v in (view_ids or [])]

@@ -1,0 +1,2 @@
+title: Batch\nCapture
+tooltip: Stage A batch capture — opens each archive of a capture plan (tools/plan_capture_batch.py), runs the capture or the recapture of an existing run, closes it, and goes on. Resumable. Run with no document open.

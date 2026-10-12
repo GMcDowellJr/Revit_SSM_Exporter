@@ -308,7 +308,28 @@ Dynamo, with the archive the run was captured from open,
 directory, replacing its files and rows and stamping them (`recapture` in
 the sidecars, `recaptures[]` in run_meta.json). Then re-run
 `register_stage_a_annotation.py`, `stage_a_grid.py`, `stage_a_kinds.py` and
-`stage_a_grid_rollup.py` over the run.
+`stage_a_grid_rollup.py` over the run. Across many archives, use the batch
+below instead of opening each by hand.
+
+---
+
+### `plan_capture_batch.py` - Which archive gets which capture job (for the pyRevit batch)
+
+Joins a Fingerprint manifest CSV (`include=1` rows: Desktop Connector
+paths) with `recapture_lists.json` and the runs already under the output
+root, and writes `capture_plan.json`: a RECAPTURE job for every run whose
+recorded `doc_title` is the file's stem, else a CAPTURE job (a new run,
+as-of the date the file name ends with) unless a finalized run was captured
+from the file already. Runs with no archive in the manifest are listed as
+`unmatched_runs`. Review and edit the plan, then run it from Revit with the
+pyRevit button (`pyrevit/README.md`): it opens each archive detached with
+all worksets, runs the job, closes it, resumes where it stopped.
+
+```bash
+python tools/plan_capture_batch.py <manifest.csv> --output-root <Exports> \
+    [--recapture-lists recapture_lists.json] [--mode both|capture|recapture] \
+    [--no-skip-captured] [--view-types FloorPlan,Section,...] [--out capture_plan.json]
+```
 
 ---
 
