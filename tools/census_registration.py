@@ -34,6 +34,18 @@ Per view (``COLUMNS``):
   rectangle gives the rotation (2025-06-21 view 3939979: 12.91 deg, every
   tick window white, 0 of 12 found).
 
+PROVENANCE. A sidecar in a run's folder is not always that run's capture:
+run_meta.json records a failed capture while the previous capture's files
+remain, and a sidecar may carry a view the run never requested. Each row
+says which (``provenance``: ``this_run``, ``not_this_run``,
+``not_requested``, ``run_meta_refused``), read from run_meta.json the way the
+roll-up reads it (``stage_a_grid_rollup.run_identity``); the partitions count
+``this_run`` rows only. A registration record is used only when the four
+source hashes it names (both sidecars, both TIFFs) still match the files on
+disk; otherwise its state is ``stale``, its reason names the mismatch, and
+its fit counts stay blank rather than being set beside pixels they were not
+fitted on.
+
 ABSENCE is named, never blank: ``notes`` lists each file that was looked for
 and not found, by name, and every column that file would have filled stays
 empty. The summary JSON carries the partitions (registration_state by
@@ -79,6 +91,8 @@ COLUMNS = [
     # identity
     "run_id", "view_stem", "view_id", "view_name", "view_type", "scale",
     "is_on_sheet", "views_core_state",
+    # provenance: is this sidecar the run's own capture of the view?
+    "provenance", "run_meta_capture_status",
     # registration
     "registration_state", "registration_reason",
     "anno_found_count", "anno_expected_count", "model_found_count",
@@ -321,9 +335,56 @@ def crop_columns(model_sidecar):
     return cols, crop, frame
 
 
-def view_row(model_sidecar_path, run_id, views_core, pixels=True):
+def registration_staleness(registered, model_path, model, anno_path, anno):
+    """Why a registration record no longer describes the files beside it:
+    each of the four source hashes it names (``source_*_sha256``) that does
+    not match the file on disk now, or whose file cannot be hashed. Empty
+    when every hash matches. A record naming no hash for a source is stale
+    for that source: nothing ties it to the file."""
+    reasons = []
+    sources = [("source_model_sidecar_sha256", "model sidecar", lambda: model_path),
+               ("source_annotation_sidecar_sha256", "annotation sidecar",
+                lambda: anno_path)]
+    if model is not None:
+        sources.append(("source_model_tiff_sha256", "model TIFF",
+                        lambda: dsc._resolve_tiff_path(Path(model_path), model)))
+    if anno is not None:
+        sources.append(("source_annotation_tiff_sha256", "annotation TIFF",
+                        lambda: dsc._resolve_tiff_path(Path(anno_path), anno)))
+    for key, what, resolve in sources:
+        recorded = registered.get(key)
+        if not recorded:
+            reasons.append("the registration record names no {0} for the {1}".format(
+                key, what))
+            continue
+        try:
+            now = grid.sha256_file(resolve())
+        except (OSError, ValueError, FileNotFoundError) as ex:
+            reasons.append("the {0} cannot be hashed now ({1})".format(what, _err(ex)))
+            continue
+        if now != recorded:
+            reasons.append("{0} does not match the {1} on disk".format(key, what))
+    return reasons
+
+
+def provenance(ident, view_id):
+    """``(provenance, capture_status)`` for a sidecar's view under the run's
+    run_meta.json identity (``stage_a_grid_rollup.run_identity``)."""
+    if ident.get("refused"):
+        return "run_meta_refused", None
+    if view_id is None or view_id not in ident["outcomes"]:
+        return "not_requested", None
+    outcome = ident["outcomes"].get(view_id)
+    if outcome is None:
+        return "not_this_run", "ambiguous"
+    status = outcome.get("capture_status")
+    return ("this_run" if status == "success" else "not_this_run"), status
+
+
+def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
     """One row. Every key of COLUMNS is present; ``notes`` names each file
-    that was looked for and not found."""
+    that was looked for and not found. ``ident`` is the run's identity
+    (``stage_a_grid_rollup.run_identity``), for the row's provenance."""
     model_sidecar_path = Path(model_sidecar_path)
     stem = model_sidecar_path.stem
     row = dict((c, None) for c in COLUMNS)
@@ -338,6 +399,9 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True):
     row["view_id"] = model.get("view_id")
     state, by_id = views_core
     row.update(rollup.views_core_columns(state, by_id, row["view_id"]))
+    row["provenance"], row["run_meta_capture_status"] = provenance(
+        ident if ident is not None else {"refused": "no run identity"},
+        rollup._vid(row["view_id"]) if row["view_id"] is not None else None)
 
     anno_path = model_sidecar_path.with_name(stem + "_anno.json")
     anno = None
@@ -365,6 +429,13 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True):
             notes.append("{0} unreadable: {1}".format(reg_path.name, _err(ex)))
     else:
         notes.append("no {0}".format(reg_path.name))
+    if registered is not None:
+        stale = registration_staleness(registered, model_sidecar_path, model,
+                                       anno_path, anno)
+        if stale:
+            row["registration_state"] = "stale"
+            row["registration_reason"] = "; ".join(stale)
+            registered = None
     if registered is not None:
         for name, prefix in (("annotation_fit", "anno"), ("model_fit", "model")):
             fit = registered.get(name)
@@ -426,17 +497,19 @@ def census(run_args, pixels=True):
         folder = Path(folder)
         meta = dsc.find_run_meta(folder / "run_meta.json") or {}
         run_id = meta.get("run_id")
+        ident = rollup.run_identity(meta)
         # views_core rows are keyed by RunId; with the run id known, join on it.
         state, by_id, where = _views_core(folder)
         if run_id is not None and where is not None:
             state, _reason, by_id = rollup.load_views_core(where, run_id)
         runs.append({"run": str(run_arg), "capture_dir": str(folder), "run_id": run_id,
-                     "run_meta_found": bool(meta), "model_sidecars": len(sidecars),
+                     "run_meta_found": bool(meta), "run_meta_refused": ident["refused"],
+                     "model_sidecars": len(sidecars),
                      "views_core": (str(where) if where is not None else
                                     "absent: no views_core_*.csv in {0} or {1}".format(
                                         folder.parent, folder))})
         for path in sidecars:
-            rows.append(view_row(path, run_id, (state, by_id), pixels=pixels))
+            rows.append(view_row(path, run_id, (state, by_id), pixels=pixels, ident=ident))
     return runs, rows
 
 
@@ -451,7 +524,8 @@ def _partition(rows, key):
 
 
 def summarise(runs, rows, csv_path):
-    partitions = dict((key, _partition(rows, key)) for key in (
+    own = [r for r in rows if r.get("provenance") == "this_run"]
+    partitions = dict((key, _partition(own, key)) for key in (
         "view_type", "scale", "orig_view_template_id", "line_style_id",
         "line_style_path", "split_crop_state", "crop_source",
         "anno_tick_windows_white", "model_tick_windows_white"))
@@ -459,11 +533,13 @@ def summarise(runs, rows, csv_path):
             "denominator": len(rows),
             "denominator_rule": "one row per model sidecar stage_a_grid.model_sidecars "
                                 "finds in each run",
-            "registration_state": _partition(rows, "registration_state"),
+            "provenance": _partition(rows, "provenance"),
+            "registration_state": _partition(own, "registration_state"),
             "partitions": partitions,
-            "partition_rule": "registration_state counts by each column's value; a "
-                              "blank key is a row the column could not be filled for "
-                              "(see its notes). No model is fitted.",
+            "partition_rule": "registration_state counts by each column's value, over "
+                              "the rows whose provenance is this_run; a blank key is a "
+                              "row the column could not be filled for (see its notes). "
+                              "No model is fitted.",
             "csv": csv_path.name, "csv_sha256": grid.sha256_file(csv_path)}
 
 
@@ -491,8 +567,12 @@ def main(argv=None):
     summary = summarise(runs, rows, csv_path)
     with open(out / SUMMARY_NAME, "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True, default=str)
-    print("{0} rows; registration: {1}".format(len(rows), ", ".join(
-        "{0} {1}".format(k, v) for k, v in sorted(summary["registration_state"].items()))))
+    print("{0} rows; provenance: {1}; registration (this_run rows): {2}".format(
+        len(rows),
+        ", ".join("{0} {1}".format(k, sum(v.values()))
+                  for k, v in sorted(summary["provenance"].items())),
+        ", ".join("{0} {1}".format(k, sum(v.values()))
+                  for k, v in sorted(summary["registration_state"].items()))))
     for key in ("view_type", "scale", "orig_view_template_id", "line_style_id",
                 "split_crop_state", "anno_tick_windows_white"):
         print("  by {0}: {1}".format(key, json.dumps(summary["partitions"][key], sort_keys=True)))

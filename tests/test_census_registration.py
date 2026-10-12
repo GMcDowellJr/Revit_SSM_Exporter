@@ -9,7 +9,7 @@ import json
 
 import numpy as np
 
-from tests.test_stage_a_grid_rollup import _capture, _run
+from tests.test_stage_a_grid_rollup import _capture, _outcome, _run
 from tools import census_registration as census
 
 
@@ -79,6 +79,51 @@ def test_recorded_ticks_and_drawn_ticks_are_one_row(tmp_path):
     assert r3["anno_found_count"] == ""
     assert summary["partitions"]["model_tick_windows_white"] == {
         "0": {"registered": 2, "absent": 1}, "12": {"refused": 1}}
+    assert all(r["provenance"] == "this_run" for r in (r1, r2, r3, r4))
+
+
+def test_a_registration_record_of_other_files_is_stale_not_reported(tmp_path):
+    """A capture rerun in place without re-registering: the record's source
+    hashes no longer match the files beside it. Its state is stale, its
+    reason names the hash, and its fit counts are not set beside pixels it
+    was never fitted on. Control: an untouched record stays registered."""
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})
+    _capture(run, 2, gridded=False, pair_kw={"shared_anno": True})
+    tiff = run / "color_id_buffer" / "V_2_anno.tiff"
+    tiff.write_bytes(tiff.read_bytes() + b"\0")
+    out = tmp_path / "census"
+    census.main([str(run), "--out", str(out)])
+    by_stem, summary = _rows(out)
+    assert by_stem["V_1"]["registration_state"] == "registered"
+    r2 = by_stem["V_2"]
+    assert r2["registration_state"] == "stale"
+    assert "source_annotation_tiff_sha256 does not match" in r2["registration_reason"]
+    assert (r2["anno_found_count"], r2["model_found_count"]) == ("", "")
+    assert r2["anno_nonwhite_px"] != ""           # the pixels ARE measured, on the file as is
+    assert summary["registration_state"] == {"registered": {"registered": 1},
+                                             "stale": {"stale": 1}}
+
+
+def test_a_sidecar_of_a_failed_capture_is_not_this_runs(tmp_path):
+    """run_meta.json records the view's capture as failed; the sidecar in the
+    folder is a previous capture's. The row says so and is left out of the
+    partitions. Control: a successful outcome is this_run."""
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})
+    _capture(run, 2, gridded=False, pair_kw={"shared_anno": True})
+    _outcome(run, 2, status="failed", reason="export raised")
+    out = tmp_path / "census"
+    census.main([str(run), "--out", str(out)])
+    by_stem, summary = _rows(out)
+    assert (by_stem["V_1"]["provenance"], by_stem["V_1"]["run_meta_capture_status"]) == (
+        "this_run", "success")
+    assert (by_stem["V_2"]["provenance"], by_stem["V_2"]["run_meta_capture_status"]) == (
+        "not_this_run", "failed")
+    assert summary["provenance"] == {"this_run": {"registered": 1},
+                                     "not_this_run": {"registered": 1}}
+    assert summary["registration_state"] == {"registered": {"registered": 1}}
+    assert summary["partitions"]["model_tick_windows_white"] == {"0": {"registered": 1}}
 
 
 def test_a_window_off_the_image_is_counted_as_off_image_not_only_white():
