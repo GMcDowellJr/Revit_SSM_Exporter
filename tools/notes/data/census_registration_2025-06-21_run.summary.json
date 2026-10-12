@@ -1,14 +1,30 @@
 {
   "csv": "census_registration.csv",
-  "csv_sha256": "193153ffc7a11b3780a47c0e64551f1a0b47a918b906599b78acceda6f228f4b",
+  "csv_sha256": "3e004346a84355a487d1b6c6c3a5be4b8566747dfad4d847f106983789573a58",
   "denominator": 157,
   "denominator_rule": "one row per model sidecar stage_a_grid.model_sidecars finds in each run",
   "partition_rule": "registration_state counts by each column's value, over the rows whose provenance is this_run; a blank key is a row the column could not be filled for (see its notes). No model is fitted.",
   "partitions": {
     "anno_tick_windows_white": {
       "": {
-        "refused": 53,
-        "registered": 102
+        "registered": 90
+      },
+      "0": {
+        "refused": 1,
+        "registered": 10
+      },
+      "10": {
+        "refused": 1
+      },
+      "11": {
+        "refused": 7
+      },
+      "12": {
+        "refused": 44,
+        "registered": 1
+      },
+      "6": {
+        "registered": 1
       }
     },
     "crop_source": {
@@ -37,8 +53,21 @@
     },
     "model_tick_windows_white": {
       "": {
-        "refused": 53,
-        "registered": 102
+        "registered": 90
+      },
+      "0": {
+        "refused": 1,
+        "registered": 11
+      },
+      "10": {
+        "refused": 1
+      },
+      "11": {
+        "refused": 6
+      },
+      "12": {
+        "refused": 45,
+        "registered": 1
       }
     },
     "orig_view_template_id": {
@@ -209,14 +238,79 @@
     },
     "ticks_inside_polygon_predicted": {
       "": {
-        "refused": 53,
-        "registered": 102
+        "registered": 90
+      },
+      "0": {
+        "refused": 39,
+        "registered": 2
+      },
+      "1": {
+        "refused": 4,
+        "registered": 1
+      },
+      "12": {
+        "refused": 2,
+        "registered": 8
+      },
+      "4": {
+        "refused": 6
+      },
+      "5": {
+        "refused": 1
+      },
+      "6": {
+        "refused": 1
+      },
+      "8": {
+        "registered": 1
       }
     },
     "ticks_predicted_vs_found_model": {
       "": {
-        "refused": 53,
-        "registered": 102
+        "registered": 90
+      },
+      "tp=0,fp=0,fn=0,tn=12": {
+        "refused": 36
+      },
+      "tp=0,fp=0,fn=1,tn=11": {
+        "refused": 2
+      },
+      "tp=0,fp=0,fn=12,tn=0": {
+        "registered": 2
+      },
+      "tp=0,fp=0,fn=2,tn=10": {
+        "refused": 1
+      },
+      "tp=0,fp=1,fn=0,tn=11": {
+        "refused": 1
+      },
+      "tp=0,fp=1,fn=1,tn=10": {
+        "refused": 1
+      },
+      "tp=0,fp=12,fn=0,tn=0": {
+        "refused": 1
+      },
+      "tp=0,fp=4,fn=0,tn=8": {
+        "refused": 6
+      },
+      "tp=0,fp=5,fn=0,tn=7": {
+        "refused": 1
+      },
+      "tp=1,fp=0,fn=0,tn=11": {
+        "refused": 2
+      },
+      "tp=1,fp=0,fn=11,tn=0": {
+        "registered": 1
+      },
+      "tp=1,fp=5,fn=0,tn=6": {
+        "refused": 1
+      },
+      "tp=12,fp=0,fn=0,tn=0": {
+        "refused": 1,
+        "registered": 8
+      },
+      "tp=8,fp=0,fn=4,tn=0": {
+        "registered": 1
       }
     },
     "view_type": {

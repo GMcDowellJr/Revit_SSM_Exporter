@@ -41,6 +41,10 @@ MODEL capture's ink; ``content_tilt_union_deg`` the same over the union of
 both captures' ink when the two TIFFs share a pixel size (both are sized from
 crop A), which is the denser evidence: 3939979's model ink alone, a few
 property lines, gives 61.13 deg where the union gives 12.91 deg.
+``content_tilt_edge_deg`` is the length-weighted mode of the union hull's
+long edges (``edge_tilt``), which follows the crop's straight boundary rather
+than the hull's overall shape, and is the tilt the polygon prediction uses
+when it exists (``polygon_tilt_source`` ends in ``_edges``).
 ``aabb_corner_white`` says, per image corner, whether the 64 x 64 px window
 the corner ticks occupy (inset 24 + gap 8 + arm 32) holds no ink in either
 capture. ``ticks_inside_polygon_predicted`` counts the recorded ticks (moved
@@ -136,7 +140,8 @@ COLUMNS = [
     "anno_tick_windows_off_image", "model_tick_windows_off_image",
     "anno_ink_rect_angle_deg", "anno_ink_rect_fill",
     # the rendered region (2026-10-12 follow-up): tilt, corners, prediction
-    "content_tilt_deg", "content_tilt_union_deg", "polygon_tilt_source",
+    "content_tilt_deg", "content_tilt_union_deg",
+    "content_tilt_edge_deg", "content_tilt_edge_support", "polygon_tilt_source",
     "aabb_corner_white",
     "ticks_inside_polygon_predicted", "ticks_inside_polygon_names",
     "ticks_found_anno", "ticks_found_model",
@@ -250,6 +255,43 @@ def _hull_points(nonwhite):
         cols = np.nonzero(nonwhite[r])[0]
         pts.extend([(cols[0], r), (cols[-1] + 1, r + 1), (cols[0], r + 1), (cols[-1] + 1, r)])
     return _hull(np.array(pts, dtype=float)) if pts else []
+
+
+# A hull edge counts toward the tilt vote when it is at least this fraction
+# of the image's shorter side: the rotated crop's own boundary shows as edges
+# of 0.5 to 1.7 times that length on the 06-21 site plans, while the pieces
+# of a sparse plan's hull are far shorter (5576090: longest 0.17, no vote
+# worth taking).
+EDGE_VOTE_MIN_FRACTION = 0.10
+EDGE_VOTE_BIN_DEG = 0.5
+
+
+def edge_tilt(nonwhite):
+    """``(tilt_deg, support)``: the length-weighted mode of the ink hull's
+    long edges' angles, folded modulo 90 into (-45, 45], and the total length
+    voting for it as a fraction of the shorter image side. The minimum-area
+    rectangle (``ink_rectangle``) follows the hull's OVERALL shape, which on a
+    sparse or L-shaped plan is not the crop's: 06-21 view 4150746 registered
+    12 of 12 with a min-area angle of 9.25 deg while its long hull edges lie
+    at 0 deg; 4610688 refused 0 of 12 with a min-area angle of 0.68 deg while
+    its long edges lie at 13 deg, the family's crop angle. ``(None, 0.0)``
+    with no edge long enough to vote."""
+    h, w = nonwhite.shape
+    hull = _hull_points(nonwhite)
+    votes = {}
+    n = len(hull)
+    for i in range(n):
+        (x1, y1), (x2, y2) = hull[i], hull[(i + 1) % n]
+        length = math.hypot(x2 - x1, y2 - y1)
+        if length < EDGE_VOTE_MIN_FRACTION * min(w, h):
+            continue
+        angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 90.0
+        key = (round(angle / EDGE_VOTE_BIN_DEG) * EDGE_VOTE_BIN_DEG) % 90.0
+        votes[key] = votes.get(key, 0.0) + length
+    if not votes:
+        return None, 0.0
+    angle, length = max(votes.items(), key=lambda kv: kv[1])
+    return (angle if angle <= 45.0 else angle - 90.0), round(length / min(w, h), 2)
 
 
 def inscribed_polygon(width, height, tilt_deg, sign=1):
@@ -369,6 +411,10 @@ def rendered_region_columns(masks, marks, crop, fits):
                      "TIFF {2}x{3}; not on one lattice".format(
                          anno.shape[1], anno.shape[0], model.shape[1], model.shape[0]))
     tilt = cols.get("content_tilt_union_deg") if source == "union" else angle
+    edge, support = edge_tilt(union)
+    cols["content_tilt_edge_deg"], cols["content_tilt_edge_support"] = edge, support
+    if edge is not None:
+        tilt, source = edge, source + "_edges"
     cols["polygon_tilt_source"] = source if tilt is not None else None
     corners = corner_windows_white(union)
     cols["aabb_corner_white"] = "|".join("{0}:{1}".format(k, "true" if v else "false")

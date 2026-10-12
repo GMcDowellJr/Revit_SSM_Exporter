@@ -213,6 +213,23 @@ def test_ticks_on_a_rotated_crops_box_are_predicted_outside_and_on_its_rectangle
         assert census.ticks_inside(tilted, marks, mapping) == []
 
 
+def test_edge_tilt_reads_the_long_straight_boundary():
+    """A disc of ink cut by one straight boundary at 13 deg: the arc's hull
+    edges are short and the cut is the one long edge, so the vote reads 13
+    deg; an uncut disc has no edge long enough to vote."""
+    h, w = 600, 600
+    yy, xx = np.mgrid[0:h, 0:w]
+    disc = (xx - 300) ** 2 + (yy - 300) ** 2 < 280 ** 2
+    cut = (yy - 300) * math.cos(math.radians(13)) - (xx - 300) * math.sin(math.radians(13)) > -60
+    edge, support = census.edge_tilt(disc & cut)
+    assert abs(edge - 13.0) <= census.EDGE_VOTE_BIN_DEG
+    assert support > 0.5
+    assert census.edge_tilt(disc) == (None, 0.0)
+    assert census.edge_tilt(np.zeros((50, 50), dtype=bool)) == (None, 0.0)
+    # The 06-21 instances that motivate it are in edge_tilt's docstring
+    # (4150746, 4610688); they are measured in the run data, not rebuilt here.
+
+
 def test_found_ticks_and_confusion_read_the_fits_missing_list():
     marks = [{"key": "a"}, {"key": "b"}, {"key": "c"}]
     assert census.found_ticks({"missing": [{"key": "b"}]}, marks) == ["a", "c"]
@@ -239,7 +256,8 @@ def test_rendered_region_columns_on_the_fixture(tmp_path):
     for r in (r1, r2):
         # The fixture's two images are on different lattices, so the model
         # TIFF alone is the tilt source and the union column is blank, by name.
-        assert r["content_tilt_deg"] == "0.0" and r["polygon_tilt_source"] == "model"
+        assert r["content_tilt_deg"] == "0.0" and r["polygon_tilt_source"] == "model_edges"
+        assert r["content_tilt_edge_deg"] == "0.0" and float(r["content_tilt_edge_support"]) > 0
         assert r["content_tilt_union_deg"] == ""
         assert "not on one lattice" in r["notes"]
         assert r["ticks_inside_polygon_predicted"] == "12"
