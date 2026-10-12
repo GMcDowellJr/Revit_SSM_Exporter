@@ -385,11 +385,24 @@ def confusion(predicted, found, keys):
         sum(1 for k in keys if k not in p and k not in f))
 
 
-def rendered_region_columns(masks, marks, crop, fits):
+def recorded_loop(model_sidecar):
+    """The crop loop the capture RECORDED (``registration_marks.crop_shape``,
+    captures since 2026-10-12), as ``[[u, v], ...]`` when there is exactly
+    one, else None. Better evidence than any pixel tilt: it is what Revit
+    rendered."""
+    shape = (model_sidecar.get("registration_marks") or {}).get("crop_shape") or {}
+    loops = shape.get("loops_uv") if shape.get("state") == "value" else None
+    return loops[0] if loops and len(loops) == 1 and len(loops[0]) >= 3 else None
+
+
+def rendered_region_columns(masks, marks, crop, fits, loop_uv=None):
     """The tilt, corner, prediction and found columns, from the nonwhite
     masks of the captures read (``masks[which]``, ticks excluded), the
-    recorded marks, crop A and the registration record's fits. Returns
-    ``(columns, notes)``; every blank is explained in ``notes``."""
+    recorded marks, crop A and the registration record's fits. With
+    ``loop_uv`` (the capture's own crop loop, in view UV) the prediction
+    uses that loop instead of a rectangle inscribed at the measured tilt
+    (``polygon_tilt_source`` "recorded_loop"). Returns ``(columns,
+    notes)``; every blank is explained in ``notes``."""
     cols, notes = {}, []
     model = masks.get("model")
     if model is None:
@@ -415,19 +428,25 @@ def rendered_region_columns(masks, marks, crop, fits):
     cols["content_tilt_edge_deg"], cols["content_tilt_edge_support"] = edge, support
     if edge is not None:
         tilt, source = edge, source + "_edges"
-    cols["polygon_tilt_source"] = source if tilt is not None else None
+    if loop_uv is not None:
+        source = "recorded_loop"
+    cols["polygon_tilt_source"] = source if (tilt is not None or loop_uv is not None) else None
     corners = corner_windows_white(union)
     cols["aabb_corner_white"] = "|".join("{0}:{1}".format(k, "true" if v else "false")
                                          for k, v in corners.items())
-    if tilt is None:
-        notes.append("ticks_inside_polygon_predicted: no tilt measured")
+    if tilt is None and loop_uv is None:
+        notes.append("ticks_inside_polygon_predicted: no tilt measured and no loop recorded")
         return cols, notes
     if not marks or not crop:
         notes.append("ticks_inside_polygon_predicted: no recorded marks or crop to place")
         return cols, notes
     h, w = model.shape
-    poly = rendered_polygon(union, tilt)
     mapping = grid.nominal_mapping(crop, w, h)
+    if loop_uv is not None:
+        poly = [(mapping["a_u"] * u + mapping["b_u"], mapping["a_v"] * v + mapping["b_v"])
+                for u, v in loop_uv]
+    else:
+        poly = rendered_polygon(union, tilt)
     predicted = ticks_inside(poly, marks, mapping)
     keys = [m["key"] for m in marks]
     cols["ticks_inside_polygon_predicted"] = len(predicted)
@@ -729,7 +748,8 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
                     notes.append("{0}: {1}".format(which, note))
             except (OSError, ValueError) as ex:
                 notes.append("{0} unreadable: {1}".format(Path(tiff).name, _err(ex)))
-        cols, region_notes = rendered_region_columns(masks, marks, crop, fits)
+        cols, region_notes = rendered_region_columns(masks, marks, crop, fits,
+                                                     loop_uv=recorded_loop(model))
         row.update(cols)
         notes.extend(region_notes)
     row["notes"] = "; ".join(notes)

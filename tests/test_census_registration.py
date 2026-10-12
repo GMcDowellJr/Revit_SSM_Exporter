@@ -268,3 +268,31 @@ def test_rendered_region_columns_on_the_fixture(tmp_path):
     assert r2["ticks_predicted_vs_found_model"] == "tp=0,fp=12,fn=0,tn=0"
     assert summary["partitions"]["ticks_inside_polygon_predicted"] == {
         "12": {"registered": 1, "refused": 1}}
+
+
+def test_a_recorded_crop_loop_is_the_polygon_not_the_pixel_tilt():
+    """A capture that recorded its loop (2026-10-12 capture change): the
+    prediction uses the loop as Revit rendered it. Here the ink is an
+    axis-aligned block (tilt 0, which alone would predict all 12 inside) but
+    the recorded loop is a rectangle rotated 12.91 deg: no tick inside."""
+    import math
+    w, h, fpp = 1200, 900, 1.0
+    ink = np.zeros((h, w), dtype=bool)
+    ink[100:800, 150:1050] = True
+    crop = [0.0, 0.0, float(w), float(h)]
+    from vop_interwoven.stage_a_registration import registration_mark_segments
+    marks = registration_mark_segments(crop, fpp)["segments"]
+    c, s = math.cos(math.radians(12.91)), math.sin(math.radians(12.91))
+    rw = (w * c - h * s) / math.cos(2 * math.radians(12.91))
+    rh = (h * c - w * s) / math.cos(2 * math.radians(12.91))
+    loop = [[w / 2 + du * c - dv * s, h / 2 + du * s + dv * c]
+            for du, dv in ((-rw / 2, -rh / 2), (rw / 2, -rh / 2), (rw / 2, rh / 2), (-rw / 2, rh / 2))]
+    masks = {"model": ink, "anno": ink.copy()}
+    plain, _n = census.rendered_region_columns(masks, marks, crop, {})
+    assert plain["ticks_inside_polygon_predicted"] == 12 and plain["polygon_tilt_source"] == "union_edges"
+    with_loop, _n = census.rendered_region_columns(masks, marks, crop, {}, loop_uv=loop)
+    assert with_loop["polygon_tilt_source"] == "recorded_loop"
+    assert with_loop["ticks_inside_polygon_predicted"] == 0
+    sidecar = {"registration_marks": {"crop_shape": {"state": "value", "loops_uv": [loop]}}}
+    assert census.recorded_loop(sidecar) == loop
+    assert census.recorded_loop({"registration_marks": {"crop_shape": {"state": "unavailable"}}}) is None
