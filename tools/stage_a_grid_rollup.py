@@ -99,7 +99,7 @@ from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 
 SCHEMA = "vop.stage_a.grid_rollup.v1"
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.1.1"
 
 CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
@@ -444,8 +444,20 @@ def registration_state(reg_path):
         status, "" if disk.get("lattice") else ", with no lattice")
 
 
+def annotation_layer_counted(record):
+    """Whether the grid counted an annotation layer for this record: its
+    image_totals carry ``anno_element_ink``, which ``stage_a_grid.grid_view``
+    writes only when a usable registration gave it a canvas to count. Without
+    one, ``occupancy`` still carries anno_only / overlap counts of 0 -- not
+    measured zeros but the absence of a layer (2025-06-21 view 3939979:
+    refused registration, 0 / 0 / 0 beside blank anno_element_ink)."""
+    return "anno_element_ink" in (record.get("image_totals") or {})
+
+
 def grid_columns(record):
-    """The grid's own numbers for a ``gridded`` row."""
+    """The grid's own numbers for a ``gridded`` row. The three annotation
+    occupancy columns are BLANK, not 0, when no annotation layer was counted
+    (``annotation_layer_counted``): a zero in them is a measured zero."""
     g = record.get("grid") or {}
     basis = g.get("uv_basis") or {}
     px_u, px_v = g.get("px_per_cell_u"), g.get("px_per_cell_v")
@@ -453,6 +465,9 @@ def grid_columns(record):
     occ = record.get("occupancy") or {}
     inside = occ.get("inside_crop_a") or {}
     outside = occ.get("outside_crop_a") or {}
+    if not annotation_layer_counted(record):
+        inside = dict(inside, anno_only=None, overlap=None)
+        outside = dict(outside, anno_only=None)
     totals = record.get("image_totals") or {}
     black = record.get("black")
     filled = record.get("filled_region")
