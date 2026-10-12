@@ -22,9 +22,12 @@ Per view (``COLUMNS``):
   reader of ``CropRegionShapeManager.ShapeSet`` exists in
   ``vop_interwoven/``), so the crop shape is measured from the pixels below;
 * pixel measures, each read from the named TIFF: exact tick-colour pixels in
-  both captures, palette pixels and assigned colours present in the
-  annotation capture, how many of the 12 recorded tick windows (the tick's
-  bbox on the NOMINAL crop mapping, padded) hold no ink at all, and the
+  both captures (the colours THAT capture's own registration_marks record
+  names -- one shared colour, or one per tick in the older annotation
+  shape, read by ``registration_marks.mark_colours``), palette pixels and
+  assigned colours present in the annotation capture, how many of the 12
+  recorded tick windows (the tick's bbox on the NOMINAL crop mapping,
+  padded) hold no ink at all and how many fall off the image, and the
   minimum-area rectangle of the annotation capture's ink -- its angle to the
   image axes and the share of the image it covers. An axis-aligned
   rectangular crop gives an angle near 0; a crop region edited into a rotated
@@ -55,6 +58,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from tools import registration_marks as rm  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
@@ -96,6 +100,7 @@ COLUMNS = [
     "model_tick_px", "anno_tick_px", "anno_palette_px", "anno_assigned_colours",
     "anno_colours_present", "anno_nonwhite_px", "model_nonwhite_px",
     "anno_tick_windows_white", "model_tick_windows_white",
+    "anno_tick_windows_off_image", "model_tick_windows_off_image",
     "anno_ink_rect_angle_deg", "anno_ink_rect_fill",
     # absences, by file
     "notes",
@@ -167,8 +172,11 @@ def ink_rectangle(nonwhite):
 
 def tick_windows_white(nonwhite, marks, mapping):
     """How many of ``marks`` have NO ink in their window: the tick's bbox on
-    ``mapping`` (pixel = a * uv + b), padded TICK_WINDOW_PAD_PX. A window
-    that falls entirely off the image counts as white and is noted."""
+    ``mapping`` (pixel = a * uv + b), padded TICK_WINDOW_PAD_PX, as
+    ``(white, off_image)``. A window that falls entirely off the image is
+    counted in BOTH: it holds no ink, and it is not in-image evidence; the
+    second count is reported beside the first so the two are never read as
+    one."""
     h, w = nonwhite.shape
     white, off_image = 0, 0
     for m in marks:
@@ -200,23 +208,48 @@ def _exact_count(packed, rgb):
     return int(np.count_nonzero(packed == ((r << 16) | (g << 8) | b)))
 
 
-def image_columns(tiff_path, which, colour_map, excluded_ids, marks, crop):
+def tick_colours(sidecar):
+    """``(colours, note)``: the tick colours THIS capture's registration_marks
+    record names, as ``registration_marks.mark_colours`` reads them -- the one
+    shared colour (every model pass; annotation passes since the reserved
+    tick colour, 2026-10-02), or one colour per tick (the older annotation
+    shape). With no usable record the reserved MARK_COLOUR is assumed and
+    the note says so."""
+    payload, refusal = rm.recorded_marks(sidecar)
+    if payload is not None:
+        by_id, shared, refusal = rm.mark_colours(payload)
+        if shared is not None:
+            return [tuple(shared)], None
+        if by_id:
+            return sorted(set(by_id.values())), None
+    return [tuple(MARK_COLOUR)], ("tick colours not recorded ({0}); MARK_COLOUR "
+                                  "assumed".format(refusal or "no registration_marks"))
+
+
+def image_columns(tiff_path, which, sidecar, excluded_ids, marks, crop):
     """The pixel columns for one capture, from the named TIFF. ``which`` is
-    "anno" or "model". The tick windows are placed on the nominal mapping of
-    ``crop`` onto THIS image's own pixel size (the annotation capture is sized
-    from the same crop A as the model's; its own dimensions are used)."""
+    "anno" or "model"; ``sidecar`` is that pass's own record (its tick
+    colours, its colour map). The tick windows are placed on the nominal
+    mapping of ``crop`` onto THIS image's own pixel size (the annotation
+    capture is sized from the same crop A as the model's; its own dimensions
+    are used). Returns ``(columns, note)``."""
     rgb = dsc._load_rgb_array(tiff_path)
     mapping = None
     if crop and marks:
         mapping = grid.nominal_mapping(crop, rgb.shape[1], rgb.shape[0])
     packed = _pack(rgb)
-    mark_key = (MARK_COLOUR[0] << 16) | (MARK_COLOUR[1] << 8) | MARK_COLOUR[2]
-    tick = packed == mark_key
+    colours, note = tick_colours(sidecar)
+    keys = np.array([(int(c[0]) << 16) | (int(c[1]) << 8) | int(c[2]) for c in colours],
+                    dtype=np.uint32)
+    tick = np.isin(packed, keys)
     nonwhite = packed != 0xFFFFFF
     cols = {which + "_tick_px": int(np.count_nonzero(tick)),
             which + "_nonwhite_px": int(np.count_nonzero(nonwhite))}
     if marks and mapping:
-        cols[which + "_tick_windows_white"], _off = tick_windows_white(nonwhite, marks, mapping)
+        white, off_image = tick_windows_white(nonwhite, marks, mapping)
+        cols[which + "_tick_windows_white"] = white
+        cols[which + "_tick_windows_off_image"] = off_image
+    colour_map = sidecar.get("color_assignment_map")
     if which == "anno":
         excluded = set(int(e) for e in excluded_ids or ())
         keys = [(int(c[0]) << 16) | (int(c[1]) << 8) | int(c[2])
@@ -230,7 +263,7 @@ def image_columns(tiff_path, which, colour_map, excluded_ids, marks, crop):
             cols["anno_palette_px"], cols["anno_colours_present"] = 0, 0
         angle, fill = ink_rectangle(nonwhite & ~tick)
         cols["anno_ink_rect_angle_deg"], cols["anno_ink_rect_fill"] = angle, fill
-    return cols
+    return cols, note
 
 
 def marks_columns(model_sidecar):
@@ -365,8 +398,10 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True):
                 continue
             excluded = [m.get("id") for m in (marks or []) if m.get("id") is not None]
             try:
-                row.update(image_columns(Path(tiff), which, side.get("color_assignment_map"),
-                                         excluded, marks, crop))
+                cols, note = image_columns(Path(tiff), which, side, excluded, marks, crop)
+                row.update(cols)
+                if note:
+                    notes.append("{0}: {1}".format(which, note))
             except (OSError, ValueError) as ex:
                 notes.append("{0} unreadable: {1}".format(Path(tiff).name, _err(ex)))
     row["notes"] = "; ".join(notes)

@@ -7,6 +7,8 @@ what the TIFFs hold -- and name every file it could not find."""
 import csv
 import json
 
+import numpy as np
+
 from tests.test_stage_a_grid_rollup import _capture, _run
 from tools import census_registration as census
 
@@ -30,12 +32,15 @@ def test_recorded_ticks_and_drawn_ticks_are_one_row(tmp_path):
              pair_kw={"drop_anno": every_tick, "drop_model": every_tick,
                       "shared_anno": True})
     _capture(run, 3, gridded=False, register=False, pair_kw={"shared_anno": True})
+    # The older annotation shape: each tick its own palette colour, read from
+    # the sidecar, never assumed to be the reserved colour.
+    _capture(run, 4, gridded=False)
     out = tmp_path / "census"
     assert census.main([str(run), "--out", str(out)]) == 0
     by_stem, summary = _rows(out)
-    assert summary["denominator"] == 3
-    assert set(by_stem) == {"V_1", "V_2", "V_3"}
-    r1, r2, r3 = by_stem["V_1"], by_stem["V_2"], by_stem["V_3"]
+    assert summary["denominator"] == 4
+    assert set(by_stem) == {"V_1", "V_2", "V_3", "V_4"}
+    r1, r2, r3, r4 = by_stem["V_1"], by_stem["V_2"], by_stem["V_3"], by_stem["V_4"]
     # The sidecars tell the same story for both views...
     for r in (r1, r2):
         assert r["marks_expected"] == "12"
@@ -53,6 +58,13 @@ def test_recorded_ticks_and_drawn_ticks_are_one_row(tmp_path):
     # lattice, so its windows are not asserted for the registered view.)
     assert r1["model_tick_windows_white"] == "0"
     assert (r2["anno_tick_windows_white"], r2["model_tick_windows_white"]) == ("12", "12")
+    # Every window lay on the image: the off-image count is 0, and reported.
+    for r in (r1, r2):
+        assert (r["anno_tick_windows_off_image"], r["model_tick_windows_off_image"]) == ("0", "0")
+    # Per-tick colours (the older shape) are counted from the sidecar's record.
+    assert r4["registration_state"] == "registered"
+    assert int(r4["anno_tick_px"]) > 0 and int(r4["model_tick_px"]) > 0
+    assert r4["notes"] == ""
     # The ink rectangle is measured on both (the fixture's ink is two small
     # rectangles, whose hull's minimum-area box is tilted: the measure says
     # something about a crop only when ink reaches the crop's edges).
@@ -66,7 +78,17 @@ def test_recorded_ticks_and_drawn_ticks_are_one_row(tmp_path):
     assert "no V_3_anno.registered.json" in r3["notes"]
     assert r3["anno_found_count"] == ""
     assert summary["partitions"]["model_tick_windows_white"] == {
-        "0": {"registered": 1, "absent": 1}, "12": {"refused": 1}}
+        "0": {"registered": 2, "absent": 1}, "12": {"refused": 1}}
+
+
+def test_a_window_off_the_image_is_counted_as_off_image_not_only_white():
+    nonwhite = np.zeros((40, 40), dtype=bool)
+    mapping = {"a_u": 1.0, "b_u": 0.0, "a_v": -1.0, "b_v": 40.0}
+    marks = [{"uv0": [5.0, 20.0], "uv1": [15.0, 20.0]},     # on the image, white
+             {"uv0": [100.0, 20.0], "uv1": [110.0, 20.0]}]  # entirely off it
+    assert census.tick_windows_white(nonwhite, marks, mapping) == (2, 1)
+    nonwhite[20, 10] = True
+    assert census.tick_windows_white(nonwhite, marks, mapping) == (1, 1)
 
 
 def test_no_pixels_leaves_every_image_column_blank(tmp_path):
