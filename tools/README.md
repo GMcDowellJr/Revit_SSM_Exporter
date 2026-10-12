@@ -288,6 +288,21 @@ the ticks each fit found, and the per-tick confusion between the two.
 
 ---
 
+### `find_recapture_views.py` - Which views of which runs need a new Stage A capture
+
+Read-only; runs the sidecar half of `census_registration.py` (no TIFF read)
+over each run and classifies every one of the run's own views: `recapture`
+(ticks drawn, not found by the fit, or no registration record), `review`
+(refused with every tick found, or a record that does not match its files),
+`keep` (registered). Writes `recapture_views.csv` and `recapture_lists.json`,
+the per-run id lists a recapture takes as input.
+
+```bash
+python tools/find_recapture_views.py <run> [<run> ...] --out <dir>
+```
+
+---
+
 ### `stage_a_runs_index.py` - One fact row per Stage A run under an export root
 
 Lists every run folder under an export root
