@@ -214,6 +214,41 @@ def remove_split_for_capture(doc, view, crop_uv, Transaction, TransactionStatus,
     return record
 
 
+def crop_shape_state(view, basis):
+    """The crop region's loops as READ, projected to view UV through
+    ``basis`` (the capture's own, so the angle is to the view's axes).
+    Three-valued: ``{"state": "value", "loop_count", "vertex_count",
+    "loops_uv": [[[u, v], ...], ...], "shape_set"}``, or ``"unavailable"``
+    with the reason -- no shape manager, a read that raised, or no loop
+    returned. Each curve contributes its start point; a curve that is not a
+    line is counted under ``non_line_curves`` (its interior is not followed).
+    """
+    try:
+        manager = view.GetCropRegionShapeManager()
+        if manager is None:
+            return {"state": "unavailable", "reason": "the view has no crop region shape manager"}
+        loops, non_line = [], 0
+        for loop in manager.GetCropShape():
+            points = []
+            for curve in loop:
+                start = curve.GetEndPoint(0)
+                uv = basis.transform_to_view_uv((float(start.X), float(start.Y), float(start.Z)))
+                points.append([round(float(uv[0]), 6), round(float(uv[1]), 6)])
+                if type(curve).__name__ not in ("Line", "_Line", "FakeLine"):
+                    non_line += 1
+            loops.append(points)
+    except Exception as ex:
+        return {"state": "unavailable",
+                "reason": "the crop shape would not read: {0}: {1}".format(
+                    type(ex).__name__, ex)}
+    if not loops:
+        return {"state": "unavailable", "reason": "GetCropShape returned no loop"}
+    return {"state": "value", "loop_count": len(loops),
+            "vertex_count": sum(len(loop) for loop in loops), "loops_uv": loops,
+            "non_line_curves": non_line,
+            "shape_set": _read(lambda: bool(manager.ShapeSet))}
+
+
 def view_state(view, primary=None):
     """What the capture writes and the rollback must put back, read. With a
     ``primary`` (a dependent view's), its template too: the passes detach
@@ -587,6 +622,11 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # Q7: a split crop, un-split for the capture, and the view-UV bands
         # the view actually SHOWS. tools/stage_a_grid.py keeps only those.
         "split_crop": record.get("split_crop"),
+        # The crop LOOP (2026-10-12): as read in view UV, its classification
+        # (rectangular / axis_aligned / rotation_deg), and which rectangle
+        # the ticks were placed in ("crop_box" or "crop_loop_inscribed").
+        "crop_shape": record.get("crop_shape"),
+        "ticks_outside_crop_loop": record.get("ticks_outside_crop_loop"),
         # A view with no crop region: the two WHITE lines that bound its
         # export to crop A (None for every other view).
         "frame_bounds": record.get("frame_bounds"),
@@ -752,8 +792,45 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         _t = time.time()
         reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                      view_id=view_id)
-        record["mark_reference_source"] = source
         mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, cfg)
+        # ---- 1a: the crop LOOP (2026-10-12) ---------------------------------
+        # The reference above is View.CropBox, the loop's bounding box. The
+        # ticks go inside the LOOP (stage_a_registration's CROP LOOP note):
+        # an ordinary crop's loop IS the box and nothing changes; a rotated or
+        # non-rectangular one puts the ticks on the largest axis-aligned
+        # rectangle inside it. A loop that will not read is a fault, and the
+        # ticks stay on the box, as shipped.
+        loop_uv = None
+        crop_shape = {"state": "not_read", "reason": "no crop region"}
+        if has_crop_region and reference is not None:
+            basis_ = getattr(raster, "view_basis", None)
+            crop_shape = (crop_shape_state(view, basis_) if basis_ is not None else
+                          {"state": "unavailable", "reason": "no view basis to project the loop"})
+            if crop_shape["state"] != "value":
+                _fault("crop_shape_unverified",
+                       "the crop region's loop could not be read, so the ticks are "
+                       "placed on the crop box and may lie outside what the view "
+                       "renders: {0}".format(crop_shape.get("reason")))
+            elif crop_shape["loop_count"] != 1:
+                crop_shape["reference"] = "crop_box"
+                _fault("crop_shape_unverified",
+                       "the crop region has {0} loops; the ticks are placed on the crop "
+                       "box".format(crop_shape["loop_count"]))
+            else:
+                from .color_id_buffer import CROP_READ_BACK_TOLERANCE_PX
+                loop_uv = crop_shape["loops_uv"][0]
+                ref_loop, how = registration.mark_reference_from_loop(
+                    loop_uv, reference, CROP_READ_BACK_TOLERANCE_PX * float(mark_fpp))
+                crop_shape.update(how)
+                if ref_loop is None:
+                    _fault("registration_marks_no_room_in_crop_loop",
+                           "no axis-aligned rectangle fits inside the crop loop ({0} "
+                           "vertices); the ticks are placed on the crop box".format(
+                               crop_shape["vertex_count"]))
+                elif how["reference"] == "crop_loop_inscribed":
+                    reference, source = ref_loop, "crop_loop_inscribed"
+        record["crop_shape"] = crop_shape
+        record["mark_reference_source"] = source
         layout = (registration.registration_mark_segments(reference, mark_fpp)
                   if reference is not None else {"state": "unavailable",
                                                  "reason": source})
@@ -763,6 +840,16 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             view, _anno, getattr(raster, "view_basis", None), diag=diag,
             view_id=view_id)
         layout = registration.relocate_marks_clear_of(layout, avoid)
+        # A tick outside the loop will not render (3939979: 12 of 12, white
+        # corners); said BEFORE the export rather than found by the fitter.
+        if loop_uv is not None:
+            record["ticks_outside_crop_loop"] = registration.ticks_outside_loop(layout, loop_uv)
+            if record["ticks_outside_crop_loop"]:
+                _fault("registration_marks_outside_crop_loop",
+                       "{0} of {1} ticks lie outside the crop region's loop and will not "
+                       "render: {2}".format(len(record["ticks_outside_crop_loop"]),
+                                            len(layout.get("segments") or []),
+                                            ", ".join(record["ticks_outside_crop_loop"])))
         # P2: reference rectangle, sizing, segments and avoidance together.
         record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
         _t = time.time()
