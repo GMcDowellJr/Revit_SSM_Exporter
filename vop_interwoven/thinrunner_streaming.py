@@ -32,7 +32,6 @@ import sys
 import os
 import ctypes
 import json
-import shutil
 
 # Add project to path
 PROJECT_PATH = r'C:\Users\gmcdowell\Documents\Revit_SSM_Exporter'
@@ -50,6 +49,11 @@ if RELOAD_MODULES:
 
 # Now import after cleanup
 from vop_interwoven.entry_dynamo import get_current_document, get_current_view
+from vop_interwoven.capture_run import (  # noqa: F401  (the helpers' old names)
+    chunk_list as _chunk_list, append_csv as _append_csv,
+    run_gc_between_chunks as _run_gc_between_chunks,
+    relocate_batch_stage_a_outputs as _relocate_batch_stage_a_outputs,
+)
 
 
 
@@ -304,47 +308,6 @@ def sort_views_by_level(doc, views):
         return views
 
 
-def _chunk_list(items, chunk_size):
-    if not chunk_size or chunk_size <= 0:
-        return [items]
-    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
-
-
-def _append_csv(source_path, target_path):
-    if not source_path or not os.path.exists(source_path):
-        return
-
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-
-    if not os.path.exists(target_path):
-        shutil.copyfile(source_path, target_path)
-        return
-
-    with open(source_path, "r", encoding="utf-8") as src:
-        src_lines = src.readlines()
-    if not src_lines:
-        return
-    payload = src_lines[1:] if len(src_lines) > 1 else []
-    if not payload:
-        return
-    with open(target_path, "a", encoding="utf-8") as dst:
-        dst.writelines(payload)
-
-
-def _run_gc_between_chunks():
-    try:
-        import System
-        System.GC.Collect()
-        System.GC.WaitForPendingFinalizers()
-        System.GC.Collect()
-    except Exception:
-        try:
-            import gc
-            gc.collect()
-        except Exception:
-            pass
-
-
 def _describe_suppression(applied_value):
     """Translate an applied_show_shadows/applied_smooth_edges sidecar value
     into a human-readable yes/no status.
@@ -421,45 +384,6 @@ def _summarize_stage_a_sidecar(sidecar_path):
 
     return lines
 
-
-def _relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_summaries):
-    """Move one batch's Stage A TIFF/sidecar files out of its temp dir and
-    into the final output tree, then rewrite the tiff_path/sidecar_path
-    already recorded in batch_view_summaries so they point at the new
-    location instead of the now-empty batch temp dir.
-
-    batch_view_summaries entries are mutated in place (and are the same
-    dict objects the caller already extended merged["view_summaries"]
-    with), so this must run before anything downstream reads those paths.
-    No-op if this batch produced no color_id_buffer/ directory (Stage A
-    disabled, or nothing exported).
-    """
-    batch_stage_a_dir = os.path.join(batch_output_dir, "color_id_buffer")
-    if not os.path.isdir(batch_stage_a_dir):
-        return
-
-    final_stage_a_dir = os.path.join(output_dir, "color_id_buffer")
-    os.makedirs(final_stage_a_dir, exist_ok=True)
-    for fname in os.listdir(batch_stage_a_dir):
-        shutil.move(
-            os.path.join(batch_stage_a_dir, fname),
-            os.path.join(final_stage_a_dir, fname),
-        )
-
-    for view_data in batch_view_summaries:
-        if view_data.get("stage") != "color_id_buffer_stage_a":
-            continue
-        # Stage A step 3: the annotation pass writes its own two files into
-        # the same batch directory, so they move with everything else and
-        # their recorded paths must be rewritten with everything else.
-        # Rewriting only the model pair left the annotation paths pointing
-        # into an emptied batch directory -- present in view_summaries, and
-        # resolving to nothing. (PR #211 review.)
-        for path_key in ("tiff_path", "sidecar_path",
-                         "annotation_tiff_path", "annotation_sidecar_path"):
-            old_path = view_data.get(path_key)
-            if old_path:
-                view_data[path_key] = os.path.join(final_stage_a_dir, os.path.basename(old_path))
 
 # ============================================================================
 # RUN PIPELINE
@@ -561,138 +485,14 @@ try:
         view_ids = [_coerce_view_id(v) for v in views]
         view_ids = [vid for vid in view_ids if vid is not None]
 
-        # Use STREAMING pipeline (no cache, minimal memory)
-        from vop_interwoven.streaming import run_vop_pipeline_streaming
-    
-        # One run, one directory: output_dir is the ROOT, and the run writes
-        # into <output_dir>/<as_of_date>__<run_id>. The identity is minted ONCE
-        # here and handed to every batch, and the directory is refused BEFORE
-        # any view is captured if it holds another run.
-        from vop_interwoven.run_meta import (
-            run_identity, run_directory, check_run_directory)
-        run_identity_ = run_identity(tag_override)
-        shared_run_id = run_identity_["run_id"]
-        run_dir = run_directory(output_dir, run_identity_)
-        check_run_directory(run_dir, shared_run_id)
-        print("[VOP] Run {} -> {}".format(shared_run_id, run_dir))
-
+        # One run, one directory, batched: vop_interwoven.capture_run holds
+        # the loop (shared with the pyRevit batch runner).
+        from vop_interwoven.capture_run import run_capture
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         try:
-            batches = _chunk_list(view_ids, batch_size)
-            result = None
-
-            if batch_size:
-                print("[VOP] Batch size requested: {}".format(batch_size))
-                plan = [len(b) for b in batches]
-                print("[VOP] Planned batch sizes: {}".format(plan))
-
-            if len(batches) <= 1:
-                result = run_vop_pipeline_streaming(
-                    doc=doc,
-                    view_ids=view_ids,
-                    cfg=cfg,
-                    output_dir=output_dir,
-                    export_png=True,
-                    export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
-                    export_json=False,
-                    export_view_raster=export_view_raster,
-                    pixels_per_cell=10,
-                    date_override=tag_override,
-                    run_id=shared_run_id,
-                )
-            else:
-                print("[VOP] Streaming exporter rewrites CSVs per run; enabling batch CSV append merge.")
-                merged = {
-                    "views_processed": 0,
-                    "views_failed": 0,
-                    "annotation_passes_failed": 0,
-                    "png_files": [],
-                    "view_raster_files": [],
-                    "csv_rows_written": 0,
-                    "view_summaries": [],
-                    "core_csv_path": None,
-                    "vop_csv_path": None,
-                    "occlusion_csv_path": None,
-                    "perf_csv_path": None,
-                }
-
-                # C9: one run, one RunId, one run_meta.json -- the run's id is
-                # handed to every batch, each batch writes into its own
-                # _batch_tmp_<n>/ inside the run directory, and their run_meta
-                # files are merged into the run directory.
-                batch_meta_paths = []
-                for batch_index, batch_view_ids in enumerate(batches):
-                    start_idx = batch_index * batch_size + 1
-                    end_idx = start_idx + len(batch_view_ids) - 1
-                    print("[VOP] Batch {}/{}: views {}-{} ({} ids)".format(
-                        batch_index + 1, len(batches), start_idx, end_idx, len(batch_view_ids)
-                    ))
-
-                    batch_result = run_vop_pipeline_streaming(
-                        doc=doc,
-                        view_ids=batch_view_ids,
-                        cfg=cfg,
-                        output_dir=output_dir,
-                        export_png=True,
-                        export_csv=True,
-                        export_json=False,
-                        export_view_raster=export_view_raster,
-                        pixels_per_cell=10,
-                        date_override=tag_override,
-                        run_id=shared_run_id,
-                        run_subdir="_batch_tmp_{}".format(batch_index + 1),
-                    )
-                    if batch_result.get("run_dir") != run_dir:
-                        raise RuntimeError(
-                            "batch {0} resolved run directory {1!r}, not the run's "
-                            "{2!r}".format(batch_index + 1, batch_result.get("run_dir"), run_dir))
-                    batch_output_dir = batch_result["output_dir"]
-                    if batch_result.get("run_meta_path"):
-                        batch_meta_paths.append(batch_result["run_meta_path"])
-
-                    merged["views_processed"] += batch_result.get("views_processed", 0)
-                    merged["views_failed"] += batch_result.get("views_failed", 0)
-                    merged["annotation_passes_failed"] += batch_result.get(
-                        "annotation_passes_failed", 0)
-                    merged["csv_rows_written"] += batch_result.get("csv_rows_written", 0)
-                    merged["view_summaries"].extend(batch_result.get("view_summaries", []))
-                    merged["png_files"].extend(batch_result.get("png_files", []))
-                    merged["view_raster_files"].extend(batch_result.get("view_raster_files", []))
-
-                    for key in ["core_csv_path", "vop_csv_path", "occlusion_csv_path", "perf_csv_path"]:
-                        chunk_csv = batch_result.get(key)
-                        if not chunk_csv:
-                            continue
-                        target_csv = os.path.join(run_dir, os.path.basename(chunk_csv))
-                        _append_csv(chunk_csv, target_csv)
-                        merged[key] = target_csv
-
-                    # Stage A writes TIFF/sidecar files directly under
-                    # batch_output_dir/color_id_buffer/ (there is no CSV row to merge them
-                    # through); move them into the requested output tree so batched runs
-                    # don't strand the only copies under a temp batch folder, and keep
-                    # this batch's view_summaries entries pointed at the moved files.
-                    if getattr(cfg, "enable_color_id_buffer_stage_a", False):
-                        # The root record FIRST, so a capture moved below always
-                        # has a run_meta.json above it, even if a later batch
-                        # raises (finalized stays false until the loop ends).
-                        from vop_interwoven.run_meta import write_merged_run_meta
-                        write_merged_run_meta(batch_meta_paths, run_dir, run_complete=False)
-                        _relocate_batch_stage_a_outputs(
-                            batch_output_dir, run_dir, batch_result.get("view_summaries", [])
-                        )
-
-                    _run_gc_between_chunks()
-
-                if batch_meta_paths:
-                    from vop_interwoven.run_meta import write_merged_run_meta
-                    merged["run_meta_path"] = write_merged_run_meta(
-                        batch_meta_paths, run_dir, run_complete=True)
-                merged["run_id"] = shared_run_id
-                merged["run_dir"] = run_dir
-
-                result = merged
-
+            result, run_dir, shared_run_id = run_capture(
+                doc, view_ids, cfg, output_dir, batch_size=batch_size,
+                date_override=tag_override, export_view_raster=export_view_raster)
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
         except Exception:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
