@@ -238,6 +238,23 @@ occlusion/vop/perf CSVs are not written under Stage A. The per-date
 keyed by the exporter's run id. The element cache is in-run only; change
 detection belongs to the analysis layer.
 
+**Recapture in place** (`vop_interwoven/recapture.py`, 2026-10-12): the
+listed views of an EXISTING, finalized run are captured again into that
+run's directory from the SAME document (the open document's title must equal
+`run_meta.doc_title`; only ids in `views_requested`), under the run's own
+`run_id` and as-of date. The thinrunner takes the finder's list
+(`tools/find_recapture_views.py` -> `recapture_lists.json`) as IN[7]. Each
+recaptured view's capture files are rewritten, its `views_core` row replaced
+by `(RunId, ViewId)` and its `run_meta.views[]` entry replaced and stamped
+`recapture: {captured_at, exporter_version, reason}`; the run gains
+`recaptures: [...]` (one entry per recapture, however many batches wrote
+it) and keeps its `exporter_version`, so a run then holds two builds and the
+per-view stamp is what analysis compares on. Both sidecars carry
+`registration_marks.recapture`. The registered capture REFUSES a view whose
+ticks would still lie outside the crop loop before it exports anything
+(`failure_reason: recapture_refused`): its files, row and entry stay as they
+were, and the refusal is listed under `recaptures[].refused_view_ids`.
+
 `color_id_buffer_registered_capture=False` selects the frame-B two-pass
 capture, kept as the named fallback: the crop is widened to frame B and model
 categories are hidden. Its knobs are `Config` parameters too:

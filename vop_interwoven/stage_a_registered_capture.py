@@ -50,6 +50,7 @@ import copy
 import hashlib
 import time
 
+from .recapture import RecaptureRefused
 from .revit.safe_api import element_id_value as _element_id_int
 
 REGISTERED_CAPTURE_SCHEMA = "vop.stage_a.registered_capture.v1"
@@ -627,6 +628,9 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # the ticks were placed in ("crop_box" or "crop_loop_inscribed").
         "crop_shape": record.get("crop_shape"),
         "ticks_outside_crop_loop": record.get("ticks_outside_crop_loop"),
+        # A capture made by a RECAPTURE of an existing run (vop_interwoven
+        # .recapture): when, by which build, why; None for the run's own.
+        "recapture": record.get("recapture"),
         # A view with no crop region: the two WHITE lines that bound its
         # export to crop A (None for every other view).
         "frame_bounds": record.get("frame_bounds"),
@@ -678,9 +682,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
 
     view_id = _element_id_int(getattr(view, "Id", None))
     record = {"schema": REGISTERED_CAPTURE_SCHEMA, "view_id": view_id,
-              "faults": [], "timings_ms": {}}
+              "faults": [], "timings_ms": {},
+              "recapture": getattr(cfg, "_recapture_record", None)}
     model_out = None
     anno_out = None
+    recapture_refused = None
     model_member_ids = []
     # The frame-bound lines of a view with no crop region: drawn by the
     # capture, WHITE in both passes, rolled back with the ticks.
@@ -850,6 +856,13 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                        "render: {2}".format(len(record["ticks_outside_crop_loop"]),
                                             len(layout.get("segments") or []),
                                             ", ".join(record["ticks_outside_crop_loop"])))
+                if getattr(cfg, "_recapture_record", None) is not None:
+                    # A recapture must not replace a capture with one that
+                    # fails the same way: stop before anything is exported,
+                    # and the view's files stay as they were.
+                    raise RecaptureRefused(
+                        "recapture refused: {0} tick(s) would still lie outside the crop "
+                        "loop".format(len(record["ticks_outside_crop_loop"])))
         # P2: reference rectangle, sizing, segments and avoidance together.
         record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
         _t = time.time()
@@ -1060,6 +1073,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                         "tiff_path": None, "sidecar_path": None}
         record["timings_ms"]["annotation_pass"] = round((time.time() - _t) * 1000.0, 3)
         _pass_timings("annotation", anno_out)
+    except RecaptureRefused as ex:
+        recapture_refused = str(ex)
+        _fault("recapture_refused", "the recapture would reproduce the failure; "
+                                    "nothing was exported", ex)
     except Exception as ex:
         _fault("registered_capture_raised", "the registered capture stopped", ex)
     finally:
@@ -1212,7 +1229,9 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
 
     if not isinstance(model_out, dict):
         model_out = {"view_id": view_id, "view_name": getattr(view, "Name", None),
-                     "success": False, "failure_reason": "registered_capture_raised",
+                     "success": False,
+                     "failure_reason": ("recapture_refused" if recapture_refused
+                                        else "registered_capture_raised"),
                      "stage": "color_id_buffer_stage_a",
                      "tiff_path": None, "sidecar_path": None}
     if isinstance(anno_out, dict):

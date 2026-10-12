@@ -17,6 +17,12 @@ Usage:
             crop-inactive view). Needs IN[5] True; runs the annotation pass
             itself. False selects the frame-B two-pass fallback. See
             tools/notes/HANDOFF_REGISTERED_CAPTURE.md.
+    IN[7] = Optional path to a recapture_lists.json (tools/find_recapture_views.py):
+            RECAPTURE IN PLACE. IN[0] is ignored; each listed run's listed
+            views are captured again into that run's own directory, their
+            files and rows replaced and stamped (vop_interwoven/recapture.py).
+            The open document must be the archive the run was captured from.
+            Needs IN[5] True.
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -513,156 +519,184 @@ try:
             print("[VOP] Invalid batch_size '{}'; ignoring batching.".format(batch_size))
             batch_size = None
 
-    # Get view objects from input
-    views = _build_views_from_input(doc, views_input)
-    print("[VOP] Input view count: {}".format(len(views)))
-
-    # Apply level sorting unless disabled
-    if bool(getattr(cfg, "sort_views_by_level", True)) and views:
-        views = sort_views_by_level(doc, views)
+    # Recapture in place (IN[7]): the listed views of existing runs are
+    # captured again into their own run directories; IN[0] is ignored. The
+    # result has the ordinary shape, so the summary below is shared.
+    recapture_lists = IN[7] if len(IN) > 7 and IN[7] else None
+    recapture_lines = []
+    if recapture_lists:
+        if not enable_color_id_buffer_stage_a:
+            raise ValueError("IN[7] (recapture) needs IN[5] (Stage A) True")
+        from vop_interwoven.recapture import run_recapture
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        try:
+            result = run_recapture(doc, recapture_lists, cfg, batch_size=batch_size)
+        finally:
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+        run_dir = "; ".join(str(r.get("run_dir")) for r in result["runs"]
+                            if not r.get("skipped")) or "(none)"
+        for r in result["runs"]:
+            recapture_lines.append(
+                "  RUN {0}: {1} view(s), {2} chunk(s), {3} processed, {4} failed{5}".format(
+                    r.get("run_id"), r.get("views"), r.get("chunks", 0),
+                    r.get("views_processed", 0), r.get("views_failed", 0),
+                    "  (" + r["skipped"] + ")" if r.get("skipped") else ""))
+        for r in result["refused"]:
+            recapture_lines.append("  REFUSED {0}: {1}".format(r.get("run_id"), r.get("reason")))
+        recapture_lines.append(
+            "Next: register_stage_a_annotation.py, stage_a_grid.py, stage_a_kinds.py "
+            "and stage_a_grid_rollup.py over each recaptured run.")
     else:
-        print("[VOP] sort_views_by_level disabled; preserving input order.")
+        # Get view objects from input
+        views = _build_views_from_input(doc, views_input)
+        print("[VOP] Input view count: {}".format(len(views)))
 
-    # Assemble view IDs (existing shape remains unchanged)
-    view_ids = [_coerce_view_id(v) for v in views]
-    view_ids = [vid for vid in view_ids if vid is not None]
-
-    # Use STREAMING pipeline (no cache, minimal memory)
-    from vop_interwoven.streaming import run_vop_pipeline_streaming
-    
-    # One run, one directory: output_dir is the ROOT, and the run writes
-    # into <output_dir>/<as_of_date>__<run_id>. The identity is minted ONCE
-    # here and handed to every batch, and the directory is refused BEFORE
-    # any view is captured if it holds another run.
-    from vop_interwoven.run_meta import (
-        run_identity, run_directory, check_run_directory)
-    run_identity_ = run_identity(tag_override)
-    shared_run_id = run_identity_["run_id"]
-    run_dir = run_directory(output_dir, run_identity_)
-    check_run_directory(run_dir, shared_run_id)
-    print("[VOP] Run {} -> {}".format(shared_run_id, run_dir))
-
-    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
-    try:
-        batches = _chunk_list(view_ids, batch_size)
-        result = None
-
-        if batch_size:
-            print("[VOP] Batch size requested: {}".format(batch_size))
-            plan = [len(b) for b in batches]
-            print("[VOP] Planned batch sizes: {}".format(plan))
-
-        if len(batches) <= 1:
-            result = run_vop_pipeline_streaming(
-                doc=doc,
-                view_ids=view_ids,
-                cfg=cfg,
-                output_dir=output_dir,
-                export_png=True,
-                export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
-                export_json=False,
-                export_view_raster=export_view_raster,
-                pixels_per_cell=10,
-                date_override=tag_override,
-                run_id=shared_run_id,
-            )
+        # Apply level sorting unless disabled
+        if bool(getattr(cfg, "sort_views_by_level", True)) and views:
+            views = sort_views_by_level(doc, views)
         else:
-            print("[VOP] Streaming exporter rewrites CSVs per run; enabling batch CSV append merge.")
-            merged = {
-                "views_processed": 0,
-                "views_failed": 0,
-                "annotation_passes_failed": 0,
-                "png_files": [],
-                "view_raster_files": [],
-                "csv_rows_written": 0,
-                "view_summaries": [],
-                "core_csv_path": None,
-                "vop_csv_path": None,
-                "occlusion_csv_path": None,
-                "perf_csv_path": None,
-            }
+            print("[VOP] sort_views_by_level disabled; preserving input order.")
 
-            # C9: one run, one RunId, one run_meta.json -- the run's id is
-            # handed to every batch, each batch writes into its own
-            # _batch_tmp_<n>/ inside the run directory, and their run_meta
-            # files are merged into the run directory.
-            batch_meta_paths = []
-            for batch_index, batch_view_ids in enumerate(batches):
-                start_idx = batch_index * batch_size + 1
-                end_idx = start_idx + len(batch_view_ids) - 1
-                print("[VOP] Batch {}/{}: views {}-{} ({} ids)".format(
-                    batch_index + 1, len(batches), start_idx, end_idx, len(batch_view_ids)
-                ))
+        # Assemble view IDs (existing shape remains unchanged)
+        view_ids = [_coerce_view_id(v) for v in views]
+        view_ids = [vid for vid in view_ids if vid is not None]
 
-                batch_result = run_vop_pipeline_streaming(
+        # Use STREAMING pipeline (no cache, minimal memory)
+        from vop_interwoven.streaming import run_vop_pipeline_streaming
+    
+        # One run, one directory: output_dir is the ROOT, and the run writes
+        # into <output_dir>/<as_of_date>__<run_id>. The identity is minted ONCE
+        # here and handed to every batch, and the directory is refused BEFORE
+        # any view is captured if it holds another run.
+        from vop_interwoven.run_meta import (
+            run_identity, run_directory, check_run_directory)
+        run_identity_ = run_identity(tag_override)
+        shared_run_id = run_identity_["run_id"]
+        run_dir = run_directory(output_dir, run_identity_)
+        check_run_directory(run_dir, shared_run_id)
+        print("[VOP] Run {} -> {}".format(shared_run_id, run_dir))
+
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        try:
+            batches = _chunk_list(view_ids, batch_size)
+            result = None
+
+            if batch_size:
+                print("[VOP] Batch size requested: {}".format(batch_size))
+                plan = [len(b) for b in batches]
+                print("[VOP] Planned batch sizes: {}".format(plan))
+
+            if len(batches) <= 1:
+                result = run_vop_pipeline_streaming(
                     doc=doc,
-                    view_ids=batch_view_ids,
+                    view_ids=view_ids,
                     cfg=cfg,
                     output_dir=output_dir,
                     export_png=True,
-                    export_csv=True,
+                    export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
                     export_json=False,
                     export_view_raster=export_view_raster,
                     pixels_per_cell=10,
                     date_override=tag_override,
                     run_id=shared_run_id,
-                    run_subdir="_batch_tmp_{}".format(batch_index + 1),
                 )
-                if batch_result.get("run_dir") != run_dir:
-                    raise RuntimeError(
-                        "batch {0} resolved run directory {1!r}, not the run's "
-                        "{2!r}".format(batch_index + 1, batch_result.get("run_dir"), run_dir))
-                batch_output_dir = batch_result["output_dir"]
-                if batch_result.get("run_meta_path"):
-                    batch_meta_paths.append(batch_result["run_meta_path"])
+            else:
+                print("[VOP] Streaming exporter rewrites CSVs per run; enabling batch CSV append merge.")
+                merged = {
+                    "views_processed": 0,
+                    "views_failed": 0,
+                    "annotation_passes_failed": 0,
+                    "png_files": [],
+                    "view_raster_files": [],
+                    "csv_rows_written": 0,
+                    "view_summaries": [],
+                    "core_csv_path": None,
+                    "vop_csv_path": None,
+                    "occlusion_csv_path": None,
+                    "perf_csv_path": None,
+                }
 
-                merged["views_processed"] += batch_result.get("views_processed", 0)
-                merged["views_failed"] += batch_result.get("views_failed", 0)
-                merged["annotation_passes_failed"] += batch_result.get(
-                    "annotation_passes_failed", 0)
-                merged["csv_rows_written"] += batch_result.get("csv_rows_written", 0)
-                merged["view_summaries"].extend(batch_result.get("view_summaries", []))
-                merged["png_files"].extend(batch_result.get("png_files", []))
-                merged["view_raster_files"].extend(batch_result.get("view_raster_files", []))
+                # C9: one run, one RunId, one run_meta.json -- the run's id is
+                # handed to every batch, each batch writes into its own
+                # _batch_tmp_<n>/ inside the run directory, and their run_meta
+                # files are merged into the run directory.
+                batch_meta_paths = []
+                for batch_index, batch_view_ids in enumerate(batches):
+                    start_idx = batch_index * batch_size + 1
+                    end_idx = start_idx + len(batch_view_ids) - 1
+                    print("[VOP] Batch {}/{}: views {}-{} ({} ids)".format(
+                        batch_index + 1, len(batches), start_idx, end_idx, len(batch_view_ids)
+                    ))
 
-                for key in ["core_csv_path", "vop_csv_path", "occlusion_csv_path", "perf_csv_path"]:
-                    chunk_csv = batch_result.get(key)
-                    if not chunk_csv:
-                        continue
-                    target_csv = os.path.join(run_dir, os.path.basename(chunk_csv))
-                    _append_csv(chunk_csv, target_csv)
-                    merged[key] = target_csv
-
-                # Stage A writes TIFF/sidecar files directly under
-                # batch_output_dir/color_id_buffer/ (there is no CSV row to merge them
-                # through); move them into the requested output tree so batched runs
-                # don't strand the only copies under a temp batch folder, and keep
-                # this batch's view_summaries entries pointed at the moved files.
-                if getattr(cfg, "enable_color_id_buffer_stage_a", False):
-                    # The root record FIRST, so a capture moved below always
-                    # has a run_meta.json above it, even if a later batch
-                    # raises (finalized stays false until the loop ends).
-                    from vop_interwoven.run_meta import write_merged_run_meta
-                    write_merged_run_meta(batch_meta_paths, run_dir, run_complete=False)
-                    _relocate_batch_stage_a_outputs(
-                        batch_output_dir, run_dir, batch_result.get("view_summaries", [])
+                    batch_result = run_vop_pipeline_streaming(
+                        doc=doc,
+                        view_ids=batch_view_ids,
+                        cfg=cfg,
+                        output_dir=output_dir,
+                        export_png=True,
+                        export_csv=True,
+                        export_json=False,
+                        export_view_raster=export_view_raster,
+                        pixels_per_cell=10,
+                        date_override=tag_override,
+                        run_id=shared_run_id,
+                        run_subdir="_batch_tmp_{}".format(batch_index + 1),
                     )
+                    if batch_result.get("run_dir") != run_dir:
+                        raise RuntimeError(
+                            "batch {0} resolved run directory {1!r}, not the run's "
+                            "{2!r}".format(batch_index + 1, batch_result.get("run_dir"), run_dir))
+                    batch_output_dir = batch_result["output_dir"]
+                    if batch_result.get("run_meta_path"):
+                        batch_meta_paths.append(batch_result["run_meta_path"])
 
-                _run_gc_between_chunks()
+                    merged["views_processed"] += batch_result.get("views_processed", 0)
+                    merged["views_failed"] += batch_result.get("views_failed", 0)
+                    merged["annotation_passes_failed"] += batch_result.get(
+                        "annotation_passes_failed", 0)
+                    merged["csv_rows_written"] += batch_result.get("csv_rows_written", 0)
+                    merged["view_summaries"].extend(batch_result.get("view_summaries", []))
+                    merged["png_files"].extend(batch_result.get("png_files", []))
+                    merged["view_raster_files"].extend(batch_result.get("view_raster_files", []))
 
-            if batch_meta_paths:
-                from vop_interwoven.run_meta import write_merged_run_meta
-                merged["run_meta_path"] = write_merged_run_meta(
-                    batch_meta_paths, run_dir, run_complete=True)
-            merged["run_id"] = shared_run_id
-            merged["run_dir"] = run_dir
+                    for key in ["core_csv_path", "vop_csv_path", "occlusion_csv_path", "perf_csv_path"]:
+                        chunk_csv = batch_result.get(key)
+                        if not chunk_csv:
+                            continue
+                        target_csv = os.path.join(run_dir, os.path.basename(chunk_csv))
+                        _append_csv(chunk_csv, target_csv)
+                        merged[key] = target_csv
 
-            result = merged
+                    # Stage A writes TIFF/sidecar files directly under
+                    # batch_output_dir/color_id_buffer/ (there is no CSV row to merge them
+                    # through); move them into the requested output tree so batched runs
+                    # don't strand the only copies under a temp batch folder, and keep
+                    # this batch's view_summaries entries pointed at the moved files.
+                    if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                        # The root record FIRST, so a capture moved below always
+                        # has a run_meta.json above it, even if a later batch
+                        # raises (finalized stays false until the loop ends).
+                        from vop_interwoven.run_meta import write_merged_run_meta
+                        write_merged_run_meta(batch_meta_paths, run_dir, run_complete=False)
+                        _relocate_batch_stage_a_outputs(
+                            batch_output_dir, run_dir, batch_result.get("view_summaries", [])
+                        )
 
-        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-    except Exception:
-        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-        raise
+                    _run_gc_between_chunks()
+
+                if batch_meta_paths:
+                    from vop_interwoven.run_meta import write_merged_run_meta
+                    merged["run_meta_path"] = write_merged_run_meta(
+                        batch_meta_paths, run_dir, run_complete=True)
+                merged["run_id"] = shared_run_id
+                merged["run_dir"] = run_dir
+
+                result = merged
+
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+        except Exception:
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+            raise
 
     print("="*60)
     print("DEBUG: After streaming call")
@@ -679,12 +713,14 @@ try:
     # Build summary
     lines = []
     lines.append("=" * 60)
-    lines.append("VOP INTERWOVEN PIPELINE - STREAMING MODE")
+    lines.append("VOP INTERWOVEN PIPELINE - {}".format(
+        "RECAPTURE IN PLACE" if recapture_lists else "STREAMING MODE"))
     lines.append("=" * 60)
     lines.append("")
 
     lines.append("Views processed: {}".format(result.get('views_processed', 0)))
     lines.append("Views failed: {}".format(result.get('views_failed', 0)))
+    lines.extend(recapture_lines)
     lines.append("")
 
     # Per-view summary (limited info from lightweight summaries)

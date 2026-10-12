@@ -356,8 +356,10 @@ def _view_id_int(v):
         return str(value)
 
 
-def finalize_run_meta(meta, view_summaries):
-    """The run's per-view outcomes, then ``finalized: true``."""
+def view_outcomes(view_summaries):
+    """PURE. The per-view outcome entries run_meta's ``views`` holds, from
+    the exporter's view summaries (one source for finalize_run_meta and
+    recapture.merge_recapture_into_run_meta)."""
     from .csv_export import stage_a_capture_status
     views = []
     for s in view_summaries or []:
@@ -367,7 +369,12 @@ def finalize_run_meta(meta, view_summaries):
             reason = ";".join(str(f) for f in s.get("registration_faults") or [])
         views.append({"view_id": s.get("view_id"), "view_name": s.get("view_name"),
                       "capture_status": status, "capture_failure_reason": reason})
-    meta["views"] = views
+    return views
+
+
+def finalize_run_meta(meta, view_summaries):
+    """The run's per-view outcomes, then ``finalized: true``."""
+    meta["views"] = view_outcomes(view_summaries)
     meta["finalized"] = True
     return meta
 

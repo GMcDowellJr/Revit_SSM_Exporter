@@ -301,6 +301,15 @@ the per-run id lists a recapture takes as input.
 python tools/find_recapture_views.py <run> [<run> ...] --out <dir>
 ```
 
+The recapture itself is the exporter's (`vop_interwoven/recapture.py`): in
+Dynamo, with the archive the run was captured from open,
+`thinrunner_streaming.py` with IN[5] True and IN[7] the path to
+`recapture_lists.json` captures each listed view again into its own run
+directory, replacing its files and rows and stamping them (`recapture` in
+the sidecars, `recaptures[]` in run_meta.json). Then re-run
+`register_stage_a_annotation.py`, `stage_a_grid.py`, `stage_a_kinds.py` and
+`stage_a_grid_rollup.py` over the run.
+
 ---
 
 ### `stage_a_runs_index.py` - One fact row per Stage A run under an export root
