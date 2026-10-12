@@ -280,6 +280,12 @@ python tools/census_registration.py <run> --out <dir> --no-pixels   # sidecars o
 The summary JSON partitions `registration_state` by view type, scale,
 template, line style, split state and the tick-window counts; it fits no model.
 
+Since the 2026-10-12 follow-up (`RUN_2025-06-21_20261008T093539_ROTATION.md`)
+each row also carries the rendered region: the content's tilt (model TIFF, and
+the union of both captures when they share a lattice), which image corners are
+white, the ticks predicted to lie inside the rectangle inscribed at that tilt,
+the ticks each fit found, and the per-tick confusion between the two.
+
 ---
 
 ### `stage_a_runs_index.py` - One fact row per Stage A run under an export root
