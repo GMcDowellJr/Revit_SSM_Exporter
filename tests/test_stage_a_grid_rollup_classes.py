@@ -54,7 +54,7 @@ def _int(v):
 def test_the_1_0_0_columns_are_unchanged_and_first():
     assert rollup.COLUMNS[:len(COLUMNS_1_0_0)] == COLUMNS_1_0_0
     assert len(set(rollup.COLUMNS)) == len(rollup.COLUMNS)
-    assert rollup.TOOL_VERSION == "1.1.0"
+    assert rollup.TOOL_VERSION == "1.1.1"
 
 
 def test_a_derived_view_carries_its_class_totals_and_legacy_shapes(tmp_path):

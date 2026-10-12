@@ -251,3 +251,11 @@ and neither substitutes for the other.
   other four `v_hi`) without re-running anything.
 - A shape reference when reading a new `--per-element-csv`: same
   measurement, different schema and a different population.
+
+## `census_registration_2025-06-21_3939979.csv`
+
+`tools/census_registration.py` run on the two captures of view 3939979 that
+were supplied for `tools/notes/RUN_2025-06-21_20261008T093539_TICKS.md`: the
+refused 06-21 capture (run `20261008T093539`) and the registered 06-13 capture
+(run `20261007T191817`). Two rows. The full-run census needs the run folder;
+this file is the exemplar pair only.

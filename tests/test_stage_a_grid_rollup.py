@@ -59,12 +59,15 @@ def _outcome(run, n, status="success", reason="", **meta):
 
 
 def _capture(run, n, register=True, gridded=True, model_faults=None,
-             filled_region_ids=(), drop_anno_marks=False, anno_faults=None):
+             filled_region_ids=(), drop_anno_marks=False, anno_faults=None,
+             pair_kw=None):
     """View ``V_<n>`` in ``run``: the shared pair, renamed and re-pointed,
-    then (optionally) registered and gridded by the real tools."""
+    then (optionally) registered and gridded by the real tools. ``pair_kw``
+    goes to the shared fixture (``drop_anno`` / ``drop_model`` leave ticks
+    out of the images while the sidecars still record them)."""
     stage = run.parent / "stage_{0}_{1}".format(run.name, n)
     stage.mkdir()
-    anno_src, model_src, _c = _grid_pair(stage)
+    anno_src, model_src, _c = _grid_pair(stage, **(pair_kw or {}))
     cap = run / "color_id_buffer"
     model_tiff, anno_tiff = cap / "V_{0}.tiff".format(n), cap / "V_{0}_anno.tiff".format(n)
     shutil.copy(str(stage / "V_1.tiff"), str(model_tiff))
@@ -335,6 +338,61 @@ def test_a_refused_registration_is_refused_and_the_view_is_model_only(tmp_path):
     assert summary["registration_state"]["counts"] == {
         "registered": 1, "refused": 1, "absent": 1, "unusable": 0}
     assert summary["flag_counts"]["counts"]["no_registered_annotation"] == 2
+
+
+def test_annotation_occupancy_is_blank_not_zero_without_an_annotation_layer(tmp_path):
+    """Shaped like 2025-06-21 view 3939979: the sidecars record 12 painted
+    ticks, no tick drew in either image, the registration is refused with
+    "0 of 12 ticks found", and the model layer is populated. The grid record
+    still carries anno_only / overlap counts of 0 (no layer was counted); the
+    roll-up must write those three columns BLANK, beside the already-blank
+    anno_element_ink -- a zero in them is a measured zero. Control: the
+    registered view keeps its measured numbers, and every other column of the
+    refused row is unchanged by the rule."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    every_tick = tuple(m["key"] for m in
+                       json.loads((run / "color_id_buffer" / "V_1.json").read_text())
+                       ["registration_marks"]["marks"])
+    assert len(every_tick) == 12
+    _capture(run, 2, pair_kw={"drop_anno": every_tick, "drop_model": every_tick})
+    assert _main(run) == 1
+    by_stem, _rows, _summary = _read(run / "analysis_grid")
+    r2 = by_stem["V_2"]
+    assert (r2["row_status"], r2["registration_state"]) == ("gridded", "refused")
+    assert "0 of 12 ticks found" in r2["registration_reason"]
+    assert "no_registered_annotation" in r2["flags"].split("|")
+    assert int(r2["inside_crop_a_model_only"]) > 0                  # populated model
+    # The grid's own record holds the zeros; the roll-up does not pass them on.
+    occ = _grid_json(run, 2)["occupancy"]
+    assert (occ["inside_crop_a"]["anno_only"], occ["inside_crop_a"]["overlap"],
+            occ["outside_crop_a"]["anno_only"]) == (0, 0, 0)
+    assert (r2["inside_crop_a_anno_only"], r2["inside_crop_a_overlap"],
+            r2["outside_crop_a_anno_only"]) == ("", "", "")
+    assert r2["anno_element_ink"] == ""
+    # With the blanks unknown, the measured classes still cover crop A.
+    assert (int(r2["inside_crop_a_empty"]) + int(r2["inside_crop_a_model_only"])
+            == int(r2["crop_a_cells_with_px"]))
+    # Control: a counted annotation layer keeps its numbers, zero or not.
+    r1 = by_stem["V_1"]
+    assert r1["registration_state"] == "registered"
+    assert r1["inside_crop_a_anno_only"] != "" and r1["inside_crop_a_overlap"] != ""
+    assert r1["outside_crop_a_anno_only"] == "0"     # a measured zero stays 0
+    # The rule touches exactly the three columns: re-deriving the refused row
+    # from its grid record with the layer declared counted (an anno_element_ink
+    # total, the one key the rule reads) restores the zeros and changes
+    # nothing else but that declared total.
+    record = _grid_json(run, 2)
+    blanked = rollup.grid_columns(record)
+    record["image_totals"]["anno_element_ink"] = 0
+    counted = rollup.grid_columns(record)
+    assert blanked["anno_element_ink"] is None and counted["anno_element_ink"] == 0
+    changed = sorted(k for k in counted
+                     if counted[k] != blanked[k] and k != "anno_element_ink")
+    assert changed == ["inside_crop_a_anno_only", "inside_crop_a_overlap",
+                       "outside_crop_a_anno_only"]
+    assert [blanked[k] for k in changed] == [None, None, None]
+    assert [counted[k] for k in changed] == [0, 0, 0]
 
 
 def test_a_registration_the_grid_found_unusable_is_unusable(tmp_path):

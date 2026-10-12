@@ -260,6 +260,28 @@ run is refused, the count invariant fails, or on bad arguments.
 
 ---
 
+### `census_registration.py` - Registration-tick census across Stage A runs
+
+One CSV row per model sidecar: what the capture RECORDED about its
+registration ticks (template, line style, lines-unhidden state, marks painted,
+readback, crop as read, split state) beside what the exported images CONTAIN
+(exact tick-colour pixels in both captures, palette pixels, how many of the 12
+recorded tick windows hold no ink, and the minimum-area rectangle of the
+annotation ink: its angle to the image axes and its fill). **Read-only**; every
+file looked for and not found is named in `notes`. Written for run
+`2025-06-21__20261008T093539`, where view 3939979 recorded 12 painted ticks and
+drew none (`tools/notes/RUN_2025-06-21_20261008T093539_TICKS.md`).
+
+```bash
+python tools/census_registration.py <run> [<run> ...] --out <dir>
+python tools/census_registration.py <run> --out <dir> --no-pixels   # sidecars only
+```
+
+The summary JSON partitions `registration_state` by view type, scale,
+template, line style, split state and the tick-window counts; it fits no model.
+
+---
+
 ### `stage_a_runs_index.py` - One fact row per Stage A run under an export root
 
 Lists every run folder under an export root
