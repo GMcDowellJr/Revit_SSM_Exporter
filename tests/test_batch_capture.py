@@ -569,6 +569,9 @@ def test_the_pyrevit_button_is_thin_and_opens_detached_with_worksets_open():
     assert "run_batch(plan, open_doc, close_doc, capture, recapture" in src
     assert "run_capture(" in src and "run_recapture(" in src
     assert "for job in" not in src
+    # pyRevit's CPython engine reports SystemExit as a script error; the
+    # early exits are returns from main() (Greg, first run, 2026-10-13).
+    assert "SystemExit" not in src.split("def main():")[1] and src.rstrip().endswith("main()")
     import ast
     ast.parse(src)
     # pyRevit disables a button with no document open unless its bundle says

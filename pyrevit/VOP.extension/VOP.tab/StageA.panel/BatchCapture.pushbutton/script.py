@@ -193,71 +193,76 @@ def recapture(doc, job):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main. A function, so an early exit is a return: pyRevit's CPython engine
+# reports SystemExit as a script error ("CPython Traceback: 0").
 # ---------------------------------------------------------------------------
 
-if not _settings.get("plan_json"):
-    with open(_SETTINGS_PATH, "w", encoding="utf-8") as handle:
-        json.dump(_DEFAULTS, handle, indent=2)
-    TaskDialog.Show("VOP Batch Capture -- first run",
-                    "Fill in plan_json (and repo_root if pyrevit/ is not inside the "
-                    "checkout) in:\n\n{0}\n\nthen press the button again.".format(_SETTINGS_PATH))
-    raise SystemExit(0)
+def main():
+    if not _settings.get("plan_json"):
+        with open(_SETTINGS_PATH, "w", encoding="utf-8") as handle:
+            json.dump(_DEFAULTS, handle, indent=2)
+        TaskDialog.Show("VOP Batch Capture -- first run",
+                        "Fill in plan_json (and repo_root if pyrevit/ is not inside the "
+                        "checkout) in:\n\n{0}\n\nthen press the button again.".format(_SETTINGS_PATH))
+        return
 
-from vop_interwoven.batch_capture import load_plan, pending_jobs, run_batch  # noqa: E402
+    from vop_interwoven.batch_capture import load_plan, pending_jobs, run_batch  # noqa: E402
 
-plan = load_plan(_settings["plan_json"])
-pending, done = pending_jobs(plan, limit=_int_or_none(_settings.get("limit")))
-_confirm = TaskDialog("VOP Batch Capture -- confirm")
-_confirm.MainInstruction = "Ready to run"
-_confirm.MainContent = (
-    "Plan:        {0}\nMode:        {1}\nOutput root: {2}\nRepo root:   {3}\n\n"
-    "Jobs pending: {4}   already done: {5}\n"
-    "(first: {6})\n\nOpen each archive detached, {7} worksets; proceed?".format(
-        _settings["plan_json"], plan.get("mode"), plan.get("output_root"), REPO_ROOT,
-        len(pending), len(done), pending[0]["display_name"] if pending else "-",
-        _settings.get("worksets") or "all"))
-_confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Run")
-_confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Open settings in Notepad, then cancel")
-_result = _confirm.Show()
-if _result == TaskDialogResult.CommandLink2:
-    import subprocess
-    subprocess.Popen(["notepad.exe", _SETTINGS_PATH])
-    raise SystemExit(0)
-if _result != TaskDialogResult.CommandLink1:
-    raise SystemExit(0)
+    plan = load_plan(_settings["plan_json"])
+    pending, done = pending_jobs(plan, limit=_int_or_none(_settings.get("limit")))
+    _confirm = TaskDialog("VOP Batch Capture -- confirm")
+    _confirm.MainInstruction = "Ready to run"
+    _confirm.MainContent = (
+        "Plan:        {0}\nMode:        {1}\nOutput root: {2}\nRepo root:   {3}\n\n"
+        "Jobs pending: {4}   already done: {5}\n"
+        "(first: {6})\n\nOpen each archive detached, {7} worksets; proceed?".format(
+            _settings["plan_json"], plan.get("mode"), plan.get("output_root"), REPO_ROOT,
+            len(pending), len(done), pending[0]["display_name"] if pending else "-",
+            _settings.get("worksets") or "all"))
+    _confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Run")
+    _confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Open settings in Notepad, then cancel")
+    _result = _confirm.Show()
+    if _result == TaskDialogResult.CommandLink2:
+        import subprocess
+        subprocess.Popen(["notepad.exe", _SETTINGS_PATH])
+        return
+    if _result != TaskDialogResult.CommandLink1:
+        return
 
-ui_app.DialogBoxShowing += _on_dialog_showing
-try:
-    import ctypes
-    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+    ui_app.DialogBoxShowing += _on_dialog_showing
     try:
-        record = run_batch(plan, open_doc, close_doc, capture, recapture,
-                           limit=_int_or_none(_settings.get("limit")), log=print)
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        try:
+            record = run_batch(plan, open_doc, close_doc, capture, recapture,
+                               limit=_int_or_none(_settings.get("limit")), log=print)
+        finally:
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:
-        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-finally:
-    ui_app.DialogBoxShowing -= _on_dialog_showing
+        ui_app.DialogBoxShowing -= _on_dialog_showing
 
-if _seen_dialog_ids and plan.get("output_root"):
-    try:
-        with open(os.path.join(plan["output_root"], "dialog_ids_{0}.log".format(
-                datetime.now().strftime("%Y%m%dT%H%M%S"))), "w", encoding="utf-8") as handle:
-            handle.write("\n".join(_seen_dialog_ids) + "\n")
-    except (IOError, OSError) as ex:
-        print("  dialog id log not written: {0}".format(ex))
+    if _seen_dialog_ids and plan.get("output_root"):
+        try:
+            with open(os.path.join(plan["output_root"], "dialog_ids_{0}.log".format(
+                    datetime.now().strftime("%Y%m%dT%H%M%S"))), "w", encoding="utf-8") as handle:
+                handle.write("\n".join(_seen_dialog_ids) + "\n")
+        except (IOError, OSError) as ex:
+            print("  dialog id log not written: {0}".format(ex))
 
-summary = ["Jobs OK: {0}   failed: {1}   already done: {2}".format(
-    record["ok"], record["failed"], len(record["already_done"])),
-    "Log: {0}".format(record.get("log_path"))]
-for entry in record["jobs"]:
-    if entry["status"] != "ok":
-        summary.append("  FAILED {0}: {1}".format(entry["key"], entry.get("error")))
-    for refused in (entry.get("result") or {}).get("refused") or []:
-        summary.append("  REFUSED {0}: {1}".format(refused.get("run_id"), refused.get("reason")))
-if record.get("last_document_closed") is not True:
-    summary.append("Last document left open: {0}".format(record.get("last_document_closed")))
-summary.append("")
-summary.append("Next: register_stage_a_annotation.py, stage_a_grid.py, stage_a_kinds.py and "
-               "stage_a_grid_rollup.py over each run written.")
-TaskDialog.Show("VOP Batch Capture -- done", "\n".join(summary))
+    summary = ["Jobs OK: {0}   failed: {1}   already done: {2}".format(
+        record["ok"], record["failed"], len(record["already_done"])),
+        "Log: {0}".format(record.get("log_path"))]
+    for entry in record["jobs"]:
+        if entry["status"] != "ok":
+            summary.append("  FAILED {0}: {1}".format(entry["key"], entry.get("error")))
+        for refused in (entry.get("result") or {}).get("refused") or []:
+            summary.append("  REFUSED {0}: {1}".format(refused.get("run_id"), refused.get("reason")))
+    if record.get("last_document_closed") is not True:
+        summary.append("Last document left open: {0}".format(record.get("last_document_closed")))
+    summary.append("")
+    summary.append("Next: register_stage_a_annotation.py, stage_a_grid.py, stage_a_kinds.py and "
+                   "stage_a_grid_rollup.py over each run written.")
+    TaskDialog.Show("VOP Batch Capture -- done", "\n".join(summary))
+
+
+main()
