@@ -200,6 +200,51 @@ def test_two_archives_sharing_a_title_get_no_recapture_job_unless_the_run_names_
     assert plan["jobs"] == [] and plan["unmatched_runs"][0]["run_id"] == "r"
 
 
+def test_a_completed_capture_of_a_shared_title_is_matched_by_its_source_file():
+    """Codex, PR #236: a finalized P1/A.rvt run must not make the planner
+    skip an uncaptured P2/A.rvt."""
+    two = [dict(relative_path="P1/A.rvt", full_path="C:\\ACC\\P1\\A.rvt", filename="A.rvt",
+                project_folder="P1", stem="A", display_name="P1/A.rvt"),
+           dict(relative_path="P2/A.rvt", full_path="C:\\ACC\\P2\\A.rvt", filename="A.rvt",
+                project_folder="P2", stem="A", display_name="P2/A.rvt")]
+    # The run names its file: P1 is captured, P2 gets its job.
+    plan = build_plan(two, "E", mode="capture", run_index=[
+        {"run_dir": "E/P1/A/r", "doc_title": "A", "finalized": True,
+         "source_path": "C:/ACC/P1/A.rvt"}])
+    assert [j["key"] for j in plan["jobs"]] == ["P2/A.rvt"]
+    assert plan["skipped"][0]["reason"].startswith("already captured: E/P1/A/r")
+    # The run names no file and the title is shared: neither is skipped as
+    # captured, both are skipped as ambiguous (a second run of one of them
+    # or a gap for the other would be a guess).
+    plan = build_plan(two, "E", mode="capture", run_index=[
+        {"run_dir": "E/P1/A/r", "doc_title": "A", "finalized": True}])
+    assert plan["jobs"] == []
+    assert all(s["reason"].startswith("ambiguous: 2 manifest files share the title 'A'")
+               for s in plan["skipped"])
+    # Without skip_captured the jobs are planned regardless.
+    plan = build_plan(two, "E", mode="capture", skip_captured=False, run_index=[
+        {"run_dir": "E/P1/A/r", "doc_title": "A", "finalized": True}])
+    assert [j["key"] for j in plan["jobs"]] == ["P1/A.rvt", "P2/A.rvt"]
+    # A unique title with a run naming no file: captured, as before.
+    one = [two[0]]
+    plan = build_plan(one, "E", mode="capture", run_index=[
+        {"run_dir": "E/P1/A/r", "doc_title": "A", "finalized": True}])
+    assert plan["jobs"] == [] and "already captured" in plan["skipped"][0]["reason"]
+
+
+def test_a_capture_job_under_its_own_output_dir_is_done_only_by_its_file_when_recorded(tmp_path):
+    job = {"kind": "capture", "stem": "A", "full_path": "C:\\ACC\\P2\\A.rvt",
+           "output_dir": str(tmp_path / "P2" / "A")}
+    run_dir = _run_dir(tmp_path / "P2" / "A", "A_detached")
+    meta = json.loads(Path(run_dir, "run_meta.json").read_text())
+    meta["opened_from"] = {"full_path": "C:\\ACC\\P1\\A.rvt"}
+    Path(run_dir, "run_meta.json").write_text(json.dumps(meta))
+    assert job_done(job) == (False, None)                 # another file's run, misplaced
+    meta["opened_from"] = {"full_path": "c:/acc/p2/a.rvt"}
+    Path(run_dir, "run_meta.json").write_text(json.dumps(meta))
+    assert job_done(job)[0] is True
+
+
 def test_the_index_reads_the_source_file_from_opened_from_then_a_local_doc_path():
     assert bc.source_path_of({"opened_from": {"full_path": "C:\\x\\A.rvt"},
                               "doc_path": {"state": "value", "value": "Autodesk Docs://P/A.rvt"}
@@ -526,3 +571,7 @@ def test_the_pyrevit_button_is_thin_and_opens_detached_with_worksets_open():
     assert "for job in" not in src
     import ast
     ast.parse(src)
+    # pyRevit disables a button with no document open unless its bundle says
+    # zero-doc; the script is meant to run exactly then (Codex, PR #236).
+    bundle = open(os.path.join(os.path.dirname(path), "bundle.yaml"), encoding="utf-8").read()
+    assert "context: zero-doc" in bundle.splitlines()

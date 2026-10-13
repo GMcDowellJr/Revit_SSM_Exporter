@@ -281,11 +281,18 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
         if mode == "recapture":
             skipped.append({"key": entry["relative_path"], "reason": "no run to recapture"})
             continue
-        captured = [r for r in titled if r.get("finalized") and title_matches(stem, r["doc_title"])]
+        captured, unsure = captured_from(entry, titled, stems[stem] > 1)
         if skip_captured and captured:
             skipped.append({"key": entry["relative_path"],
                             "reason": "already captured: {0}".format(
                                 ", ".join(r["run_dir"] for r in captured))})
+            continue
+        if skip_captured and unsure:
+            skipped.append({"key": entry["relative_path"],
+                            "reason": "ambiguous: {0} manifest files share the title {1!r} and "
+                                      "finalized run(s) {2} of that title record no source "
+                                      "file".format(stems[stem], stem,
+                                                    [r.get("run_id") for r in unsure])})
             continue
         date = archive_date(stem)
         job.update(kind="capture",
@@ -302,6 +309,27 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
                  if r.get("recapture") and os.path.normpath(r.get("run_dir") or "") not in matched_dirs]
     return {"schema": PLAN_SCHEMA, "mode": mode, "output_root": output_root,
             "jobs": jobs, "skipped": skipped, "unmatched_runs": unmatched}
+
+
+def captured_from(entry, runs, title_shared):
+    """``(captured, unsure)``: the finalized runs captured from this file --
+    by the recorded source file when the run names one, by title alone only
+    when no other manifest file carries it -- and the finalized runs of the
+    same title that name no file while another file shares the title (the
+    same rule as the recapture match; Codex, PR #236)."""
+    captured, unsure = [], []
+    for run in runs:
+        if not run.get("finalized") or not title_matches(entry["stem"], run.get("doc_title")):
+            continue
+        recorded = run.get("source_path")
+        if recorded:
+            if same_file(recorded, entry["full_path"]):
+                captured.append(run)
+        elif title_shared:
+            unsure.append(run)
+        else:
+            captured.append(run)
+    return captured, unsure
 
 
 def load_plan(path):
@@ -324,9 +352,11 @@ def job_done(job):
     recapture, when every run's run_meta lists a ``recaptures`` entry whose
     view_ids cover the job's. Returns (done, detail)."""
     if job["kind"] == "capture":
-        for run in index_runs(job["output_dir"], max_depth=1):
-            if run.get("finalized") and title_matches(job["stem"], run.get("doc_title")):
-                return True, "captured as {0}".format(run["run_dir"])
+        # Under the job's own output directory (one per project and model),
+        # a run of this title that names no source file is this file's.
+        captured, _unsure = captured_from(job, index_runs(job["output_dir"], max_depth=1), False)
+        if captured:
+            return True, "captured as {0}".format(captured[0]["run_dir"])
         return False, None
     pending = []
     for target in job["recapture"]:
