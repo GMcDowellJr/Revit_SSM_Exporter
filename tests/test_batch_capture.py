@@ -581,6 +581,9 @@ def test_the_pyrevit_button_is_thin_and_opens_detached_with_worksets_open():
     first_run = src.split("def main():")[1].split("from vop_interwoven.batch_capture")[0]
     assert "if _settings_error:" in first_run
     assert "if not os.path.isfile(_SETTINGS_PATH):" in first_run
+    # An extension copied out of the checkout derives the wrong repo root:
+    # said by name before the import that would fail (Greg, 2026-10-13).
+    assert 'os.path.join(REPO_ROOT, "vop_interwoven", "batch_capture.py")' in first_run
     import ast
     ast.parse(src)
     # pyRevit disables a button with no document open unless its bundle says

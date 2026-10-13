@@ -9,8 +9,11 @@ The loop is the Fingerprint extension's; what it runs is the exporter's
 
 1. pyRevit (CPython 3 engine): Settings -> Custom Extension Directories ->
    add `<checkout>\pyrevit`, reload. The tab **VOP** appears.
-2. `batch_settings.json` beside `script.py`: set `plan_json`. `repo_root`
-   may stay blank when `pyrevit/` sits inside the checkout (it is derived).
+2. `batch_settings.json` beside `script.py`: set `plan_json`, and set
+   `repo_root` to the checkout (the folder holding `vop_interwoven`) unless
+   pyRevit loads the extension from the checkout's own `pyrevit/` folder,
+   where it is derived. An extension COPIED into pyRevit's extensions
+   folder needs it set; the button says so if it is not.
 
 ## Run
 

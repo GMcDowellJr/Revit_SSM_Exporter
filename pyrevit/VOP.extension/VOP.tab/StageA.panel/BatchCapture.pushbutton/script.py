@@ -228,6 +228,15 @@ def main():
                             written, _SETTINGS_PATH))
         return
 
+    if not os.path.isfile(os.path.join(REPO_ROOT, "vop_interwoven", "batch_capture.py")):
+        # The extension copied out of the checkout derives the wrong root
+        # (Greg, 2026-10-13: ImportError at the import below).
+        TaskDialog.Show("VOP Batch Capture -- repo_root",
+                        "vop_interwoven was not found under\n\n{0}\n\nSet repo_root in\n{1}\n"
+                        "to the Revit_SSM_Exporter checkout (the folder holding vop_interwoven). "
+                        "It is derived from this script's location only when pyrevit/ sits "
+                        "inside the checkout.".format(REPO_ROOT, _SETTINGS_PATH))
+        return
     from vop_interwoven.batch_capture import load_plan, pending_jobs, run_batch  # noqa: E402
 
     plan = load_plan(_settings["plan_json"])
