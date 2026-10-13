@@ -277,6 +277,13 @@ class StreamingExporter:
             from vop_interwoven.recapture import RecaptureRefused, load_run_meta
             if not self.stage_a:
                 raise RecaptureRefused("a recapture is a Stage A capture; Stage A is off")
+            if not getattr(cfg, "color_id_buffer_registered_capture", True):
+                # The frame-B fallback neither places its ticks by the crop
+                # loop nor stamps the sidecars; a recapture through it would
+                # reproduce the failure and erase the old provenance (Codex,
+                # PR #236).
+                raise RecaptureRefused("a recapture is a REGISTERED capture; "
+                                       "color_id_buffer_registered_capture is off")
             self.run_meta = load_run_meta(output_dir)
             if self.run_meta.get("run_id") != self.run_id:
                 raise RecaptureRefused("{0} holds run {1!r}, not {2!r}".format(
@@ -808,6 +815,24 @@ class StreamingExporter:
         except (TypeError, ValueError):
             return v
 
+    def _merge_recapture_rows(self):
+        """The recapture's rows into the run's views_core, by (RunId, ViewId);
+        the rows file is closed first and removed after."""
+        if not getattr(self, "_recapture_csv_path", None):
+            return
+        if self.csv_core_file and not self.csv_core_file.closed:
+            self.csv_core_file.close()
+        import csv as _csv
+        from vop_interwoven.recapture import merge_views_core_rows, row_refused
+        with open(self._recapture_csv_path, newline="", encoding="utf-8") as handle:
+            reader = _csv.DictReader(handle)
+            rows, header = list(reader), list(reader.fieldnames or [])
+        # A view the capture refused keeps its old row (its files are the
+        # old ones too); the refusal is in run_meta's recaptures.
+        rows = [r for r in rows if not row_refused(r)]
+        self.recapture_rows_merged = merge_views_core_rows(self.core_csv_path, rows, header)
+        os.remove(self._recapture_csv_path)
+
     def _backfill_missing_outcomes(self):
         """Every requested view that reported nothing gets a failed outcome:
         a views_core row, a summary and a views_failed count. A recapture
@@ -844,25 +869,17 @@ class StreamingExporter:
                 from vop_interwoven.recapture import merge_recapture_into_run_meta
                 merge_recapture_into_run_meta(self.run_meta, self.recapture,
                                               self.view_summaries)
+                # The views_core merge FIRST, run_meta after: a merge that
+                # fails (a malformed or locked CSV) must not leave a run_meta
+                # that records outcomes the CSV does not (Codex, PR #236).
+                self._merge_recapture_rows()
             else:
                 finalize_run_meta(self.run_meta, self.view_summaries)
             self.run_meta_path = write_run_meta(self.run_meta, self.output_dir)
 
         # Close CSV files
-        if self.csv_core_file:
+        if self.csv_core_file and not self.csv_core_file.closed:
             self.csv_core_file.close()
-        if getattr(self, "_recapture_csv_path", None):
-            # The recapture's rows into the run's views_core, by (RunId, ViewId).
-            import csv as _csv
-            from vop_interwoven.recapture import merge_views_core_rows, row_refused
-            with open(self._recapture_csv_path, newline="", encoding="utf-8") as handle:
-                reader = _csv.DictReader(handle)
-                rows, header = list(reader), list(reader.fieldnames or [])
-            # A view the capture refused keeps its old row (its files are
-            # the old ones too); the refusal is in run_meta's recaptures.
-            rows = [r for r in rows if not row_refused(r)]
-            self.recapture_rows_merged = merge_views_core_rows(self.core_csv_path, rows, header)
-            os.remove(self._recapture_csv_path)
         if self.csv_vop_file:
             self.csv_vop_file.close()
         if getattr(self, 'csv_occlusion_file', None):

@@ -808,20 +808,35 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ticks stay on the box, as shipped.
         loop_uv = None
         crop_shape = {"state": "not_read", "reason": "no crop region"}
-        if has_crop_region and reference is not None:
+        in_recapture = getattr(cfg, "_recapture_record", None) is not None
+        if has_crop_region and reference is not None and source != "authored_crop":
+            # A crop-INACTIVE view: the reference is crop A, which both passes
+            # activate as the crop box, so the box IS what the export renders.
+            # The view's stored loop is not (Codex, PR #236): it is not read.
+            crop_shape = {"state": "not_read",
+                          "reason": "the reference is {0}, not the authored crop; the "
+                                    "stored loop is not what the export renders".format(source)}
+        elif has_crop_region and reference is not None:
             basis_ = getattr(raster, "view_basis", None)
             crop_shape = (crop_shape_state(view, basis_) if basis_ is not None else
                           {"state": "unavailable", "reason": "no view basis to project the loop"})
+            unverified = None
             if crop_shape["state"] != "value":
-                _fault("crop_shape_unverified",
-                       "the crop region's loop could not be read, so the ticks are "
-                       "placed on the crop box and may lie outside what the view "
-                       "renders: {0}".format(crop_shape.get("reason")))
+                unverified = ("the crop region's loop could not be read, so the ticks are "
+                              "placed on the crop box and may lie outside what the view "
+                              "renders: {0}".format(crop_shape.get("reason")))
             elif crop_shape["loop_count"] != 1:
                 crop_shape["reference"] = "crop_box"
-                _fault("crop_shape_unverified",
-                       "the crop region has {0} loops; the ticks are placed on the crop "
-                       "box".format(crop_shape["loop_count"]))
+                unverified = ("the crop region has {0} loops; the ticks are placed on the "
+                              "crop box".format(crop_shape["loop_count"]))
+            if unverified is not None:
+                _fault("crop_shape_unverified", unverified)
+                if in_recapture:
+                    # A recapture cannot show its ticks inside what the view
+                    # renders: it must not replace the old capture (Codex,
+                    # PR #236). Nothing has been exported yet.
+                    raise RecaptureRefused("recapture refused: the crop loop could not be "
+                                           "verified ({0})".format(unverified))
             else:
                 from .color_id_buffer import CROP_READ_BACK_TOLERANCE_PX
                 loop_uv = crop_shape["loops_uv"][0]
@@ -856,7 +871,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                        "render: {2}".format(len(record["ticks_outside_crop_loop"]),
                                             len(layout.get("segments") or []),
                                             ", ".join(record["ticks_outside_crop_loop"])))
-                if getattr(cfg, "_recapture_record", None) is not None:
+                if in_recapture:
                     # A recapture must not replace a capture with one that
                     # fails the same way: stop before anything is exported,
                     # and the view's files stay as they were.

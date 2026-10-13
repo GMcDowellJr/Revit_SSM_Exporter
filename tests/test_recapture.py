@@ -336,6 +336,10 @@ def test_an_exporter_recapture_is_refused_outside_its_run(tmp_path):
         _recapture_exporter(tmp_path, "20991231T000000", cfg)
     with pytest.raises(RecaptureRefused, match="Stage A is off"):
         _recapture_exporter(tmp_path, run_id, Config(enable_color_id_buffer_stage_a=False))
+    # Codex, PR #236: the frame-B fallback would reproduce the failure.
+    with pytest.raises(RecaptureRefused, match="REGISTERED capture"):
+        _recapture_exporter(tmp_path, run_id, Config(enable_color_id_buffer_stage_a=True,
+                                                     color_id_buffer_registered_capture=False))
     other = tmp_path / "empty"
     other.mkdir()
     with pytest.raises(RecaptureRefused, match="holds no run_meta.json"):
@@ -569,3 +573,29 @@ def test_a_recaptured_views_sidecars_carry_the_recapture_record_in_the_FILES(tmp
     assert out["registration"]["ticks_outside_crop_loop"] == []
     for path in (out["sidecar_path"], out["annotation_pass"]["sidecar_path"]):
         assert cap._sidecar(path)["registration_marks"]["recapture"] == RECORD
+
+
+def test_a_views_core_merge_that_fails_leaves_run_meta_untouched(tmp_path):
+    """Codex, PR #236: run_meta is written AFTER the CSV merge, so a merge that
+    fails cannot leave a run_meta recording outcomes the CSV does not."""
+    run_id, cfg = _original_run(tmp_path)
+    core = _core(tmp_path)
+    meta_before = (tmp_path / "run_meta.json").read_bytes()
+    exp, _record = _recapture_exporter(tmp_path, run_id, cfg)
+    exp.on_view_complete(dict(_summary(7), view=vc._view(7, "Sec")))
+    # The run's CSV becomes unreadable as a file before finalize.
+    core_text = core.read_text(encoding="utf-8")
+    core.unlink()
+    core.mkdir()
+    with pytest.raises(OSError):
+        exp.finalize()
+    assert (tmp_path / "run_meta.json").read_bytes() == meta_before
+    assert "recaptures" not in json.loads(meta_before)
+    # Control: with the CSV back, the same recapture finalizes and both change.
+    core.rmdir()
+    core.write_text(core_text, encoding="utf-8")
+    exp2, _record = _recapture_exporter(tmp_path, run_id, cfg)
+    exp2.on_view_complete(dict(_summary(7), view=vc._view(7, "Sec")))
+    exp2.finalize()
+    assert "recaptures" in json.loads((tmp_path / "run_meta.json").read_text())
+    assert vc._rows(str(core))[1]["CaptureStatus"] == "success"

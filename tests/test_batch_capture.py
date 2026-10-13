@@ -173,6 +173,46 @@ def test_plan_modes_and_the_skip_captured_switch():
         build_plan([], "E", mode="later")
 
 
+def test_two_archives_sharing_a_title_get_no_recapture_job_unless_the_run_names_its_file():
+    """Codex, PR #236: a title is not a durable identity."""
+    two = [dict(relative_path="P1/A.rvt", full_path="C:\\ACC\\P1\\A.rvt", filename="A.rvt",
+                project_folder="P1", stem="A", display_name="P1/A.rvt"),
+           dict(relative_path="P2/A.rvt", full_path="C:\\ACC\\P2\\A.rvt", filename="A.rvt",
+                project_folder="P2", stem="A", display_name="P2/A.rvt")]
+    runs = [{"run_dir": "E/r", "run_id": "r", "recapture": [1]}]
+    # The run records no source file: ambiguous, no job for either, listed.
+    plan = build_plan(two, "E", recapture_runs=runs, mode="recapture",
+                      run_index=[{"run_dir": "E/r", "doc_title": "A", "finalized": True}])
+    assert plan["jobs"] == []
+    assert [s["key"] for s in plan["skipped"]] == ["P1/A.rvt", "P2/A.rvt"]
+    assert "ambiguous: 2 manifest files share the title 'A'" in plan["skipped"][0]["reason"]
+    assert plan["unmatched_runs"][0]["run_id"] == "r"
+    # The run records the file it was captured from: that file's job only.
+    plan = build_plan(two, "E", recapture_runs=runs, mode="recapture",
+                      run_index=[{"run_dir": "E/r", "doc_title": "A", "finalized": True,
+                                  "source_path": "c:/acc/p2/a.rvt"}])
+    assert [(j["key"], j["kind"]) for j in plan["jobs"]] == [("P2/A.rvt", "recapture")]
+    assert plan["unmatched_runs"] == []
+    # A recorded file that is neither manifest file matches nothing.
+    plan = build_plan(two, "E", recapture_runs=runs, mode="recapture",
+                      run_index=[{"run_dir": "E/r", "doc_title": "A", "finalized": True,
+                                  "source_path": "D:\\elsewhere\\A.rvt"}])
+    assert plan["jobs"] == [] and plan["unmatched_runs"][0]["run_id"] == "r"
+
+
+def test_the_index_reads_the_source_file_from_opened_from_then_a_local_doc_path():
+    assert bc.source_path_of({"opened_from": {"full_path": "C:\\x\\A.rvt"},
+                              "doc_path": {"state": "value", "value": "Autodesk Docs://P/A.rvt"}
+                              }) == "C:\\x\\A.rvt"
+    assert bc.source_path_of({"doc_path": {"state": "value",
+                                           "value": "Autodesk Docs://P/A.rvt"}}) is None
+    assert bc.source_path_of({"doc_path": {"state": "value", "value": "C:\\models\\A.rvt"}}
+                             ) == "C:\\models\\A.rvt"
+    assert bc.source_path_of({"doc_path": {"state": "unavailable"}}) is None
+    assert bc.same_file("C:\\ACC\\P1\\A.rvt", "c:/acc/p1/a.rvt")
+    assert not bc.same_file("C:\\ACC\\P1\\A.rvt", "C:\\ACC\\P2\\A.rvt")
+
+
 def test_a_run_in_the_lists_but_not_in_the_index_matches_nothing():
     plan = build_plan(_entries("A"), "E", recapture_runs=[{"run_dir": "E/r", "recapture": [1]}],
                       run_index=[])
@@ -205,9 +245,18 @@ def test_a_capture_job_is_done_when_a_finalized_run_under_its_output_dir_was_cap
     assert done and detail.endswith("20261009T000000")
 
 
-def test_a_recapture_job_is_done_when_every_run_lists_a_covering_recapture(tmp_path):
-    a = _run_dir(tmp_path, "A", run_id="r1", recaptures=[{"view_ids": [1, 2, 3]}])
-    b = _run_dir(tmp_path, "A", run_id="r2", date="2025-06-13", recaptures=[{"view_ids": [1]}])
+def _rec(ids, failed=(), refused=()):
+    """A run_meta recaptures[] entry: asked for ``ids``; every id a success
+    unless listed failed or refused."""
+    return {"view_ids": list(ids),
+            "outcomes": dict((str(v), "failed" if v in failed or v in refused else "success")
+                             for v in ids),
+            "refused_view_ids": list(refused)}
+
+
+def test_a_recapture_job_is_done_when_every_run_recaptured_every_id_successfully(tmp_path):
+    a = _run_dir(tmp_path, "A", run_id="r1", recaptures=[_rec([1, 2, 3])])
+    b = _run_dir(tmp_path, "A", run_id="r2", date="2025-06-13", recaptures=[_rec([1])])
     job = {"kind": "recapture", "stem": "A",
            "recapture": [{"run_dir": a, "view_ids": [1, 2]}, {"run_dir": b, "view_ids": [1, 2]}]}
     assert job_done(job) == (False, None)                       # r2 covers 1 only
@@ -217,8 +266,23 @@ def test_a_recapture_job_is_done_when_every_run_lists_a_covering_recapture(tmp_p
     assert job_done(job) == (False, None)
 
 
+def test_a_failed_or_refused_recapture_stays_pending(tmp_path):
+    """Codex, PR #236: an entry's view_ids lists what was ASKED; a view whose
+    recapture failed or was refused kept its old files and must be retried."""
+    failed = _run_dir(tmp_path / "f", "A", run_id="r1", recaptures=[_rec([1, 2], failed=(2,))])
+    refused = _run_dir(tmp_path / "r", "A", run_id="r2", recaptures=[_rec([1, 2], refused=(2,))])
+    asked_only = _run_dir(tmp_path / "o", "A", run_id="r3", recaptures=[{"view_ids": [1, 2]}])
+    later = _run_dir(tmp_path / "l", "A", run_id="r4",
+                     recaptures=[_rec([1, 2], failed=(2,)), _rec([2])])
+    for run_dir in (failed, refused, asked_only):
+        assert job_done({"kind": "recapture", "stem": "A",
+                         "recapture": [{"run_dir": run_dir, "view_ids": [1, 2]}]}) == (False, None)
+    assert job_done({"kind": "recapture", "stem": "A",
+                     "recapture": [{"run_dir": later, "view_ids": [1, 2]}]})[0] is True
+
+
 def test_pending_jobs_splits_and_limits(tmp_path):
-    a = _run_dir(tmp_path, "A", recaptures=[{"view_ids": [1]}])
+    a = _run_dir(tmp_path, "A", recaptures=[_rec([1])])
     plan = {"jobs": [{"kind": "recapture", "key": "a", "stem": "A",
                       "recapture": [{"run_dir": a, "view_ids": [1]}]},
                      {"kind": "capture", "key": "b", "stem": "B", "output_dir": str(tmp_path / "B")},
@@ -299,7 +363,7 @@ def _harness(tmp_path, fail_on=None, no_doc_for=None):
         dirs = []
         for target in job["recapture"]:
             meta = json.loads(Path(target["run_dir"], "run_meta.json").read_text())
-            meta.setdefault("recaptures", []).append({"view_ids": target["view_ids"]})
+            meta.setdefault("recaptures", []).append(_rec(target["view_ids"]))
             Path(target["run_dir"], "run_meta.json").write_text(json.dumps(meta))
             dirs.append(target["run_dir"])
         return {"run_dirs": dirs, "refused": [], "views_processed": 1}

@@ -169,12 +169,41 @@ def index_runs(root, max_depth=4):
             meta = _load_json(path)
             runs.append({"run_dir": dirpath, "run_id": meta.get("run_id"),
                          "date": meta.get("date"), "doc_title": _value(meta.get("doc_title")),
+                         "source_path": source_path_of(meta),
                          "finalized": meta.get("finalized") is True,
                          "recaptures": meta.get("recaptures") or []})
         except (IOError, OSError, ValueError, AttributeError) as ex:
             runs.append({"run_dir": dirpath, "error": "{0}: {1}".format(type(ex).__name__, ex)})
     runs.sort(key=lambda r: r["run_dir"])
     return runs
+
+
+CLOUD_PATH_PREFIXES = ("Autodesk Docs://", "BIM 360://", "A360://")
+
+
+def source_path_of(meta):
+    """The LOCAL file a run was captured from, when its record says: the
+    batch's ``opened_from.full_path``, else ``doc_path`` unless that is a
+    cloud path (``Autodesk Docs://...``, which names no local file). None
+    when the run records no local path; a title match then stands alone."""
+    opened = meta.get("opened_from") or {}
+    if opened.get("full_path"):
+        return str(opened["full_path"])
+    path = _value(meta.get("doc_path"))
+    if not path or str(path).startswith(CLOUD_PATH_PREFIXES):
+        return None
+    return str(path)
+
+
+def same_file(a, b):
+    """Two local paths name one file (case and separators folded)."""
+    if not a or not b:
+        return False
+
+    def norm(p):
+        # Windows paths: case and separator folded on every platform.
+        return os.path.normpath(str(p).replace("\\", "/")).lower()
+    return norm(a) == norm(b)
 
 
 def run_meta_of(run_dir):
@@ -208,10 +237,17 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
     run_index = list(run_index or [])
     by_dir = dict((os.path.normpath(r["run_dir"]), r) for r in run_index if "run_dir" in r)
     titled = [r for r in run_index if r.get("doc_title")]
+    # A title is not a durable identity: two archives in different projects
+    # may share a file name (Codex, PR #236). A run that records the local
+    # file it was captured from is matched on that file; a run that does not
+    # is matched on its title ONLY when exactly one manifest file carries it.
+    stems = {}
+    for entry in entries:
+        stems[entry["stem"]] = stems.get(entry["stem"], 0) + 1
     jobs, skipped, matched_dirs = [], [], set()
     for entry in entries:
         stem = entry["stem"]
-        recaptures = []
+        recaptures, ambiguous = [], []
         for run in recapture_runs or []:
             ids = [int(v) for v in (run.get("recapture") or [])]
             if not ids:
@@ -220,11 +256,24 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
             title = indexed.get("doc_title") if indexed else None
             if title is None or not title_matches(stem, title):
                 continue
+            recorded = indexed.get("source_path")
+            if recorded:
+                if not same_file(recorded, entry["full_path"]):
+                    continue           # the run names another file of this title
+            elif stems[stem] > 1:
+                ambiguous.append(run.get("run_id"))
+                continue
             matched_dirs.add(os.path.normpath(run["run_dir"]))
             recaptures.append({"run_dir": run["run_dir"], "run_id": run.get("run_id"),
                                "doc_title": title, "view_ids": ids})
         job = {"key": entry["relative_path"], "full_path": entry["full_path"],
                "display_name": entry["display_name"], "stem": stem}
+        if ambiguous and mode in ("recapture", "both"):
+            skipped.append({"key": entry["relative_path"],
+                            "reason": "ambiguous: {0} manifest files share the title {1!r} and "
+                                      "run(s) {2} record no source file".format(
+                                          stems[stem], stem, ambiguous)})
+            continue
         if recaptures and mode in ("recapture", "both"):
             job.update(kind="recapture", recapture=recaptures)
             jobs.append(job)
@@ -285,10 +334,16 @@ def job_done(job):
         if meta is None:
             pending.append(target["run_dir"])
             continue
-        wanted = set(int(v) for v in target["view_ids"])
-        covered = any(wanted <= set(int(v) for v in entry.get("view_ids") or [])
-                      for entry in meta.get("recaptures") or [])
-        if not covered:
+        # Covered by SUCCESSFUL outcomes only: a view whose recapture failed
+        # or was refused keeps its old files and stays pending (Codex, PR
+        # #236). An entry's view_ids lists what was asked, not what was done.
+        succeeded = set()
+        for entry in meta.get("recaptures") or []:
+            refused = set(int(v) for v in entry.get("refused_view_ids") or [])
+            for vid, status in (entry.get("outcomes") or {}).items():
+                if status == "success" and int(vid) not in refused:
+                    succeeded.add(int(vid))
+        if not set(int(v) for v in target["view_ids"]) <= succeeded:
             pending.append(target["run_dir"])
     if pending:
         return False, None

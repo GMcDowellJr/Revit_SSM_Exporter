@@ -9,6 +9,8 @@ import math
 
 import pytest
 
+import vop_interwoven.stage_a_registration as registration
+
 from vop_interwoven.stage_a_registration import (
     classify_crop_loop, largest_axis_aligned_rectangle, mark_reference_from_loop,
     point_in_loop, registration_mark_segments, ticks_outside_loop,
@@ -105,3 +107,38 @@ def test_at_every_measured_angle_the_inscribed_ticks_render(theta):
     layout = registration_mark_segments(ref, FPP_FT)
     assert layout["state"] == "value"
     assert ticks_outside_loop(layout, loop) == []
+
+
+# --- Codex, PR #236: concave loops and large loops -------------------------------------
+
+def test_a_tick_spanning_the_arms_of_a_u_shaped_loop_is_outside():
+    """Both endpoints inside, the boundary between them: Revit clips the
+    middle. The endpoint test alone called it inside."""
+    u_loop = [(0, 0), (30, 0), (30, 20), (20, 20), (20, 5), (10, 5), (10, 20), (0, 20)]
+    layout = {"state": "value", "segments": [
+        {"key": "spans_the_gap", "uv0": (5, 10), "uv1": (25, 10)},
+        {"key": "in_left_arm", "uv0": (2, 10), "uv1": (8, 10)},
+        {"key": "along_the_base", "uv0": (5, 2), "uv1": (25, 2)},
+    ]}
+    assert registration.ticks_outside_loop(layout, u_loop) == ["spans_the_gap"]
+    assert registration.segment_crosses_loop(u_loop, (5, 10), (25, 10))
+    assert not registration.segment_crosses_loop(u_loop, (5, 2), (25, 2))
+    # Touching an edge at its endpoint is not a crossing.
+    assert not registration.segment_crosses_loop(u_loop, (5, 2), (10, 5))
+
+
+def test_a_many_vertex_loop_is_searched_in_bounded_time():
+    import math
+    import time
+    loop = [(50 + 40 * math.cos(2 * math.pi * i / 100), 40 + 30 * math.sin(2 * math.pi * i / 100))
+            for i in range(100)]
+    t0 = time.time()
+    rect = registration.largest_axis_aligned_rectangle(loop)
+    elapsed = time.time() - t0
+    assert rect is not None and elapsed < 2.0, elapsed
+    u0, v0, u1, v1 = rect
+    assert 10 < u0 < u1 < 90 and 10 < v0 < v1 < 70
+    for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1)):
+        assert registration.point_in_loop(loop, u, v)
+    # Control: a small loop still offers its own vertex coordinates.
+    assert len(loop) > registration.LOOP_VERTEX_CANDIDATE_MAX

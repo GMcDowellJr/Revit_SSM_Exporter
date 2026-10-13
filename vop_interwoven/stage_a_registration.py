@@ -995,6 +995,12 @@ def tick_line_style(doc, view, curve, diag=None, view_id=None):
 # 3579 px at 12.91 deg has a cross-axis extent of 800 px.
 LOOP_RECTANGLE_GRID = 16
 LOOP_BOUNDARY_SAMPLE_FRACTION = 0.01
+# The loop's own vertex coordinates join the candidate set only for a loop
+# this small: with V vertices the candidate rectangles number O(V^4), and a
+# 30-vertex loop took 8 s (Codex, PR #236). Beyond it the grid alone is
+# searched; the ticks have their own inset, so a rectangle a grid step short
+# of the optimum costs nothing.
+LOOP_VERTEX_CANDIDATE_MAX = 12
 
 
 def point_in_loop(loop_uv, u, v):
@@ -1105,17 +1111,21 @@ def largest_axis_aligned_rectangle(loop_uv, grid=LOOP_RECTANGLE_GRID,
     bu0, bv0, bu1, bv1 = loop_bbox_uv(pts)
     if bu1 <= bu0 or bv1 <= bv0:
         return None
-    us = sorted(set([p[0] for p in pts] + [bu0 + (bu1 - bu0) * i / (grid + 1)
+    own = pts if len(pts) <= LOOP_VERTEX_CANDIDATE_MAX else []
+    us = sorted(set([p[0] for p in own] + [bu0 + (bu1 - bu0) * i / (grid + 1)
                                            for i in range(1, grid + 1)]))
-    vs = sorted(set([p[1] for p in pts] + [bv0 + (bv1 - bv0) * i / (grid + 1)
+    vs = sorted(set([p[1] for p in own] + [bv0 + (bv1 - bv0) * i / (grid + 1)
                                            for i in range(1, grid + 1)]))
+    # Each candidate point is tested ONCE (|us| x |vs| tests of O(V)), and
+    # the O(|us|^2 |vs|^2) rectangles are corner lookups.
+    inside = dict(((u, v), point_in_loop(pts, u, v)) for u in us for v in vs)
     candidates = []
     for i, u0 in enumerate(us):
         for u1 in us[i + 1:]:
             for j, v0 in enumerate(vs):
                 for v1 in vs[j + 1:]:
-                    if (point_in_loop(pts, u0, v0) and point_in_loop(pts, u1, v0)
-                            and point_in_loop(pts, u1, v1) and point_in_loop(pts, u0, v1)):
+                    if (inside[(u0, v0)] and inside[(u1, v0)]
+                            and inside[(u1, v1)] and inside[(u0, v1)]):
                         candidates.append(((u1 - u0) * (v1 - v0), u0, v0, u1, v1))
     candidates.sort(reverse=True)
     for _area, u0, v0, u1, v1 in candidates:
@@ -1151,14 +1161,44 @@ def mark_reference_from_loop(loop_uv, crop_uv, tolerance_ft):
     return rect, record
 
 
+def _orient(ax, ay, bx, by, cx, cy):
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+def segment_crosses_loop(loop_uv, p, q):
+    """PURE. Whether the open segment p-q PROPERLY crosses any edge of the
+    loop (the two straddle each other strictly). A concave loop can hold
+    both endpoints of a tick while its boundary cuts the tick between them
+    (Codex, PR #236: a tick spanning the arms of a U); Revit clips that
+    part. Touching an edge at a point is not a crossing."""
+    px, py = float(p[0]), float(p[1])
+    qx, qy = float(q[0]), float(q[1])
+    n = len(loop_uv)
+    for i in range(n):
+        ax, ay = float(loop_uv[i][0]), float(loop_uv[i][1])
+        bx, by = float(loop_uv[(i + 1) % n][0]), float(loop_uv[(i + 1) % n][1])
+        d1 = _orient(px, py, qx, qy, ax, ay)
+        d2 = _orient(px, py, qx, qy, bx, by)
+        d3 = _orient(ax, ay, bx, by, px, py)
+        d4 = _orient(ax, ay, bx, by, qx, qy)
+        if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)) and d1 * d2 < 0 and d3 * d4 < 0:
+            return True
+    return False
+
+
 def ticks_outside_loop(layout, loop_uv):
-    """PURE. The keys of the layout's ticks that do not lie inside the loop
-    with BOTH endpoints. Empty for a layout that is not a value."""
+    """PURE. The keys of the layout's ticks that do not lie inside the loop:
+    an endpoint outside, or the segment crossing the loop's boundary between
+    its endpoints. Empty for a layout that is not a value."""
     if (layout or {}).get("state") != "value" or not loop_uv:
         return []
-    return [seg["key"] for seg in layout["segments"]
-            if not all(point_in_loop(loop_uv, float(end[0]), float(end[1]))
-                       for end in (seg["uv0"], seg["uv1"]))]
+    out = []
+    for seg in layout["segments"]:
+        ends = (seg["uv0"], seg["uv1"])
+        if (not all(point_in_loop(loop_uv, float(end[0]), float(end[1])) for end in ends)
+                or segment_crosses_loop(loop_uv, ends[0], ends[1])):
+            out.append(seg["key"])
+    return out
 
 
 # FRAME BOUNDS (run 1005_0947): a view with no crop region (a drafting view,

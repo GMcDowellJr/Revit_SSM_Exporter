@@ -823,3 +823,38 @@ def test_a_loop_that_will_not_read_is_a_fault_and_the_ticks_stay_on_the_box(tmp_
     assert reg["marks"]["layout"]["reference_uv"] == [20.0, 15.0, 80.0, 60.0]
     assert [f["fault"] for f in reg["faults"]] == ["crop_shape_unverified"]
     assert "ticks_outside_crop_loop" not in reg
+
+
+def test_a_crop_inactive_views_stored_loop_is_not_read_and_the_ticks_stay_on_crop_A(tmp_path):
+    """Codex, PR #236: with the crop inactive the reference is crop A, which
+    both passes activate as the box; the view's stored (here rotated) loop
+    is not what the export renders, so it must not move the ticks."""
+    out, view, doc, exports, diag = _run(
+        tmp_path, crop_active=False, view_setup=lambda v: _rotated_loop(v, 12.91))
+    reg = out["registration"]
+    assert reg["mark_reference_source"] == "model_crop_a"
+    assert reg["crop_shape"]["state"] == "not_read"
+    assert "model_crop_a" in reg["crop_shape"]["reason"]
+    assert "ticks_outside_crop_loop" not in reg
+    assert not [f for f in reg["faults"] if f["fault"].startswith("crop_shape")]
+    assert reg["marks"]["created_count"] == 12 and out["success"] is True
+
+
+def test_a_recapture_is_refused_when_the_loop_cannot_be_verified(tmp_path):
+    """Codex, PR #236: the refusal guard needs the loop; without it the old
+    capture must not be replaced."""
+    from vop_interwoven import recapture as rc
+
+    def _setup(view):
+        view._manager.GetCropShape = lambda: (_ for _ in ()).throw(RuntimeError("no shape (fake)"))
+
+    def _in_recapture(cfg):
+        cfg._recapture_record = {"schema": rc.RECAPTURE_SCHEMA, "captured_at": "x",
+                                 "exporter_version": "1", "reason": rc.RECAPTURE_REASON,
+                                 "view_ids": [VIEW_ID], "replaces_exporter_version": "0"}
+    out, view, doc, exports, diag = _run(tmp_path, view_setup=_setup, cfg_setup=_in_recapture)
+    assert out["success"] is False and out["failure_reason"] == "recapture_refused"
+    assert exports == [] and out["sidecar_path"] is None
+    names = [f["fault"] for f in out["registration"]["faults"]]
+    assert "crop_shape_unverified" in names and "recapture_refused" in names
+    assert out["registration"]["restore"]["rolled_back"] is True
