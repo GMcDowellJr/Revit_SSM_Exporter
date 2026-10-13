@@ -1,6 +1,6 @@
 {
   "csv": "census_registration.csv",
-  "csv_sha256": "3e004346a84355a487d1b6c6c3a5be4b8566747dfad4d847f106983789573a58",
+  "csv_sha256": "23ef31eb98bdd59a6f5cd1b5d2a267d9095e7ba834f4f1b9c6ef654107baf48a",
   "denominator": 157,
   "denominator_rule": "one row per model sidecar stage_a_grid.model_sidecars finds in each run",
   "partition_rule": "registration_state counts by each column's value, over the rows whose provenance is this_run; a blank key is a row the column could not be filled for (see its notes). No model is fitted.",
@@ -238,42 +238,32 @@
     },
     "ticks_inside_polygon_predicted": {
       "": {
-        "registered": 90
+        "refused": 13,
+        "registered": 92
       },
       "0": {
-        "refused": 39,
+        "refused": 37,
         "registered": 2
       },
       "1": {
-        "refused": 4,
+        "refused": 2,
         "registered": 1
       },
       "12": {
-        "refused": 2,
-        "registered": 8
-      },
-      "4": {
-        "refused": 6
-      },
-      "5": {
-        "refused": 1
-      },
-      "6": {
-        "refused": 1
-      },
-      "8": {
-        "registered": 1
+        "refused": 1,
+        "registered": 7
       }
     },
     "ticks_predicted_vs_found_model": {
       "": {
-        "registered": 90
+        "refused": 13,
+        "registered": 92
       },
       "tp=0,fp=0,fn=0,tn=12": {
-        "refused": 36
+        "refused": 35
       },
       "tp=0,fp=0,fn=1,tn=11": {
-        "refused": 2
+        "refused": 1
       },
       "tp=0,fp=0,fn=12,tn=0": {
         "registered": 2
@@ -281,36 +271,18 @@
       "tp=0,fp=0,fn=2,tn=10": {
         "refused": 1
       },
-      "tp=0,fp=1,fn=0,tn=11": {
-        "refused": 1
-      },
       "tp=0,fp=1,fn=1,tn=10": {
         "refused": 1
       },
-      "tp=0,fp=12,fn=0,tn=0": {
-        "refused": 1
-      },
-      "tp=0,fp=4,fn=0,tn=8": {
-        "refused": 6
-      },
-      "tp=0,fp=5,fn=0,tn=7": {
-        "refused": 1
-      },
       "tp=1,fp=0,fn=0,tn=11": {
-        "refused": 2
+        "refused": 1
       },
       "tp=1,fp=0,fn=11,tn=0": {
         "registered": 1
       },
-      "tp=1,fp=5,fn=0,tn=6": {
-        "refused": 1
-      },
       "tp=12,fp=0,fn=0,tn=0": {
         "refused": 1,
-        "registered": 8
-      },
-      "tp=8,fp=0,fn=4,tn=0": {
-        "registered": 1
+        "registered": 7
       }
     },
     "view_type": {
@@ -367,5 +339,5 @@
     }
   ],
   "schema": "vop.stage_a.census_registration.v1",
-  "tool_version": "1.0.0"
+  "tool_version": "1.1.0"
 }

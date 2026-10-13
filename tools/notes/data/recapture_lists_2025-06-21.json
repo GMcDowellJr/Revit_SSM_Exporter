@@ -61,19 +61,11 @@
       "review": [
         929475
       ],
-      "run_dir": "/tmp/claude-0/-home-user-Revit-SSM-Exporter/e12044e7-4aea-5af5-a831-6a60e8273fc4/scratchpad/run0621_full/2025-06-21__20261008T093539",
-      "run_id": "20261008T093539"
-    },
-    {
-      "as_of_date": "2025-06-13",
-      "keep": 11,
-      "recapture": [],
-      "refused": null,
-      "review": [],
-      "run_dir": "/tmp/claude-0/-home-user-Revit-SSM-Exporter/e12044e7-4aea-5af5-a831-6a60e8273fc4/scratchpad/layout_0613_g2g4",
-      "run_id": "20261007T191817"
+      "run_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\KSRF\\Hops_Interior_AR\\2025-06-21__20261008T093539",
+      "run_id": "20261008T093539",
+      "scanned_dir": "/tmp/claude-0/-home-user-Revit-SSM-Exporter/e12044e7-4aea-5af5-a831-6a60e8273fc4/scratchpad/run0621_full/2025-06-21__20261008T093539"
     }
   ],
   "schema": "vop.stage_a.recapture_views.v1",
-  "tool_version": "1.0.0"
+  "tool_version": "1.1.0"
 }

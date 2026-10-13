@@ -100,7 +100,11 @@ from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
 from vop_interwoven.stage_a_registration import MARK_COLOUR  # noqa: E402
 
 SCHEMA = "vop.stage_a.census_registration.v1"
-TOOL_VERSION = "1.0.0"
+# 1.1.0 (2026-10-13): the rendered-region columns (content_tilt_*,
+# aabb_corner_white, ticks_inside_polygon_*, ticks_found_*,
+# ticks_predicted_vs_found_*) appended; the union, the corner whiteness and
+# the annotation confusion are measured only on a SHARED lattice.
+TOOL_VERSION = "1.1.0"
 CSV_NAME = "census_registration.csv"
 SUMMARY_NAME = "census_registration.summary.json"
 
@@ -307,8 +311,16 @@ def inscribed_polygon(width, height, tilt_deg, sign=1):
     th = math.radians(t)
     c, s = math.cos(th), math.sin(th)
     c2 = math.cos(2.0 * th)
+    # At 45 deg the inversion is singular (cos 2t = 0), and near it a
+    # non-square box has no inscribed rectangle at that tilt (a side comes
+    # out non-positive): no polygon, rather than one of 1e18 px (Codex, PR
+    # #236).
+    if abs(c2) < 1e-9:
+        return None
     w = (width * c - height * s) / c2
     h = (height * c - width * s) / c2
+    if w <= 0.0 or h <= 0.0:
+        return None
     cx, cy = width / 2.0, height / 2.0
     out = []
     for dx, dy in ((-w / 2.0, -h / 2.0), (w / 2.0, -h / 2.0), (w / 2.0, h / 2.0),
@@ -331,20 +343,31 @@ def point_in_polygon(poly, x, y):
 
 
 def rendered_polygon(nonwhite, tilt_deg):
-    """The rectangle inscribed in the image at ``tilt_deg``, its rotation
-    direction chosen as the one that holds more of the ink hull's vertices.
-    The whole image at tilt 0."""
+    """``(polygon, reason)``: the rectangle inscribed in the image at
+    ``tilt_deg``, its rotation direction the one that holds MORE of the ink
+    hull's vertices (the found ticks are never consulted); the whole image at
+    tilt 0. ``(None, reason)`` when the two directions hold the same count
+    (sparse or centred ink: the direction is unmeasured, not the first one)
+    or no rectangle exists at that tilt (Codex, PR #236)."""
     h, w = nonwhite.shape
     if not tilt_deg:
-        return [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
+        return [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))], "tilt 0"
     hull = _hull_points(nonwhite)
-    best = None
+    counts = {}
     for sign in (1, -1):
         poly = inscribed_polygon(w, h, tilt_deg, sign)
-        n = sum(1 for x, y in hull if point_in_polygon(poly, x, y))
-        if best is None or n > best[0]:
-            best = (n, poly)
-    return best[1]
+        if poly is None:
+            continue
+        counts[sign] = (sum(1 for x, y in hull if point_in_polygon(poly, x, y)), poly)
+    if not counts:
+        return None, "no rectangle is inscribed in a {0}x{1} image at {2} deg".format(
+            w, h, tilt_deg)
+    if len(counts) == 2 and counts[1][0] == counts[-1][0]:
+        return None, ("rotation direction ambiguous: both directions hold {0} of the ink "
+                      "hull's {1} vertices".format(counts[1][0], len(hull)))
+    sign = max(counts, key=lambda k: counts[k][0])
+    return counts[sign][1], "direction {0}: {1} of {2} hull vertices".format(
+        "+" if sign > 0 else "-", counts[sign][0], len(hull))
 
 
 def corner_windows_white(nonwhite, side=CORNER_WINDOW_PX):
@@ -395,13 +418,59 @@ def recorded_loop(model_sidecar):
     return loops[0] if loops and len(loops) == 1 and len(loops[0]) >= 3 else None
 
 
-def rendered_region_columns(masks, marks, crop, fits, loop_uv=None):
+def shared_lattice(model_sidecar, anno_sidecar, registered):
+    """``(shared, reason)``: whether the annotation TIFF is on the model
+    TIFF's pixel lattice. Equal dimensions do not show it (an active authored
+    crop's annotation export fits its own extent; Codex, PR #236). It is
+    SHOWN by a registration record whose annotation->model transform is the
+    identity, and ASSUMED when both sidecars' frames record the same crop
+    and the same achieved size; otherwise it is not shared."""
+    transform = (registered or {}).get("annotation_to_model_px")
+    if isinstance(transform, dict) and transform:
+        try:
+            identity = all(abs(float(transform.get(k, 1.0)) - 1.0) < 1e-9
+                           for k in ("scale_x", "scale_y")) and all(
+                abs(float(transform.get(k, 0.0))) < 1e-9 for k in ("offset_x", "offset_y"))
+        except (TypeError, ValueError):
+            identity = False
+        if identity:
+            return True, "registered: the annotation->model transform is the identity"
+        return False, "registered: the annotation->model transform is not the identity"
+    if anno_sidecar is None:
+        return False, "no annotation sidecar"
+    mf, af = frame_record(model_sidecar), frame_record(anno_sidecar)
+    same_size = (mf.get("actual_w") == af.get("actual_w") and
+                 mf.get("actual_h") == af.get("actual_h") and mf.get("actual_w") is not None)
+    # The REGISTERED capture (both sidecars carry registration_marks) renders
+    # both passes at crop A: the annotation pass keeps the authored crop,
+    # which IS crop A when active, and is given crop A when not (CLAUDE.md,
+    # Stage A capture). Its annotation frame records no crop of its own. The
+    # frame-B fallback widens the annotation crop and is the case the
+    # assumption must not cover.
+    registered_capture = (isinstance(model_sidecar.get("registration_marks"), dict)
+                          and isinstance(anno_sidecar.get("registration_marks"), dict))
+    if registered_capture and same_size:
+        return True, ("assumed: registered capture, both passes rendered at crop A, same "
+                      "achieved size")
+    mc, ac = mf.get("crop_uv"), af.get("crop_uv")
+    same_crop = (isinstance(mc, list) and isinstance(ac, list) and len(mc) == len(ac) == 4
+                 and all(abs(float(a) - float(b)) < 1e-6 for a, b in zip(mc, ac)))
+    if same_crop and same_size:
+        return True, "assumed: both frames record the same crop and the same achieved size"
+    return False, "unregistered, and the frames record {0}".format(
+        "different sizes" if not same_size else "different crops")
+
+
+def rendered_region_columns(masks, marks, crop, fits, loop_uv=None, lattice=None):
     """The tilt, corner, prediction and found columns, from the nonwhite
     masks of the captures read (``masks[which]``, ticks excluded), the
     recorded marks, crop A and the registration record's fits. With
     ``loop_uv`` (the capture's own crop loop, in view UV) the prediction
     uses that loop instead of a rectangle inscribed at the measured tilt
-    (``polygon_tilt_source`` "recorded_loop"). Returns ``(columns,
+    (``polygon_tilt_source`` "recorded_loop"). ``lattice`` is
+    ``shared_lattice()``'s answer; the union of the two captures' ink, the
+    corner whiteness ("no ink in EITHER capture") and the annotation
+    confusion are measured only when it says shared. Returns ``(columns,
     notes)``; every blank is explained in ``notes``."""
     cols, notes = {}, []
     model = masks.get("model")
@@ -413,16 +482,24 @@ def rendered_region_columns(masks, marks, crop, fits, loop_uv=None):
         notes.append("content_tilt_deg: the model TIFF holds no ink to measure")
     cols["content_tilt_deg"] = angle
     anno = masks.get("anno")
+    shared, why = lattice if lattice is not None else (False, "lattice not checked")
     union, source = model, "model"
-    if anno is not None and anno.shape == model.shape:
+    if anno is not None and anno.shape != model.shape:
+        notes.append("content_tilt_union_deg: the annotation TIFF is {0}x{1}, the model "
+                     "TIFF {2}x{3}; not on one lattice".format(
+                         anno.shape[1], anno.shape[0], model.shape[1], model.shape[0]))
+        anno = None
+    elif anno is not None and not shared:
+        notes.append("content_tilt_union_deg: the annotation TIFF is not shown to be on "
+                     "the model lattice ({0})".format(why))
+        anno = None
+    if anno is not None:
         union = model | anno
         cols["content_tilt_union_deg"], _fill = ink_rectangle(union)
         if cols["content_tilt_union_deg"] is not None:
             source = "union"
-    elif anno is not None:
-        notes.append("content_tilt_union_deg: the annotation TIFF is {0}x{1}, the model "
-                     "TIFF {2}x{3}; not on one lattice".format(
-                         anno.shape[1], anno.shape[0], model.shape[1], model.shape[0]))
+        if why.startswith("assumed"):
+            notes.append("content_tilt_union_deg: lattice {0}".format(why))
     tilt = cols.get("content_tilt_union_deg") if source == "union" else angle
     edge, support = edge_tilt(union)
     cols["content_tilt_edge_deg"], cols["content_tilt_edge_support"] = edge, support
@@ -431,9 +508,12 @@ def rendered_region_columns(masks, marks, crop, fits, loop_uv=None):
     if loop_uv is not None:
         source = "recorded_loop"
     cols["polygon_tilt_source"] = source if (tilt is not None or loop_uv is not None) else None
-    corners = corner_windows_white(union)
-    cols["aabb_corner_white"] = "|".join("{0}:{1}".format(k, "true" if v else "false")
-                                         for k, v in corners.items())
+    if anno is not None:
+        corners = corner_windows_white(union)
+        cols["aabb_corner_white"] = "|".join("{0}:{1}".format(k, "true" if v else "false")
+                                             for k, v in corners.items())
+    else:
+        notes.append("aabb_corner_white: needs both captures on one lattice")
     if tilt is None and loop_uv is None:
         notes.append("ticks_inside_polygon_predicted: no tilt measured and no loop recorded")
         return cols, notes
@@ -446,13 +526,20 @@ def rendered_region_columns(masks, marks, crop, fits, loop_uv=None):
         poly = [(mapping["a_u"] * u + mapping["b_u"], mapping["a_v"] * v + mapping["b_v"])
                 for u, v in loop_uv]
     else:
-        poly = rendered_polygon(union, tilt)
+        poly, reason = rendered_polygon(union, tilt)
+        if poly is None:
+            notes.append("ticks_inside_polygon_predicted: {0}".format(reason))
+            return cols, notes
     predicted = ticks_inside(poly, marks, mapping)
     keys = [m["key"] for m in marks]
     cols["ticks_inside_polygon_predicted"] = len(predicted)
     # A measured empty list is "none", never a blank (a blank is unmeasured).
     cols["ticks_inside_polygon_names"] = "|".join(predicted) or "none"
     for which in ("anno", "model"):
+        if which == "anno" and anno is None:
+            notes.append("ticks_predicted_vs_found_anno: the prediction is on the model "
+                         "lattice, which the annotation TIFF is not shown to share")
+            continue
         found = found_ticks((fits or {}).get(which), marks)
         if found is not None:
             cols["ticks_predicted_vs_found_" + which] = confusion(predicted, found, keys)
@@ -521,6 +608,14 @@ def image_columns(tiff_path, which, sidecar, excluded_ids, marks, crop):
     nonwhite = packed != 0xFFFFFF
     cols = {which + "_tick_px": int(np.count_nonzero(tick)),
             which + "_nonwhite_px": int(np.count_nonzero(nonwhite))}
+    # The ink handed to the rendered-region measures excludes the ticks'
+    # anti-aliased fringes too (registration_marks.mark_ink_mask, the fit's
+    # own attribution; Codex, PR #236): a fringe near the perimeter would
+    # widen the hull and un-white a corner. ``_tick_px`` stays the exact
+    # colour count.
+    payload, _refusal = rm.recorded_marks(sidecar)
+    if payload is not None:
+        tick = tick | rm.mark_ink_mask(rgb, payload, reserved_colours=rm.palette_colours(sidecar))
     if marks and mapping:
         white, off_image = tick_windows_white(nonwhite, marks, mapping)
         cols[which + "_tick_windows_white"] = white
@@ -562,8 +657,11 @@ def marks_columns(model_sidecar):
                 lines_category_hidden_before=unhidden.get("lines_category_hidden_before"))
     marks = rmk.get("marks") or []
     layout = rmk.get("layout") or {}
+    # marks_painted is None when no mark records whether it painted (an
+    # older record), never 0 for "unknown".
     cols.update(marks_expected=len(marks),
-                marks_painted=sum(1 for m in marks if m.get("painted") is True),
+                marks_painted=(sum(1 for m in marks if m.get("painted") is True)
+                               if any("painted" in m for m in marks) else None),
                 marks_original=sum(1 for m in marks if m.get("placement") == "original"),
                 marks_moved=sum(1 for m in marks if m.get("placement") == "moved"),
                 marks_blocked=sum(1 for m in marks if m.get("placement") == "blocked"),
@@ -748,8 +846,9 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
                     notes.append("{0}: {1}".format(which, note))
             except (OSError, ValueError) as ex:
                 notes.append("{0} unreadable: {1}".format(Path(tiff).name, _err(ex)))
-        cols, region_notes = rendered_region_columns(masks, marks, crop, fits,
-                                                     loop_uv=recorded_loop(model))
+        cols, region_notes = rendered_region_columns(
+            masks, marks, crop, fits, loop_uv=recorded_loop(model),
+            lattice=shared_lattice(model, anno, registered))
         row.update(cols)
         notes.extend(region_notes)
     row["notes"] = "; ".join(notes)
@@ -786,7 +885,11 @@ def census(run_args, pixels=True):
                                     "absent: no views_core_*.csv in {0} or {1}".format(
                                         folder.parent, folder))})
         for path in sidecars:
-            rows.append(view_row(path, run_id, (state, by_id), pixels=pixels, ident=ident))
+            row = view_row(path, run_id, (state, by_id), pixels=pixels, ident=ident)
+            # The row's source run, for a join that does not depend on run_id
+            # (None for two refused runs; a clock id can collide).
+            row["capture_dir"] = str(folder)
+            rows.append(row)
     return runs, rows
 
 

@@ -39,12 +39,15 @@ from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 
 SCHEMA = "vop.stage_a.recapture_views.v1"
-TOOL_VERSION = "1.0.0"
+# 1.1.0 (2026-10-13): run_dir is the run's RECORDED directory
+# (run_meta.run_dir) with the scanned path beside it; rows join their run by
+# capture directory; the found counts are compared with the ticks PAINTED.
+TOOL_VERSION = "1.1.0"
 CSV_NAME = "recapture_views.csv"
 LISTS_NAME = "recapture_lists.json"
-COLUMNS = ["run_dir", "run_id", "as_of_date", "view_id", "view_stem", "view_name",
-           "view_type", "scale", "provenance", "registration_state", "verdict",
-           "marks_expected", "anno_found_count", "model_found_count", "reason"]
+COLUMNS = ["run_dir", "scanned_dir", "run_id", "as_of_date", "view_id", "view_stem",
+           "view_name", "view_type", "scale", "provenance", "registration_state", "verdict",
+           "marks_expected", "marks_painted", "anno_found_count", "model_found_count", "reason"]
 
 
 def verdict(row):
@@ -52,27 +55,42 @@ def verdict(row):
     if row.get("provenance") != "this_run":
         return row.get("provenance") or "unknown", "not the run's own capture"
     state = row.get("registration_state")
-    expected = row.get("marks_expected")
+    expected = _int(row.get("marks_expected"))
+    painted = _int(row.get("marks_painted"))
+    # The ticks the capture PAINTED, not the ones it planned: a tick whose
+    # override failed never drew, and relocating the ticks would not change
+    # that (Codex, PR #236).
+    drawn = painted if painted is not None else expected
     if state == "registered":
         return "keep", ""
     if state == "stale":
         return "review", "registration record does not match the files: " + str(
             row.get("registration_reason"))
     if state == "absent":
-        if expected:
+        if drawn:
             return "recapture", "ticks drawn but no registration record"
+        if expected and not drawn:
+            return "review", "{0} ticks planned, none painted (overrides failed), and no " \
+                             "registration record".format(expected)
         return "review", "no ticks drawn and no registration record"
     found = [row.get("anno_found_count"), row.get("model_found_count")]
-    try:
-        counts = [int(f) for f in found if f not in (None, "")]
-    except ValueError:
-        counts = []
-    if state == "refused" and expected and counts and min(counts) < int(expected):
-        return "recapture", "{0} / {1} ticks found of {2}: {3}".format(
-            found[0], found[1], expected, row.get("registration_reason"))
+    counts = [c for c in (_int(f) for f in found) if c is not None]
+    if state == "refused" and drawn and counts and min(counts) < drawn:
+        return "recapture", "{0} / {1} ticks found of {2} painted: {3}".format(
+            found[0], found[1], drawn, row.get("registration_reason"))
+    if state == "refused" and expected and painted is not None and painted < expected:
+        return "review", "{0} of {1} ticks painted (overrides failed), every painted tick " \
+                         "found: {2}".format(painted, expected, row.get("registration_reason"))
     if state == "refused":
         return "review", "refused with every tick found: " + str(row.get("registration_reason"))
     return "review", "registration state {0!r}".format(state)
+
+
+def _int(value):
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def find(run_args):
@@ -81,16 +99,21 @@ def find(run_args):
     for run in runs:
         folder = Path(run["capture_dir"])
         meta = dsc.find_run_meta(folder / "run_meta.json") or {}
-        entry = {"run_dir": str(folder.parent), "run_id": run.get("run_id"),
+        # run_dir is the directory the RUN records (run_meta.run_dir, the
+        # exporter's own path): the list is consumed where the run lives,
+        # not where it was scanned (a copy, a temp folder); the scanned path
+        # is kept beside it.
+        entry = {"run_dir": meta.get("run_dir") or str(folder.parent),
+                 "scanned_dir": str(folder.parent), "run_id": run.get("run_id"),
                  "as_of_date": meta.get("date"), "refused": run.get("run_meta_refused"),
                  "recapture": [], "review": [], "keep": 0}
         for r in rows:
-            if r.get("run_id") != run.get("run_id"):
+            if r.get("capture_dir") != run["capture_dir"]:
                 continue
             v, why = verdict(r)
             out_rows.append(dict((c, r.get(c)) for c in COLUMNS if c in r) | {
-                "run_dir": entry["run_dir"], "as_of_date": entry["as_of_date"],
-                "verdict": v, "reason": why})
+                "run_dir": entry["run_dir"], "scanned_dir": entry["scanned_dir"],
+                "as_of_date": entry["as_of_date"], "verdict": v, "reason": why})
             if v == "recapture":
                 entry["recapture"].append(int(r["view_id"]))
             elif v == "review":

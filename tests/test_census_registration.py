@@ -45,8 +45,10 @@ def test_recorded_ticks_and_drawn_ticks_are_one_row(tmp_path):
     # The sidecars tell the same story for both views...
     # The shared fixture's annotation image is on its own (frame-B-era)
     # lattice, which the union tilt declines by name; nothing else is noted.
-    lattice_note = "content_tilt_union_deg: the annotation TIFF is 480x360, the model TIFF " \
-                   "700x520; not on one lattice"
+    lattice_note = ("content_tilt_union_deg: the annotation TIFF is 480x360, the model TIFF "
+                    "700x520; not on one lattice; aabb_corner_white: needs both captures on "
+                    "one lattice; ticks_predicted_vs_found_anno: the prediction is on the "
+                    "model lattice, which the annotation TIFF is not shown to share")
     for r in (r1, r2):
         assert r["marks_expected"] == "12"
         assert r["notes"] == lattice_note
@@ -261,7 +263,9 @@ def test_rendered_region_columns_on_the_fixture(tmp_path):
         assert r["content_tilt_union_deg"] == ""
         assert "not on one lattice" in r["notes"]
         assert r["ticks_inside_polygon_predicted"] == "12"
-        assert r["aabb_corner_white"].count(":") == 4
+        # Corner whiteness means "no ink in EITHER capture": unmeasured here.
+        assert r["aabb_corner_white"] == "" and "aabb_corner_white: needs both" in r["notes"]
+        assert r["ticks_predicted_vs_found_anno"] == ""
     assert r1["ticks_found_model"] == "|".join(every_tick)
     assert r1["ticks_predicted_vs_found_model"] == "tp=12,fp=0,fn=0,tn=0"
     assert r2["ticks_found_model"] == "none" and r2["ticks_found_anno"] == "none"
@@ -288,9 +292,11 @@ def test_a_recorded_crop_loop_is_the_polygon_not_the_pixel_tilt():
     loop = [[w / 2 + du * c - dv * s, h / 2 + du * s + dv * c]
             for du, dv in ((-rw / 2, -rh / 2), (rw / 2, -rh / 2), (rw / 2, rh / 2), (-rw / 2, rh / 2))]
     masks = {"model": ink, "anno": ink.copy()}
-    plain, _n = census.rendered_region_columns(masks, marks, crop, {})
+    one = (True, "test: one lattice")
+    plain, _n = census.rendered_region_columns(masks, marks, crop, {}, lattice=one)
     assert plain["ticks_inside_polygon_predicted"] == 12 and plain["polygon_tilt_source"] == "union_edges"
-    with_loop, _n = census.rendered_region_columns(masks, marks, crop, {}, loop_uv=loop)
+    with_loop, _n = census.rendered_region_columns(masks, marks, crop, {}, loop_uv=loop,
+                                                   lattice=one)
     assert with_loop["polygon_tilt_source"] == "recorded_loop"
     # On this 1200 x 900 box one mid tick sits near the loop's tangent point
     # (the run's partial refusals: mid_bottom_v found on 7 of 8); every corner
@@ -301,3 +307,101 @@ def test_a_recorded_crop_loop_is_the_polygon_not_the_pixel_tilt():
     sidecar = {"registration_marks": {"crop_shape": {"state": "value", "loops_uv": [loop]}}}
     assert census.recorded_loop(sidecar) == loop
     assert census.recorded_loop({"registration_marks": {"crop_shape": {"state": "unavailable"}}}) is None
+
+
+# --- Codex, PR #236 -------------------------------------------------------------------------
+
+def test_a_singular_or_impossible_tilt_gives_no_polygon():
+    """At 45 deg the inversion divides by cos 90; near it a non-square box
+    holds no rectangle at that tilt. Neither is a polygon of 1e18 px."""
+    assert census.inscribed_polygon(1200, 900, 45.0) is None
+    assert census.inscribed_polygon(1200, 900, 44.0) is None       # a side comes out negative
+    assert census.inscribed_polygon(1000, 1000, 44.0) is not None  # a square still holds one
+    ink = np.zeros((900, 1200), dtype=bool)
+    ink[400:500, 500:700] = True
+    poly, reason = census.rendered_polygon(ink, 45.0)
+    assert poly is None and "no rectangle" in reason
+
+
+def test_an_ambiguous_rotation_direction_is_unmeasured_not_the_first():
+    """Centred ink lies inside both mirrored polygons: the direction cannot
+    be told, and the prediction says so rather than keeping '+'."""
+    ink = np.zeros((900, 1200), dtype=bool)
+    ink[400:500, 500:700] = True
+    poly, reason = census.rendered_polygon(ink, 12.91)
+    assert poly is None and reason.startswith("rotation direction ambiguous")
+    # Ink hugging one tilted side decides it.
+    decided = np.zeros((900, 1200), dtype=bool)
+    for x in range(100, 1100):
+        y = int(50 + x * 0.2292)      # tan 12.91 deg
+        decided[y:y + 3, x] = True
+    poly, reason = census.rendered_polygon(decided, 12.91)
+    assert poly is not None and reason.startswith("direction")
+
+
+def test_the_lattice_is_shown_by_the_registration_or_assumed_from_equal_frames():
+    model = {"frame": {"crop_uv": [0, 0, 10, 8], "actual_w": 100, "actual_h": 80}}
+    anno_same = {"frame": {"crop_uv": [0, 0, 10, 8], "actual_w": 100, "actual_h": 80}}
+    anno_other = {"frame": {"crop_uv": [0, 0, 12, 8], "actual_w": 100, "actual_h": 80}}
+    identity = {"annotation_to_model_px": {"scale_x": 1.0, "scale_y": 1.0,
+                                           "offset_x": 0.0, "offset_y": 0.0}}
+    shifted = {"annotation_to_model_px": {"scale_x": 1.0, "scale_y": 1.0,
+                                          "offset_x": 3.0, "offset_y": 0.0}}
+    assert census.shared_lattice(model, anno_other, identity)[0] is True
+    assert census.shared_lattice(model, anno_same, shifted)[0] is False
+    shared, why = census.shared_lattice(model, anno_same, None)
+    assert shared is True and why.startswith("assumed")
+    assert census.shared_lattice(model, anno_other, None) == (
+        False, "unregistered, and the frames record different crops")
+    assert census.shared_lattice(model, None, None) == (False, "no annotation sidecar")
+    # The registered capture's annotation frame records no crop (3939979,
+    # 06-21): both passes rendered at crop A, so an equal size is enough.
+    reg_model = dict(model, registration_marks={"marks": []})
+    reg_anno = {"frame": {"actual_w": 100, "actual_h": 80}, "registration_marks": {"marks": []}}
+    shared, why = census.shared_lattice(reg_model, reg_anno, None)
+    assert shared is True and why.startswith("assumed: registered capture")
+    smaller = {"frame": {"actual_w": 100, "actual_h": 60}, "registration_marks": {"marks": []}}
+    assert census.shared_lattice(reg_model, smaller, None) == (
+        False, "unregistered, and the frames record different sizes")
+    # Equal dimensions alone do not make a union: the assumption is noted.
+    ink = np.zeros((80, 100), dtype=bool)
+    ink[10:70, 10:90] = True
+    cols, notes = census.rendered_region_columns({"model": ink, "anno": ink.copy()}, [], None,
+                                                 {}, lattice=(True, "assumed: test"))
+    assert cols["polygon_tilt_source"].startswith("union") and any(
+        n.startswith("content_tilt_union_deg: lattice assumed") for n in notes)
+    cols, notes = census.rendered_region_columns({"model": ink, "anno": ink.copy()}, [], None,
+                                                 {}, lattice=(False, "registered: not identity"))
+    assert "content_tilt_union_deg" not in cols and "aabb_corner_white" not in cols
+    assert any("not shown to be on the model lattice" in n for n in notes)
+
+
+def test_marks_painted_is_unknown_when_no_mark_records_it():
+    cols, _marks = census.marks_columns({"registration_marks": {"marks": [
+        {"key": "a"}, {"key": "b"}]}})
+    assert cols["marks_expected"] == 2 and cols["marks_painted"] is None
+    cols, _marks = census.marks_columns({"registration_marks": {"marks": [
+        {"key": "a", "painted": True}, {"key": "b", "painted": False}]}})
+    assert cols["marks_painted"] == 1
+
+
+def test_the_ink_handed_to_the_region_measures_excludes_the_ticks_fringes(tmp_path):
+    """The exact-colour mask alone leaves a tick's anti-aliased fringe in the
+    ink; the fit's own attribution (mark_ink_mask) removes it. Pinned on the
+    fixture: no ink pixel inside any located tick's pixel rect."""
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})
+    model_path = run / "color_id_buffer" / "V_1.json"
+    model = json.loads(model_path.read_text())
+    from tools import decode_stage_a_color_id as dsc
+    tiff = dsc._resolve_tiff_path(model_path, model)
+    marks = model["registration_marks"]["marks"]
+    crop = census.crop_columns(model)[1]
+    cols, note, ink = census.image_columns(tiff, "model", model, [], marks, crop)
+    reg = json.loads((run / "color_id_buffer" / "V_1_anno.registered.json").read_text())
+    rects = reg["model_fit"]["mark_pixel_rects"]
+    assert rects, "the fixture's fit locates its ticks"
+    for rect in rects:
+        x0, y0, x1, y1 = (int(v) for v in (rect if isinstance(rect, list) else rect["rect"]))
+        assert not ink[y0:y1 + 1, x0:x1 + 1].any(), rect
+    assert cols["model_tick_px"] > 0
