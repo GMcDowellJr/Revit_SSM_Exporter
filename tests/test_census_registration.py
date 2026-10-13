@@ -405,3 +405,14 @@ def test_the_ink_handed_to_the_region_measures_excludes_the_ticks_fringes(tmp_pa
         x0, y0, x1, y1 = (int(v) for v in (rect if isinstance(rect, list) else rect["rect"]))
         assert not ink[y0:y1 + 1, x0:x1 + 1].any(), rect
     assert cols["model_tick_px"] > 0
+
+
+def test_a_tick_cut_by_a_concave_recorded_loop_is_predicted_outside():
+    """Both endpoints inside the U, the notch between them: the capture's
+    segment test says outside, and so does the census (Codex, PR #236)."""
+    u_loop = [(0, 0), (30, 0), (30, 20), (20, 20), (20, 5), (10, 5), (10, 20), (0, 20)]
+    mapping = {"a_u": 1.0, "b_u": 0.0, "a_v": 1.0, "b_v": 0.0}
+    marks = [{"key": "spans_the_gap", "uv0": [5, 10], "uv1": [25, 10]},
+             {"key": "in_left_arm", "uv0": [2, 10], "uv1": [8, 10]},
+             {"key": "along_the_base", "uv0": [5, 2], "uv1": [25, 2]}]
+    assert census.ticks_inside(u_loop, marks, mapping) == ["in_left_arm", "along_the_base"]

@@ -97,7 +97,7 @@ from tools import registration_marks as rm  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
-from vop_interwoven.stage_a_registration import MARK_COLOUR  # noqa: E402
+from vop_interwoven.stage_a_registration import MARK_COLOUR, segment_crosses_loop  # noqa: E402
 
 SCHEMA = "vop.stage_a.census_registration.v1"
 # 1.1.0 (2026-10-13): the rendered-region columns (content_tilt_*,
@@ -380,13 +380,18 @@ def corner_windows_white(nonwhite, side=CORNER_WINDOW_PX):
 
 
 def ticks_inside(poly, marks, mapping):
-    """The keys of the recorded ticks whose both endpoints lie inside ``poly``
-    on ``mapping``."""
+    """The keys of the recorded ticks that lie inside ``poly`` on
+    ``mapping``: both endpoints inside and the segment not crossing the
+    polygon's boundary between them (a recorded concave loop can cut a tick
+    whose endpoints are both inside; the capture's own predicate,
+    ``stage_a_registration.segment_crosses_loop``, decides that here too --
+    Codex, PR #236)."""
     inside = []
     for m in marks:
         ends = [(mapping["a_u"] * u + mapping["b_u"], mapping["a_v"] * v + mapping["b_v"])
                 for u, v in (m["uv0"], m["uv1"])]
-        if all(point_in_polygon(poly, x, y) for x, y in ends):
+        if (all(point_in_polygon(poly, x, y) for x, y in ends)
+                and not segment_crosses_loop(poly, ends[0], ends[1])):
             inside.append(m["key"])
     return inside
 
