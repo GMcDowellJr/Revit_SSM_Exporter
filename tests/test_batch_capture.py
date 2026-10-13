@@ -572,6 +572,15 @@ def test_the_pyrevit_button_is_thin_and_opens_detached_with_worksets_open():
     # pyRevit's CPython engine reports SystemExit as a script error; the
     # early exits are returns from main() (Greg, first run, 2026-10-13).
     assert "SystemExit" not in src.split("def main():")[1] and src.rstrip().endswith("main()")
+    # A settings file that will not parse is shown, never replaced by the
+    # template (Greg, 2026-10-13: the fallback overwrote the edited file);
+    # the template is written only when no file exists; BOMs are tolerated.
+    assert 'encoding="utf-8-sig"' in src
+    loader = src.split("def _load_settings():")[1].split("def _derived_repo_root")[0]
+    assert "return out, None" in loader and "except (IOError, OSError, ValueError) as ex" in loader
+    first_run = src.split("def main():")[1].split("from vop_interwoven.batch_capture")[0]
+    assert "if _settings_error:" in first_run
+    assert "if not os.path.isfile(_SETTINGS_PATH):" in first_run
     import ast
     ast.parse(src)
     # pyRevit disables a button with no document open unless its bundle says

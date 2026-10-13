@@ -49,14 +49,24 @@ _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
 
 
 def _load_settings():
-    try:
-        with open(_SETTINGS_PATH, "r", encoding="utf-8") as handle:
-            settings = json.load(handle)
-    except (IOError, OSError, ValueError):
-        settings = {}
+    """``(settings, error)``: the settings file merged over the defaults, or
+    the defaults with the reason it could not be read. A file that exists
+    but will not parse is an ERROR, never silently the defaults: that path
+    wrote the first-run template over Greg's edited file (2026-10-13). The
+    file is read as utf-8-sig, so a byte-order mark from Notepad or
+    PowerShell is not a parse error."""
     out = dict(_DEFAULTS)
-    out.update(settings or {})
-    return out
+    if not os.path.isfile(_SETTINGS_PATH):
+        return out, None
+    try:
+        with open(_SETTINGS_PATH, "r", encoding="utf-8-sig") as handle:
+            settings = json.load(handle)
+    except (IOError, OSError, ValueError) as ex:
+        return out, "{0}: {1}".format(type(ex).__name__, ex)
+    if not isinstance(settings, dict):
+        return out, "the file holds a {0}, not a JSON object".format(type(settings).__name__)
+    out.update(settings)
+    return out, None
 
 
 def _derived_repo_root():
@@ -67,7 +77,7 @@ def _derived_repo_root():
     return root
 
 
-_settings = _load_settings()
+_settings, _settings_error = _load_settings()
 REPO_ROOT = _settings.get("repo_root") or _derived_repo_root()
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -198,12 +208,24 @@ def recapture(doc, job):
 # ---------------------------------------------------------------------------
 
 def main():
+    if _settings_error:
+        # Shown, not worked around: the file is left exactly as it is.
+        TaskDialog.Show("VOP Batch Capture -- settings not read",
+                        "{0}\n\ncould not be read:\n{1}\n\nFix the file (plain UTF-8 JSON) "
+                        "and press the button again. Nothing was written.".format(
+                            _SETTINGS_PATH, _settings_error))
+        return
     if not _settings.get("plan_json"):
-        with open(_SETTINGS_PATH, "w", encoding="utf-8") as handle:
-            json.dump(_DEFAULTS, handle, indent=2)
+        if not os.path.isfile(_SETTINGS_PATH):
+            with open(_SETTINGS_PATH, "w", encoding="utf-8") as handle:
+                json.dump(_DEFAULTS, handle, indent=2)
+            written = "A template settings file has been written:"
+        else:
+            written = "plan_json is blank in:"
         TaskDialog.Show("VOP Batch Capture -- first run",
-                        "Fill in plan_json (and repo_root if pyrevit/ is not inside the "
-                        "checkout) in:\n\n{0}\n\nthen press the button again.".format(_SETTINGS_PATH))
+                        "{0}\n\n{1}\n\nFill in plan_json (and repo_root if pyrevit/ is not "
+                        "inside the checkout), then press the button again.".format(
+                            written, _SETTINGS_PATH))
         return
 
     from vop_interwoven.batch_capture import load_plan, pending_jobs, run_batch  # noqa: E402
