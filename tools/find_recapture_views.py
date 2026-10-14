@@ -47,7 +47,8 @@ CSV_NAME = "recapture_views.csv"
 LISTS_NAME = "recapture_lists.json"
 COLUMNS = ["run_dir", "scanned_dir", "run_id", "as_of_date", "view_id", "view_stem",
            "view_name", "view_type", "scale", "provenance", "registration_state", "verdict",
-           "marks_expected", "marks_painted", "anno_found_count", "model_found_count", "reason"]
+           "marks_expected", "marks_painted", "marks_blocked", "anno_found_count",
+           "model_found_count", "reason"]
 
 
 def verdict(row):
@@ -75,6 +76,21 @@ def verdict(row):
         return "review", "no ticks drawn and no registration record"
     found = [row.get("anno_found_count"), row.get("model_found_count")]
     counts = [c for c in (_int(f) for f in found) if c is not None]
+    blocked = _int(row.get("marks_blocked"))
+    anno, model = _int(found[0]), _int(found[1])
+    # Ticks the annotation itself covers (2025-11-01 view 11068525: two
+    # annotation symbols span the whole frame; every tick is placed
+    # "blocked" and painted over in the annotation pass while the model pass
+    # finds all twelve). Relocating the ticks cannot change that: review.
+    if state == "refused" and expected and blocked is not None and blocked >= expected:
+        return "review", "every tick blocked: annotation covers the frame, no band to move " \
+                         "to; a recapture would not change it: {0}".format(
+                             row.get("registration_reason"))
+    if (state == "refused" and drawn and model is not None and anno is not None
+            and model >= drawn and anno < drawn):
+        return "review", "the model pass found every tick, the annotation pass {0} of {1}: " \
+                         "annotation paints over the ticks; a recapture would not change " \
+                         "it: {2}".format(anno, drawn, row.get("registration_reason"))
     if state == "refused" and drawn and counts and min(counts) < drawn:
         return "recapture", "{0} / {1} ticks found of {2} painted: {3}".format(
             found[0], found[1], drawn, row.get("registration_reason"))

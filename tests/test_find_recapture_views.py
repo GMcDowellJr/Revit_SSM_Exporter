@@ -100,3 +100,25 @@ def test_run_dir_is_the_runs_recorded_directory_and_the_scan_path_is_kept(tmp_pa
     assert lists[0]["run_dir"] == "C:\\Exports\\KSRF\\2025-06-21__RUN_A"
     assert lists[0]["scanned_dir"] == str(run)
     assert rows[0]["run_dir"] == lists[0]["run_dir"]
+
+
+def test_ticks_the_annotation_itself_covers_are_review_not_recapture():
+    """2025-11-01 view 11068525 (H-G010 LOCATION MAP AND VICINITY MAP): two
+    annotation symbols span the whole frame, all twelve ticks are placed
+    blocked and painted over in the annotation pass, the model pass finds
+    all twelve. Relocating ticks cannot fix it."""
+    base = {"provenance": "this_run", "registration_state": "refused", "marks_expected": "12",
+            "marks_painted": "12", "registration_reason": "annotation capture's marks cannot "
+                                                          "be fitted: 0 of 12 ticks found"}
+    row = dict(base, marks_blocked="12", anno_found_count="0", model_found_count="12")
+    verdict, reason = finder.verdict(row)
+    assert verdict == "review" and reason.startswith("every tick blocked")
+    # The same signature without the blocked count (an older census row).
+    row = dict(base, marks_blocked="", anno_found_count="0", model_found_count="12")
+    verdict, reason = finder.verdict(row)
+    assert verdict == "review" and reason.startswith("the model pass found every tick")
+    # Control: the rotated-crop family, lost in BOTH passes, stays recapture.
+    row = dict(base, marks_blocked="0", anno_found_count="0", model_found_count="0")
+    assert finder.verdict(row)[0] == "recapture"
+    row = dict(base, marks_blocked="3", anno_found_count="1", model_found_count="1")
+    assert finder.verdict(row)[0] == "recapture"
