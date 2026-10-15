@@ -1,7 +1,8 @@
 """tools/find_recapture_views.py on the shared fixture: a registered view
 (keep), one whose ticks drew in neither image (recapture), one never
 registered (recapture: ticks drawn, no record), and one run_meta records
-as failed (not this run's, not counted)."""
+as failed (capture_failed: listed, in the recapture list only on
+--include-failed)."""
 
 import csv
 import json
@@ -31,11 +32,86 @@ def test_verdicts_and_the_recapture_list(tmp_path):
     assert rows["2"]["marks_painted"] == "" and rows["2"]["marks_expected"] == "12"
     assert rows["1"]["scanned_dir"] == str(run) and rows["1"]["run_dir"] == str(run)
     assert rows["3"]["verdict"] == "recapture" and "no registration record" in rows["3"]["reason"]
-    assert rows["4"]["verdict"] == "not_this_run"
+    assert rows["4"]["verdict"] == "capture_failed"
+    assert rows["4"]["reason"] == "capture_status failed: export raised"
+    assert rows["4"]["provenance"] == "not_this_run"
     lists = json.loads((out / finder.LISTS_NAME).read_text())["runs"]
     assert len(lists) == 1
     assert lists[0]["run_id"] == "RUN_A" and lists[0]["recapture"] == [2, 3]
     assert lists[0]["review"] == [] and lists[0]["keep"] == 1
+    assert lists[0]["failed"] == [{"view_id": 4, "view_name": "V 4", "capture_status": "failed",
+                                  "reason": "export raised"}]
+    assert lists[0]["include_failed"] is False
+
+
+def test_failed_captures_are_listed_and_recaptured_only_on_the_flag(tmp_path):
+    """2025-09-13 to 2025-10-25: six 1/48 plans failed capture in every
+    run, each an older sidecar or none at all; the analysis never grids them
+    and the series shows a measure lost. The finder names them in every
+    run's entry; --include-failed puts them in the recapture list."""
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})      # keep
+    _capture(run, 4, gridded=False, pair_kw={"shared_anno": True})      # stale sidecar
+    _outcome(run, 4, status="failed", reason="export raised")
+    _outcome(run, 5, status="annotation_failed", reason="annotation pass raised")  # no sidecar
+    _capture(run, 6, gridded=False, pair_kw={"shared_anno": True})
+    _outcome(run, 6, status="registration_failed", reason="registration_marks_outside_crop_loop")
+    _outcome(run, 7, status="success")                                   # no sidecar, not failed
+    out = tmp_path / "find"
+    assert finder.main([str(run), "--out", str(out)]) == 0
+    rows = dict((r["view_id"], r) for r in csv.DictReader(
+        open(str(out / finder.CSV_NAME), encoding="utf-8", newline="")))
+    assert set(rows) == {"1", "4", "5", "6"}
+    assert rows["1"]["verdict"] == "keep"
+    assert rows["4"]["verdict"] == "capture_failed" and rows["4"]["provenance"] == "not_this_run"
+    assert rows["4"]["view_stem"] == "V_4"            # the sidecar's own columns stay
+    assert rows["5"]["verdict"] == "capture_failed" and rows["5"]["provenance"] == "no_sidecar"
+    assert rows["5"]["reason"] == "capture_status annotation_failed: annotation pass raised"
+    assert rows["5"]["view_name"] == "V 5" and rows["5"]["run_id"] == "RUN_A"
+    assert rows["5"]["as_of_date"] == rows["1"]["as_of_date"]
+    assert rows["5"]["registration_state"] == "" and rows["5"]["view_stem"] == ""
+    assert rows["6"]["verdict"] == "capture_failed"
+    assert rows["6"]["reason"] == ("capture_status registration_failed: "
+                                   "registration_marks_outside_crop_loop")
+    entry = json.loads((out / finder.LISTS_NAME).read_text())["runs"][0]
+    assert entry["recapture"] == [] and entry["keep"] == 1 and entry["review"] == []
+    assert [f["view_id"] for f in entry["failed"]] == [4, 5, 6]
+    assert entry["failed"][1] == {"view_id": 5, "view_name": "V 5",
+                                  "capture_status": "annotation_failed",
+                                  "reason": "annotation pass raised"}
+    assert entry["include_failed"] is False
+    # The flag: the same rows, the ids in the recapture list.
+    out2 = tmp_path / "find2"
+    assert finder.main([str(run), "--out", str(out2), "--include-failed"]) == 0
+    rows2 = dict((r["view_id"], r) for r in csv.DictReader(
+        open(str(out2 / finder.CSV_NAME), encoding="utf-8", newline="")))
+    assert dict((k, (v["verdict"], v["reason"])) for k, v in rows2.items()) == \
+        dict((k, (v["verdict"], v["reason"])) for k, v in rows.items())
+    entry2 = json.loads((out2 / finder.LISTS_NAME).read_text())["runs"][0]
+    assert entry2["recapture"] == [4, 5, 6] and entry2["include_failed"] is True
+    assert entry2["failed"] == entry["failed"] and entry2["keep"] == 1
+    # The list is what the recapture consumes: every id is one the run requested.
+    from vop_interwoven import recapture as rc
+    meta = rc.load_run_meta(str(run))
+    meta.update(doc_title={"state": "value", "value": "DOC"}, date="2025-09-13")
+    assert rc.recapture_plan(meta, entry2["recapture"], "DOC")["view_ids"] == [4, 5, 6]
+
+
+def test_failed_captures_pure():
+    ident = {"refused": None, "requested": [], "duplicates": {}, "outcomes": {
+        "1": {"view_id": 1, "view_name": "ok", "capture_status": "success",
+              "capture_failure_reason": ""},
+        "9": {"view_id": 9, "view_name": "late", "capture_status": "failed",
+              "capture_failure_reason": "timeout"},
+        "3": None,                                        # ambiguous: not nameable
+        "2": {"view_id": 2, "view_name": "anno", "capture_status": "annotation_failed",
+              "capture_failure_reason": None}}}
+    assert finder.failed_captures(ident) == [
+        {"view_id": 2, "view_name": "anno", "capture_status": "annotation_failed", "reason": ""},
+        {"view_id": 9, "view_name": "late", "capture_status": "failed", "reason": "timeout"}]
+    assert finder.failed_reason(finder.failed_captures(ident)[0]) == \
+        "capture_status annotation_failed: (no reason recorded)"
+    assert finder.failed_captures(dict(ident, refused="no run_meta")) == []
 
 
 def test_a_residual_refusal_is_review_not_recapture():

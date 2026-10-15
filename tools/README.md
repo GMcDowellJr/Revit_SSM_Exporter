@@ -294,11 +294,18 @@ Read-only; runs the sidecar half of `census_registration.py` (no TIFF read)
 over each run and classifies every one of the run's own views: `recapture`
 (ticks drawn, not found by the fit, or no registration record), `review`
 (refused with every tick found, or a record that does not match its files),
-`keep` (registered). Writes `recapture_views.csv` and `recapture_lists.json`,
-the per-run id lists a recapture takes as input.
+`keep` (registered), `capture_failed` (run_meta.json records the capture as
+`failed`, `annotation_failed` or `registration_failed`, with its reason; a
+row even when no sidecar exists, `provenance` `no_sidecar`). Writes
+`recapture_views.csv` and `recapture_lists.json`, the per-run id lists a
+recapture takes as input; each run's entry also lists its failed captures
+under `failed`, and `--include-failed` puts their ids in `recapture` too.
+A failed capture is never gridded, so a series shows it as a measure lost
+on that run (2025-09-13 to 2025-10-25: six "(N) ... Wall Types BP" plans);
+the reason says whether a recapture can be expected to succeed.
 
 ```bash
-python tools/find_recapture_views.py <run> [<run> ...] --out <dir>
+python tools/find_recapture_views.py <run> [<run> ...] --out <dir> [--include-failed]
 ```
 
 The recapture itself is the exporter's (`vop_interwoven/recapture.py`): in

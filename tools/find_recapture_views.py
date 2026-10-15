@@ -14,16 +14,24 @@ Read-only. For every run folder given (a run directory or its
 * ``review``     -- refused with every tick found (a fit residual, as 929475:
   127 px): a different defect, not fixed by recapturing;
 * ``keep``       -- registered;
+* ``capture_failed`` -- run_meta.json records the view's capture as
+  ``failed``, ``annotation_failed`` or ``registration_failed`` (the reason
+  is the row's), whether an older sidecar is still on disk for it or none
+  is (``provenance`` ``no_sidecar``). The analysis never grids such a view,
+  so a series shows it as a measure lost (2025-09-13 to 2025-10-25: six
+  "(N) ... Wall Types BP" plans). Listed under ``failed`` in every run's
+  entry; ``--include-failed`` puts the ids in ``recapture`` too;
 * ``not_this_run`` / ``not_requested`` -- a sidecar that is not the run's own
-  capture (``provenance``), listed and not counted.
+  capture (``provenance``) for another reason (an ambiguous outcome, a view
+  the run never requested), listed and not counted.
 
 Outputs, in ``--out``: ``recapture_views.csv`` (one row per view, every run)
 and ``recapture_lists.json`` (per run: run_dir, run_id, as-of date, the
-view ids to recapture, the ids to review) -- the list a patch capture takes.
-A run whose run_meta.json is refused by the roll-up's identity rules is
-listed with the reason and contributes no views.
+view ids to recapture, the ids to review, the failed captures) -- the list
+a patch capture takes. A run whose run_meta.json is refused by the roll-up's
+identity rules is listed with the reason and contributes no views.
 
-    python tools/find_recapture_views.py <run> [<run> ...] --out <dir>
+    python tools/find_recapture_views.py <run> [<run> ...] --out <dir> [--include-failed]
 """
 
 import argparse
@@ -42,9 +50,15 @@ SCHEMA = "vop.stage_a.recapture_views.v1"
 # 1.1.0 (2026-10-13): run_dir is the run's RECORDED directory
 # (run_meta.run_dir) with the scanned path beside it; rows join their run by
 # capture directory; the found counts are compared with the ticks PAINTED.
-TOOL_VERSION = "1.1.0"
+# 1.2.0 (2026-10-15): a capture run_meta records as failed is `capture_failed`
+# (reason from run_meta; a row even with no sidecar), listed per run under
+# `failed`; --include-failed adds the ids to `recapture`.
+TOOL_VERSION = "1.2.0"
 CSV_NAME = "recapture_views.csv"
 LISTS_NAME = "recapture_lists.json"
+# run_meta capture statuses that are a failed capture (csv_export.
+# stage_a_capture_status); "success" is the only other value it writes.
+FAILED_STATUSES = ("failed", "annotation_failed", "registration_failed")
 COLUMNS = ["run_dir", "scanned_dir", "run_id", "as_of_date", "view_id", "view_stem",
            "view_name", "view_type", "scale", "provenance", "registration_state", "verdict",
            "marks_expected", "marks_painted", "marks_blocked", "anno_found_count",
@@ -102,6 +116,30 @@ def verdict(row):
     return "review", "registration state {0!r}".format(state)
 
 
+def failed_captures(ident):
+    """PURE. The views run_meta.json records as a failed capture, from the
+    run's identity (``stage_a_grid_rollup.run_identity``): ``[{view_id,
+    view_name, capture_status, reason}]`` sorted by id. An ambiguous outcome
+    (two entries that disagree, None in the identity) is not a failure that
+    can be named and is left out; a refused identity yields nothing."""
+    if ident.get("refused"):
+        return []
+    failed = []
+    for vid, outcome in ident["outcomes"].items():
+        if outcome is None or outcome.get("capture_status") not in FAILED_STATUSES:
+            continue
+        failed.append({"view_id": int(vid), "view_name": outcome.get("view_name"),
+                       "capture_status": outcome.get("capture_status"),
+                       "reason": outcome.get("capture_failure_reason") or ""})
+    return sorted(failed, key=lambda f: f["view_id"])
+
+
+def failed_reason(failure):
+    """PURE. The row's reason for a failed capture."""
+    return "capture_status {0}: {1}".format(failure["capture_status"],
+                                            failure["reason"] or "(no reason recorded)")
+
+
 def _int(value):
     try:
         return int(value) if value not in (None, "") else None
@@ -109,12 +147,14 @@ def _int(value):
         return None
 
 
-def find(run_args):
+def find(run_args, include_failed=False):
     runs, rows = census.census(run_args, pixels=False)
     out_rows, lists = [], []
     for run in runs:
         folder = Path(run["capture_dir"])
         meta = dsc.find_run_meta(folder / "run_meta.json") or {}
+        failed = failed_captures(census.rollup.run_identity(meta))
+        failed_by_id = dict((str(f["view_id"]), f) for f in failed)
         # run_dir is the directory the RUN records (run_meta.run_dir, the
         # exporter's own path): the list is consumed where the run lives,
         # not where it was scanned (a copy, a temp folder); the scanned path
@@ -122,11 +162,19 @@ def find(run_args):
         entry = {"run_dir": meta.get("run_dir") or str(folder.parent),
                  "scanned_dir": str(folder.parent), "run_id": run.get("run_id"),
                  "as_of_date": meta.get("date"), "refused": run.get("run_meta_refused"),
-                 "recapture": [], "review": [], "keep": 0}
+                 "recapture": [], "review": [], "keep": 0, "failed": failed,
+                 "include_failed": bool(include_failed)}
+        with_sidecar = set()
         for r in rows:
             if r.get("capture_dir") != run["capture_dir"]:
                 continue
             v, why = verdict(r)
+            failure = failed_by_id.get(census.rollup._vid(r.get("view_id")))
+            if failure is not None and r.get("provenance") == "not_this_run":
+                # The sidecar on disk is an older capture's (or the failed
+                # attempt's own); the run's record of the view is the failure.
+                v, why = "capture_failed", failed_reason(failure)
+                with_sidecar.add(failure["view_id"])
             out_rows.append(dict((c, r.get(c)) for c in COLUMNS if c in r) | {
                 "run_dir": entry["run_dir"], "scanned_dir": entry["scanned_dir"],
                 "as_of_date": entry["as_of_date"], "verdict": v, "reason": why})
@@ -136,6 +184,17 @@ def find(run_args):
                 entry["review"].append(int(r["view_id"]))
             elif v == "keep":
                 entry["keep"] += 1
+        for failure in failed:
+            if failure["view_id"] not in with_sidecar:
+                # No sidecar at all: the capture wrote nothing for the view.
+                out_rows.append(dict((c, None) for c in COLUMNS) | {
+                    "run_dir": entry["run_dir"], "scanned_dir": entry["scanned_dir"],
+                    "run_id": entry["run_id"], "as_of_date": entry["as_of_date"],
+                    "view_id": failure["view_id"], "view_name": failure["view_name"],
+                    "provenance": "no_sidecar", "verdict": "capture_failed",
+                    "reason": failed_reason(failure)})
+        if include_failed:
+            entry["recapture"].extend(f["view_id"] for f in failed)
         entry["recapture"].sort()
         entry["review"].sort()
         lists.append(entry)
@@ -146,13 +205,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("runs", nargs="+", metavar="run")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--include-failed", action="store_true",
+                    help="put the views run_meta.json records as a failed capture "
+                         "(failed, annotation_failed, registration_failed) in each "
+                         "run's recapture list; they are listed under 'failed' either way")
     args = ap.parse_args(argv)
     out = Path(args.out)
     for run_arg in args.runs:
         _s, folder = grid.model_sidecars(run_arg)
         if census.rollup._inside(out, folder):
             ap.error("--out {0} is inside the capture folder {1}".format(out, folder))
-    lists, rows = find(args.runs)
+    lists, rows = find(args.runs, include_failed=args.include_failed)
     out.mkdir(parents=True, exist_ok=True)
     with open(out / CSV_NAME, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
@@ -165,10 +228,12 @@ def main(argv=None):
     total = 0
     for e in lists:
         total += len(e["recapture"])
-        print("{0}: run {1} as of {2}: recapture {3}, review {4}, keep {5}{6}".format(
-            e["run_dir"], e["run_id"], e["as_of_date"], len(e["recapture"]),
-            len(e["review"]), e["keep"],
-            "  REFUSED: " + str(e["refused"]) if e["refused"] else ""))
+        print("{0}: run {1} as of {2}: recapture {3}, review {4}, keep {5}, failed "
+              "captures {6}{7}{8}".format(
+                  e["run_dir"], e["run_id"], e["as_of_date"], len(e["recapture"]),
+                  len(e["review"]), e["keep"], len(e["failed"]),
+                  " (in the recapture list)" if e["failed"] and e["include_failed"] else "",
+                  "  REFUSED: " + str(e["refused"]) if e["refused"] else ""))
     print("{0} views to recapture across {1} runs; wrote {2} and {3}".format(
         total, len(lists), out / CSV_NAME, out / LISTS_NAME))
     return 0
