@@ -230,16 +230,20 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
 
 
 def annotation_extent_prediction(reference_uv, avoid, fpp_ft, max_axis_px):
-    """PURE. A DIAGNOSTIC, read by nothing in the capture: the extent the
-    annotation pass's FitToPage export is expected to render, from crop A
-    (``reference_uv``) and the annotation bboxes the relocation already
-    collected (``avoid``: ``[(id, [u0, v0, u1, v1]), ...]``), in pixels on the
-    model lattice -- and whether its derived axis would pass ``max_axis_px``,
-    which is where the annotation lattice mismatch of 2025-09-13..10-25 is
-    suspected to begin (RUN_..._SMALL_VIEWS.md, group A). Recorded so the
-    next run says which, rather than the sidecars being read for it after.
-    Each rect is widened to the union, so one annotation element far from
-    the crop shows as a large union. No verdict is drawn here."""
+    """PURE. A DIAGNOSTIC, read by nothing in the capture: crop A
+    (``reference_uv``) united with the annotation bboxes the relocation
+    already collected (``avoid``: ``[(id, [u0, v0, u1, v1]), ...]``), in
+    pixels on the model lattice, and whether that union exceeds
+    ``max_axis_px``.
+
+    THE UNION IS NOT THE EXPORT'S EXTENT. Run 2025-09-06__20261011T094136
+    (RUN_2025-02-03_to_2025-11-01_SERIES_SMALL_VIEWS.md, group A): on five
+    Wall Types BP plans the union was 1.05-1.80x crop A (detail items with
+    bboxes far outside the crop) and the annotation export still came back
+    at crop A's size to the pixel. So ``exceeds_cap`` says the union exceeds
+    the cap, not that the export will; it is recorded to be compared with
+    the measured extent (``frame.actual_w/h``) on a run that fails, where
+    the two have not yet been seen together. No verdict is drawn here."""
     if not reference_uv or len(reference_uv) != 4 or not fpp_ft or fpp_ft <= 0:
         return _unavailable("no reference rectangle or lattice")
     u0, v0, u1, v1 = (float(v) for v in reference_uv)

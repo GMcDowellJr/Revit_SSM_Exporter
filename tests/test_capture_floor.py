@@ -192,7 +192,9 @@ def test_control_the_ordinary_view_still_exports_both_passes_and_predicts_its_ex
         assert pred["max_axis_px"] == 10000.0 and pred["exceeds_cap"] is False
 
 
-def test_extent_prediction_grows_with_annotation_past_the_crop_and_says_when_it_exceeds_the_cap():
+def test_extent_prediction_is_the_bbox_union_and_says_when_that_exceeds_the_cap():
+    """The union, not the export's extent: run 2025-09-06 exported at crop
+    A's size with a union 1.49x crop A (the function's docstring)."""
     crop = (0.0, 0.0, 300.0, 200.0)                       # 10000 x 6667 px at 0.03
     pred = registration.annotation_extent_prediction(
         crop, [(1, [0.0, -60.0, 300.0, 260.0])], 0.03, 10000)

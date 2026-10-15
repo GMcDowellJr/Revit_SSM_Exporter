@@ -8,51 +8,62 @@ registered Stage A capture; `tools/find_recapture_views.py --include-failed`
 the branch is `claude/festive-gauss-sz69yy` from it.
 
 **The file name.** The task asked for `RUN_<date>_<run_id>_SMALL_VIEWS.md`.
-No run folder, run_meta.json or sidecar of the series reached this session
-(§6), so there is no run_id to name it by; it is named by the series. Rename
-it to the run whose files are read first.
+The one run received (§0) is `2025-09-06__20261011T094136`, a PASSING run;
+the failing runs the question is about have not been received, so the note
+is named by the series. Rename it to the failing run whose files are read.
 
 Every claim is OBSERVED (file / function / run named) or INFERENCE. An
 absence names the store checked.
 
 ## 0. Answer, as far as the files allow
 
-**Received for this task: no run files.** The only series data in the tree
-is `tools/notes/data/views_core_2025-10-25.csv` (run `20251025T000000`, an
-older build, no sidecars; its README says it is reference data). Google
-Drive was searched for `run_meta`, `Hops_Interior_AR` and `recapture_views`
-and holds none of them (OBSERVED: `search_files`, 2026-10-15, empty result).
-So:
+**Received: one run.** `2025-09-06__20261011T094136_pass-interactive.zip`:
+its `run_meta.json` and the model and annotation sidecars of the six Wall
+Types BP plans (13 files; no TIFF, no group B sidecar). Google Drive was
+searched for `run_meta`, `Hops_Interior_AR` and `recapture_views` and holds
+none (OBSERVED: `search_files`, 2026-10-15, empty). The only other series
+data in the tree is `tools/notes/data/views_core_2025-10-25.csv` (run
+`20251025T000000`, an older build, no sidecars).
 
-- **Group A** (`annotation_lattice_mismatch`, six 1/48 plans): the
-  MECHANISM is settled from the code (§1.1: two branches, one predicate, now
-  extracted so the recorded numbers can be run through it); WHICH branch the
-  six plans took, and why one environment and not the other, is INFERENCE
-  until the sidecar fields in §1.3 are read. No capture-side fix is made,
-  because the cause is not shown to be in the capture (§1.4 says what the
-  fix would be and what it would break). The capture now RECORDS the one
-  number that discriminates the leading candidate on the next run
-  (`registration_marks.annotation_extent_prediction`, §1.5).
-- **Group B** (small or thin views): the RULE each named view trips is
-  INFERENCE from the view's type and scale (§2.1); the policy is decided and
-  implemented (§2.2): a view the ticks cannot be placed on is refused BEFORE
-  any export with the measured size, the outcome is `unmeasurable`, and the
-  finder and the roll-up tell it from a failed capture, in old runs too.
+- **The received run is NOT an interactive capture.** Its `run_meta.
+  opened_from` is `{"source": "batch_capture", "detach":
+  "DetachAndPreserveWorksets", "worksets": "all", "title":
+  "KSRF_Hosp_Interior_AR_V41_3.1 GB_2025-09-06_detached"}` (OBSERVED). It
+  was run on 2026-10-11 by exporter `1.2.0+src.d3ccc3e116cb`, commit
+  `036c729c`, Revit 2025 (25.4.41.14), config hash `9400eaef`, 284 views
+  requested; on 2026-10-13 52 of its views were recaptured by 1.3.0 for
+  `ticks_outside_crop_loop` (`recaptures[0]`; none of the six plans, whose
+  sidecars carry `registration_marks.recapture: null`). So the pass/fail
+  split is NOT batch-vs-interactive as labelled: at least one passing run
+  was batch-opened. What the failing runs' `opened_from` says is the first
+  thing to read (§1.3).
+- **Group A** (`annotation_lattice_mismatch`): the mechanism is settled
+  from the code (§1.1) and the passing run's numbers are OBSERVED (§1.2):
+  all six plans accepted at their request, annotation export at the
+  model's size to the pixel, and **four of them 1-2 px under the 10000 px
+  ceiling on the derived axis** -- 0.03-0.06 ft of model space from a
+  dimension mismatch. The bbox-union premise of the first proposed fix is
+  FALSIFIED by the same run (§1.4). Which branch the failing runs took is
+  still INFERENCE: no failing sidecar received. No capture-side fix is
+  made.
+- **Group B** (small or thin views): run_meta of the passing run records
+  4622, 142022, 9236660 and 8902097 in the tick-floor shape and 8169028
+  and 9080636 as `annotation_export_degenerate` (OBSERVED, §2.1); the four
+  G010/A112 legends were not requested by that run (consistent with "new
+  10-11"). The measured sizes still need those views' sidecars. The policy
+  is decided and implemented (§2.2), and the finder run read-only over the
+  received run_meta already separates the two degenerate views from the
+  four candidates (§2.3).
 - **Deliverable (d)**: `capture_status` / `CaptureStatus` `unmeasurable`,
   reason `below_capture_floor: ...` or `annotation_export_degenerate` (§3).
-- **Comparability**: `Analysis-Impact: none` on every commit (§4): no view
-  that captured successfully before captures differently; only the outcome
-  of views that never captured changes.
+- **Comparability**: `Analysis-Impact: none` on every commit (§4).
 
 ## 1. Group A — `annotation_lattice_mismatch` on the six Wall Types BP plans
 
-Views 4148625, 9468987, 9560929, 9594635, 9595813, 9596211, FloorPlan, scale
-48, template "Wall Study" (OBSERVED: `views_core_2025-10-25.csv` rows; that
-run is `20251025T000000`, the same model under an older build, so the
-metadata is evidence about the views, not about any series run). Greg's
-reading of the series: clean 08-23..09-06 and on the 11-01 batch run,
-`annotation_lattice_mismatch` on every interactive run 09-13..10-25 (not
-re-read here: no run_meta on hand).
+Views 4148625, 9468987, 9560929, 9594635, 9595813, 9596211, FloorPlan,
+template "Wall Study". Greg's reading of the series: clean 08-23..09-06 and
+on the 11-01 batch run, `annotation_lattice_mismatch` on every run
+09-13..10-25 (not re-read here: no failing run_meta on hand).
 
 ### 1.1 The mechanism, from the code (OBSERVED)
 
@@ -62,102 +73,102 @@ cases, now one pure predicate `annotation_lattice_mismatch_faults()` (this
 branch) with the same two messages:
 
 1. **The annotation export was accepted at a PixelSize other than the one
-   the lattice requires.** For a view whose authored crop is ACTIVE (the
-   registered capture sets `color_id_buffer_anno_crop_mode =
-   "authored_else_crop_a"`), the required figure is the MODEL pass's
-   `crop_px` on the fitted axis (`requested_px_source: "model_crop_px"`).
-   What Revit accepts is what `_export_tiff()` returns after its
+   the lattice requires.** With the authored crop ACTIVE (every plan here:
+   `frame.crop_write.authored_crop_active: true`, `registration.
+   crop_applied: "none"`, `requested_px_source: "model_crop_px"`) the
+   required figure is the MODEL pass's `crop_px` on the fitted axis. What
+   Revit accepts is what `_export_tiff()` returns after its
    measure-and-back-off loop: the export passes only when the fitted axis
    is within 1 px of the request AND neither axis exceeds `max_axis_px`
    (10000, `resolution_contract.MAX_STAGE_A_AXIS_PX`); otherwise it halves
    WHAT REVIT ACCEPTED and re-exports, at most `MAX_MISMATCH_RETRIES` (2)
-   times. The annotation pass renders the view's DRAWN extent, not the
-   crop: FitToPage fits the drawn content, annotation outside the crop
-   included (the comment above `anno_crop_mode` cites the 2026-09-22
-   handoff's 21.4 % scale mismatch on one section). So an annotation
-   extent whose DERIVED axis exceeds 10000 px at the model lattice comes
-   back `mismatch`, is halved, passes at half, and the pass is then
-   off-lattice by exactly 2x.
+   times. An annotation export whose DERIVED axis comes back even 1 px
+   over the ceiling is halved, passes at half, and the pass is off-lattice
+   by exactly 2x.
 2. **The MODEL export was accepted off its own request**
-   (`model_accepted_px != requested_px`). `_set_pixel_size_with_backoff()`
-   halves the request when Revit raises on `PixelSize`; the model pass's
-   own dimension check compares the file against what was ACCEPTED, so it
-   passes and the model sidecar reports `dim_check: "pass"` with
-   `pixel_size` at half the request. Only the annotation pass, holding both
-   halves through `geometry_out`, raises.
+   (`model_accepted_px != requested_px`): `_set_pixel_size_with_backoff()`
+   halves on an ArgumentException from `PixelSize`; the model pass's own
+   dimension check compares the file against what was ACCEPTED and passes.
+   Only the annotation pass, holding both halves, raises.
 
-Both are reproduced from the real functions in
-`tests/test_annotation_lattice_mismatch_arithmetic.py` (branch 1: 10000 x
-10667 -> mismatch -> 5000 x 5333 -> pass -> fault; branch 2: 10000 asked,
-5000 taken, file 5000 x 3333, model check passes, fault at the annotation
-pass). The sizing for a 1/48 plan at the default 150 dpi (OBSERVED
-constants): requested 48 / (12 x 150) = 0.026667 ft/px, so the cap holds any
-crop A longer than 266.7 ft and the lattice is then crop_fit_ft / 10000.
+Both branches are reproduced from the real functions in
+`tests/test_annotation_lattice_mismatch_arithmetic.py`.
 
-### 1.2 Why one environment and not the other — candidates (INFERENCE)
+### 1.2 The passing run's numbers (OBSERVED, `2025-09-06__20261011T094136`)
 
-| candidate | branch | what it needs | discriminated by |
+Horizontal fit, 150 dpi, every crop authored and active, both passes'
+`dim_check: "pass"` on their first and only attempt, `capture_faults: []`
+in both sidecars, 12 of 12 ticks drawn (`registration_marks.marks`),
+`mark_reference_source: "authored_crop"`:
+
+| view | scale | crop A (ft) | pre_cap_px | fitted px | derived predicted / actual | annotation export | headroom under 10000 |
+|---|---|---|---|---|---|---|---|
+| 4148625 LOWER LEVEL | 48 | 222.6 x 297.7 | 8347 | 7476 (capped) | 10000 / 9999 | 7476 x 9999 | 1 px = 0.030 ft |
+| 9468987 LEVEL 1 | 48 | 279.9 x 292.9 | 10495 | 9555 (capped) | 9999 / 9998 | 9555 x 9998 | 2 px = 0.059 ft |
+| 9560929 LEVEL 2 | 48 | 280.4 x 300.2 | 10516 | 9340 (capped) | 10000 / 9999 | 9340 x 9999 | 1 px = 0.030 ft |
+| 9594635 LEVEL 3 | 48 | 341.7 x 284.4 | 12813 | 10000 (capped, fitted axis) | 8324 / 8323 | 10000 x 8323 | fitted axis AT the ceiling |
+| 9595813 LEVEL 4 | 48 | 281.6 x 311.2 | 10561 | 9050 (capped) | 10000 / 9999 | 9050 x 9999 | 1 px = 0.031 ft |
+| 9596211 LEVEL 5 | **128** | 202.1 x 354.7 | 2842 | 2842 (not capped) | 4989 / 4988 | 2842 x 4988 | 5012 px |
+
+Three facts follow:
+
+- **Branch 2 is not in play here**: every `accepted_px` equals its
+  `requested_px` in both sidecars. Revit 2025 took 10000 for LEVEL 3.
+- **Four plans are capped ON THE DERIVED AXIS, and the cap puts them 1-2
+  px under the ceiling.** `cap_axes` scales the request by
+  `cap / derived`, so the derived axis lands at the ceiling by
+  construction; Revit then rounds it to 9998-9999. The annotation pass
+  re-exports the same extent at the same request and must come back under
+  10000 too. It did here. **Any +1 or +2 px on the annotation export's
+  derived axis -- a different rounding, 0.03 ft more extent -- is a
+  mismatch, a halving, and `annotation_lattice_mismatch`.** LEVEL 3,
+  capped on the FITTED axis, has 1677 px of play on the derived axis and
+  would need the extent to grow 20 % to fail the same way; LEVEL 5 at
+  1/128 is not capped at all.
+- **LEVEL 5 was at scale 128 in the 2025-09-06 archive and at 48 in the
+  2025-10-25 one** (`views_core_2025-10-25.csv`, an older build but the
+  same model). At 1/48 its 202 x 355 ft crop is 7574 x 13298 px before the
+  cap: capped on the derived axis like the other four, 1-2 px under the
+  ceiling. A scale change in the archive is a model-side event that puts a
+  view INTO the fragile set; the sidecar of a failing run says when.
+
+### 1.3 Why one run and not the other — candidates (INFERENCE), and what decides them
+
+| candidate | branch | what §1.2 says | decided by (failing run) |
 |---|---|---|---|
-| **A1. Annotation past the crop grew the drawn extent past the cap** on the derived axis (a grid line's head, an elevation marker, a tag far outside the crop; or a linked model's annotation) in the interactive document and not in the batch-opened one | 1 | model `cap_applied` true or crop A near the cap; annotation `dim_check_attempts[0]` with one axis > 10000 and a second attempt at half | annotation sidecar `frame.dim_check_attempts` (every attempt's requested / accepted / actual_w / actual_h); from the next run, `registration_marks.annotation_extent_prediction.exceeds_cap` (§1.5) |
-| **A2. Revit's own PixelSize ceiling was lower in the interactive session** (the backoff's docstring: it "can vary by version/install"; a 10000 px request rejected, 5000 taken) | 2 | model `frame.dim_check_attempts[0].accepted_px` < `requested_px` | model sidecar `frame.pixel_size` vs `dim_check_attempts[0].requested_px`; `views_diagnostics` warning `pixel_size_backoff` |
-| **A3. A different crop A** (the plans' crop changed in the archive on 09-13: crop A longer, cap applied, lattice coarser) with the annotation extent unchanged | 1 | passing and failing runs' `frame.crop_uv` differ | model sidecar `frame.crop_uv`, `cap_applied`, `pixel_size`; `registration_marks.crop_shape` |
-| **A4. A different exporter build** between the as-of 09-06 and 09-13 runs (run_id is the execution clock; the as-of date is the archive date, so the series may have been run on several builds) | either | `run_meta.exporter_version` differs across the boundary | `run_meta.json` `exporter_version`, `git_commit` per run |
-| **A5. The batch run's document is smaller** (links not loaded when opened detached from Desktop Connector paths; `opened_from` records detached + worksets, not links) so the annotation extent in the 11-01 run stayed inside the cap | 1 | 11-01 annotation `actual_h` well under 10000 where 10-25's first attempt is over | 11-01 vs 10-25 annotation `dim_check_attempts`; `run_meta.opened_from`; `link_categories` in the registration record |
+| **A1'. The annotation export's derived axis came back 1-2 px larger than the model's** (9998 -> 10001: a different rounding, a crop read 0.03 ft taller, the annotation crop region, a datum head at the edge) | 1 | four plans have 1-2 px of headroom; LEVEL 3 and LEVEL 5 (at 1/128) do not. If LEVEL 3 ALSO failed on 09-13..10-25, a 1-2 px effect cannot be the whole story | annotation sidecar `frame.dim_check_attempts[0].actual_h` just over 10000 (A1') or far over (a real extent change); `frame.crop_uv` vs 09-06's; which of the six failed |
+| **A1. Annotation past the crop extended the drawn extent** | 1 | **Falsified as a bbox-union effect**: unions 1.05-1.80x crop A (detail items with bboxes to -105 ft, 299 ft) and the export at crop A's size to the pixel, on five plans (§1.4) | same fields; `actual_h` far over 10000 would revive a different form of it (an element Revit draws outside the crop that it did not draw in batch) |
+| **A2. Revit's PixelSize ceiling lower in that session** | 2 | not seen: 10000 accepted | model sidecar `frame.dim_check_attempts[0]` with `accepted_px < requested_px`; `views_diagnostics` warning `pixel_size_backoff` |
+| **A3. A different crop A in the archive** | 1 | LEVEL 5's scale changed between archives; crops may have too | `frame.crop_uv` per run against the table above |
+| **A4. A different exporter build** | either | 09-06 ran on 1.2.0+src.d3ccc3e116cb, 2026-10-11; the series was captured over several days and builds | `run_meta.exporter_version` / `git_commit` per run; the 09-13 run's against 09-06's |
+| **A5. Opened differently** (the received "interactive" run is batch-opened, detached, all worksets) | 1 | the labels do not hold: see §0 | `run_meta.opened_from` per run: absent for a true interactive run, `batch_capture` otherwise |
 
-A1 is the leading candidate because it is the only one in which the SAME
-request produces a different file: the six plans are the largest floor
-plans in the model, so they are the ones at the cap, where any growth of the
-derived axis tips it. "A larger crop because a workset was open" (the task's
-candidate) goes the WRONG way for the batch run: the batch opens ALL
-worksets (`batch_capture.py`, `DetachAndPreserveWorksets`, never
-`CloseAllWorksets`), so it would have the larger extent, yet it passed. A5
-(links absent in the batch) is the version of that candidate consistent with
-the evidence.
-
-### 1.3 What to read from the sidecars (the OBSERVED facts to fill in)
-
-From one FAILING run (any of 09-13..10-25) and one PASSING run (09-06 and
-11-01), per view, `color_id_buffer/<stem>.json` and `<stem>_anno.json`:
-
-| field | model sidecar | annotation sidecar |
-|---|---|---|
-| `frame.fit_direction`, `frame.view_scale` | the axis | same |
-| `frame.pixel_size`, `frame.pre_cap_px`, `frame.cap_applied`, `frame.max_axis_px` | request and cap | accepted |
-| `frame.dim_check`, `frame.dim_check_attempts[]` (`requested_px`, `accepted_px`, `actual_w`, `actual_h`, `dim_check`) | branch 2 shows here | branch 1 shows here |
-| `frame.crop_uv`, `frame.crop_px`, `frame.achieved_fpp_ft` | the lattice | `registration.requested_px_source` |
-| `capture_integrity.capture_faults[].fault` / `.detail` | — | the fault's message names the accepted and required px |
-| `registration_marks.crop_shape`, `.mark_reference_source`, `.annotation_extent_prediction` (next run only) | A3, A1 | — |
-| `run_meta.json`: `exporter_version`, `git_commit`, `opened_from`, `views[].capture_failure_reason` | A4, A5 | — |
-
-`tests/test_annotation_lattice_mismatch_arithmetic.py::RECORDED` takes one
-entry per view from these (model requested/accepted, annotation required,
-annotation attempts) and runs them through the predicate unchanged; the
-placeholder entry is marked INFERRED.
+A1' is the leading candidate because it needs only what §1.2 shows: a
+lattice that is, by construction, within rounding of the ceiling. It is
+INFERENCE until a failing annotation sidecar's first attempt is read.
 
 ### 1.4 Could the capture size both passes onto one lattice instead? (question 3)
 
-Yes, arithmetically, for branch 1: size crop A so that the PREDICTED
-annotation extent (crop A united with every annotation bbox, which
-`annotation_avoid_rects()` already collects before the model pass for the
-tick relocation) fits the cap. `frame_export_geometry(union, crop_a, ...)`
-then gives the lattice; for the test's 300 x 320 ft case it is 0.032 against
-0.030 ft/px (9375 x 10000 frame, crop A 9375 x 6250), and the annotation
-pass's request of 9375 renders 9375 x 10000 with no halving
-(`test_the_proposed_fix_sizes_crop_a_against_the_predicted_union_...`).
+**Sizing crop A against the annotation bbox union is NOT the fix.** The
+arithmetic is in `test_sizing_crop_a_against_the_bbox_union_would_change_
+passing_views_and_is_not_the_fix`: it would have coarsened the five passing
+plans' lattices by 5-80 % (their unions exceed crop A by that much) while
+their exports needed nothing. `breaking`, for nothing. Rejected on the
+evidence of §1.2.
 
-What it does to comparability: the lattice changes ONLY where the union
-exceeds the cap, which is exactly where the capture refuses today, so a
-view that captured before keeps its lattice -- IF FitToPage's extent is the
-bbox union. That is the unconfirmed premise (A1), and the reason the fix is
-not made in this branch: made on the wrong premise it would change the
-lattice of views that pass today (every view whose bbox union exceeds the
-cap while Revit's actual extent does not), which is `breaking`. When the
-sidecars confirm branch 1 and the prediction (§1.5) matches the measured
-extent, the fix is a `fix(capture)!` declared breaking for the six plans'
-runs after it (their lattice becomes 6-7 % coarser in the test case; the
-08-23..09-06 captures of the same views were at the crop A lattice) and
-`none` for every other view. Branch 2 has no capture-side fix: a ceiling
-Revit imposes per install can only be recorded.
+**What would hold both passes on one lattice** if A1' is confirmed: leave
+headroom under the ceiling on the derived axis when the cap binds it
+(`cap_axes` targeting, say, `cap - 8` instead of `cap`), so a ±2 px
+rounding difference between the two passes cannot cross it. That changes
+the fitted pixel count of EVERY derived-axis-capped view that captures
+cleanly today (four of these six, and every other capped plan in the
+model): their lattice coarsens by ~0.1 %. That is `breaking` -- for every
+capped view in the series, not just the failing ones -- and it is the
+reason it is not made here: a MAJOR for an unconfirmed cause. If the
+failing sidecars show `actual_h` of 10001-10002 (A1'), the fix is a
+`fix(resolution)!` with that declaration; if they show a large extent
+change, the cause is in the document and the fix is elsewhere. Branch 2
+has no capture-side fix: a ceiling Revit imposes can only be recorded.
 
 ### 1.5 What was changed for group A (this branch)
 
@@ -166,15 +177,20 @@ Revit imposes per install can only be recorded.
   messages, same faults (refactor, `Analysis-Impact: none`).
 - `stage_a_registration.annotation_extent_prediction()` and
   `registration_marks.annotation_extent_prediction` in BOTH sidecars: crop A
-  and the union of crop A with the annotation bboxes, in px on the model
-  lattice, `growth` per axis and `exceeds_cap`. A diagnostic read by nothing
-  in the capture (`none`). On the next run of the six plans it says, before
-  the model pass, whether A1 can be the cause.
-- `tests/test_annotation_lattice_mismatch_arithmetic.py`.
+  united with the annotation bboxes, in px on the model lattice, `growth`
+  per axis and `exceeds_cap` -- a diagnostic read by nothing (`none`).
+  **It is not a predictor of the export's extent** (§1.4: the 09-06 run
+  would have reported `exceeds_cap: true` on five plans that exported at
+  crop A's size). It is recorded so a failing run has the union beside the
+  measured extent, which no received file has shown together.
+- `tests/test_annotation_lattice_mismatch_arithmetic.py`: both branches,
+  a control, the rejected proposal's arithmetic, and `RECORDED` with the
+  six 09-06 entries (OBSERVED, no fault, headroom pinned per plan) and one
+  INFERRED failing shape until a failing run is read.
 
 ## 2. Group B — views below the capture floor
 
-### 2.1 The rules, and which each view trips (per-view: INFERENCE until the sidecars)
+### 2.1 The rules, and which each view trips
 
 OBSERVED rules:
 
@@ -198,21 +214,19 @@ OBSERVED rules:
   reason>" and `registration_marks_may_not_draw` on the None): BOTH faults,
   every time, and the capture went on to export both passes.
 
-Per view (metadata OBSERVED from `views_core_2025-10-25.csv`; the rule
-column is INFERENCE; the sidecar column names the field that settles it):
+Per view. The SHAPE column is OBSERVED from `run_meta.views[]` of
+`2025-09-06__20261011T094136` (status; reason); the measured size needs the
+view's sidecar, not received:
 
-| view | type | scale | floor on the short side | rule (inferred) | settles it |
+| view | type / scale (views_core 10-25) | floor on the short side | shape recorded 09-06 (OBSERVED) | rule | settles the size |
 |---|---|---|---|---|---|
-| 4622 Drawing Index Submission Matrix Legend | Legend | 1 | 192 px = 0.107 ft (1.28 in) | tick floor: "a single number" is far under 1.28 in + one 1/8 in cell | model sidecar `registration_marks.faults[registration_marks_incomplete].message` ("... N px on its short side, too small for ...") and `frame.crop_uv` |
-| 142022 Frame Types | Legend | 48 | 192 px = 5.12 ft | tick floor if the legend's elements span under 5.12 ft on the short side; else degenerate | same |
-| 10981328 PLANNING KEYNOTE LEGEND (A112) | Legend | 128 | 192 px = 13.65 ft | tick floor (a keynote table 1.28 in high on paper) | same |
-| 11067410 / 11067417 / 11067424 (G010, 2023-06-27_...) | Legend | 1 | 1.28 in | tick floor (text blocks under 1.28 in on their short side) | same |
-| 8169028 Glazing Study - L4 East | Elevation | 96 | 192 px = 10.24 ft | a thin strip: tick floor if the crop is under 10.24 ft tall; `aspect_clamp` if the annotation export is >= 9.95:1 | model `registration_marks.faults`; annotation `capture_faults[annotation_export_degenerate].detail` (`reason`, `actual_px`, `model_px`, `aspect`, `coarsening_lower_bound`) |
-| 9236660 Section 12 | Section | 128 | 192 px = 13.65 ft | same two candidates | same |
-
-Views 10981328 and 11067410/17/24 are "new 10-11, never captured" (Greg); a
-legend that was never on a sheet before 10-11 is consistent with their
-appearing then. Not checked: no run_meta.
+| 4622 Drawing Index Submission Matrix Legend | Legend / 1 | 192 px = 1.28 in | `registration_failed`; `registration_marks_incomplete;registration_marks_may_not_draw` | tick floor (the shape an unavailable layout writes; a lines-hidden view losing a tick writes the same -- INFERENCE until the sidecar's fault message is read) | model sidecar `registration_marks.faults[registration_marks_incomplete].message` ("... N px on its short side, too small for ...") |
+| 142022 Frame Types | Legend / 48 | 192 px = 5.12 ft | same | tick floor (same caveat) | same |
+| 9236660 Section 12 | Section / 128 | 192 px = 13.65 ft | same | tick floor, NOT the aspect clamp (same caveat) | same, plus `frame.crop_uv` |
+| 8902097 ILLUSTRATIVE VIEW - Level 1 - Providers Sleep Room - AB | not in views_core 10-25 | -- | same | tick floor (same caveat); not in Greg's list, same shape | same |
+| 8169028 Glazing Study - L4 East | Elevation / 96 | -- | `annotation_failed`; `annotation_export_degenerate` | degenerate export (OBSERVED by fault name); `aspect_clamp` vs `coarsening` needs the detail | annotation `capture_faults[annotation_export_degenerate].detail` (`reason`, `actual_px`, `model_px`, `aspect`, `coarsening_lower_bound`) |
+| 9080636 ILLUSTRATIVE VIEW ... AB Copy 1 | not in views_core 10-25 | -- | same as 8169028 | same | same |
+| 10981328, 11067410, 11067417, 11067424 | Legend / 128, 1, 1, 1 | 1.28 in (13.65 ft at 1/128) | **not requested by the 09-06 run** (OBSERVED: `views_requested`) | tick floor (INFERENCE) | the 10-11+ runs' sidecars |
 
 ### 2.2 The policy, decided and implemented
 
@@ -278,12 +292,27 @@ Implemented (this branch):
   `run_meta_capture_status.counts` gains `unmeasurable`), for a requested
   view with no sidecar or with one on disk, by the same classifier.
 
+### 2.3 The finder over the received run (OBSERVED, read-only, this branch)
+
+`python tools/find_recapture_views.py <run_0906> --out <elsewhere>` over
+the received `run_meta.json` plus the six plans' sidecars:
+
+| | |
+|---|---|
+| `failed` | 63: 59 3D views "rejected by capability gating" + 4622, 142022, 8902097, 9236660 (`capture_failed`, reason ending "a below-floor candidate (an unavailable tick layout records these two faults) with no sidecar on disk to confirm it") |
+| `below_floor` | 2: 8169028, 9080636 (`rule annotation_export_degenerate`, `evidence run_meta`) |
+| `recapture` | the six plans, "ticks drawn but no registration record" -- an artefact of the zip carrying no `_anno.registered.json`, not a finding |
+
+With the four candidates' model sidecars beside the run_meta the same
+command moves them to `below_floor` with `evidence sidecar`, or leaves them
+`capture_failed` if their fault message is not the size refusal.
+
 On the series: re-running the finder over the 44 runs (no recapture needed)
-moves every old-shape row whose model sidecar is on disk with the "too
-small" fault message to `below_capture_floor`, and every
-`annotation_export_degenerate` row too; a row whose sidecar is gone stays
-`capture_failed` and says it is a candidate. The six group A plans stay
-`capture_failed` (`annotation_lattice_mismatch` is not a floor rule).
+reclassifies every old-shape row whose model sidecar is on disk with the
+"too small" fault message, and every `annotation_export_degenerate` row;
+a row whose sidecar is gone stays `capture_failed` and says it is a
+candidate. The six group A plans stay `capture_failed`
+(`annotation_lattice_mismatch` is not a floor rule).
 
 ## 3. Deliverable (d): what BI filters on
 
@@ -317,12 +346,13 @@ floor, or a crop that shrank).
 - The lattice-mismatch predicate is an extraction with identical faults and
   messages; `annotation_extent_prediction` is a new diagnostic key.
 - `annotation_lattice_mismatch` itself is unchanged: the six plans keep
-  failing until the sidecars decide §1.4.
+  failing until a failing run decides §1.3.
 
 ## 5. Verification
 
 - `python -m pytest tests/ -q`: 2584 passed at `c75b750` before the change
-  (2 xfailed); after it, the count in the PR's description.
+  (2 xfailed); 2603 after the first push; the count after the 09-06
+  evidence is in the PR.
 - Mutation (OBSERVED, this session): with `raise CaptureBelowFloor`
   disabled, `tests/test_capture_floor.py::test_a_view_under_the_floor_is_
   refused_before_any_export` is red (the view exports twice and comes back
@@ -331,15 +361,23 @@ floor, or a crop that shrank).
 - flake8 at 120 columns: the files this branch touches add no finding
   beyond main's (84 pre-existing in `csv_export.py`, `color_id_buffer.py`
   and `stage_a_registration.py`, none on changed lines).
+- `tools/check_stage_a_no_geometry.py vop_interwoven`: PROVEN (333
+  reachable, 0 geometry); `check_no_bare_except`: OK; `analysis_version.py
+  check`: every `vop_interwoven/` commit declared.
 
-## 6. Files requested from Greg (one batch)
+## 6. Files still needed (one batch)
 
-For group A: from ONE failing run (10-25 is the latest) and TWO passing
-runs (09-06 interactive, 11-01 batch), `run_meta.json` and, for the six
-plans, `color_id_buffer/<stem>.json` and `<stem>_anno.json` (no TIFFs
-needed). For group B: from the latest run, `run_meta.json` and the model
-and annotation sidecars of 4622, 142022, 10981328, 11067410, 11067417,
-11067424, 8169028, 9236660. Plus the finder's `recapture_views.csv` for the
-series. With those, §1.2's table becomes OBSERVED, `RECORDED` in the
-arithmetic test takes the six plans' numbers, and §2.1's rule column is
-read rather than inferred.
+For group A, ONE FAILING run (10-25 is the latest; 09-13 is the first):
+`run_meta.json` (its `opened_from`, `exporter_version`, and which of the
+six failed) and the six plans' `color_id_buffer/<stem>.json` and
+`<stem>_anno.json`. The annotation sidecar's `frame.dim_check_attempts[0].
+actual_h` decides between A1' (10001-10002), a real extent change (far
+over), and branch 2 (`accepted_px < requested_px` in the MODEL sidecar);
+`frame.crop_uv` against §1.2 decides A3. The 11-01 batch run's for the
+same six would show whether its lattice is 09-06's.
+
+For group B, from the latest run: the model and annotation sidecars of
+4622, 142022, 9236660, 8902097 (the fault message with the measured px),
+8169028 and 9080636 (the degenerate detail), and of 10981328, 11067410,
+11067417, 11067424 from any run that requested them. Plus the finder's
+`recapture_views.csv` for the series.

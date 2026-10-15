@@ -870,8 +870,9 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         avoid, record["mark_avoidance"] = annotation_avoid_rects(
             view, _anno, getattr(raster, "view_basis", None), diag=diag,
             view_id=view_id)
-        # A diagnostic only (group A of RUN_..._SMALL_VIEWS.md): the extent
-        # the annotation export is expected to render, against the cap.
+        # A diagnostic only (group A of RUN_..._SMALL_VIEWS.md): crop A
+        # united with the annotation bboxes, against the cap. Not the
+        # export's extent (see the function): recorded to compare with it.
         from .color_id_buffer import MAX_STAGE_A_AXIS_PX
         record["annotation_extent_prediction"] = registration.annotation_extent_prediction(
             reference, avoid, mark_fpp,
