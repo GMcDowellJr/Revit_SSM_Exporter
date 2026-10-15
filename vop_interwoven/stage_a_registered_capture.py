@@ -56,6 +56,13 @@ from .revit.safe_api import element_id_value as _element_id_int
 REGISTERED_CAPTURE_SCHEMA = "vop.stage_a.registered_capture.v1"
 
 
+class CaptureBelowFloor(ValueError):
+    """The view is below the capture floor (vop_interwoven/capture_floor.py):
+    the twelve ticks cannot be placed on its reference rectangle. Raised
+    BEFORE anything is exported; the view gets no files and the outcome
+    ``unmeasurable``."""
+
+
 def _read(fn):
     """Three-valued read of one view property."""
     try:
@@ -635,6 +642,8 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # export to crop A (None for every other view).
         "frame_bounds": record.get("frame_bounds"),
         "reference_source": record.get("mark_reference_source"),
+        # Diagnostic: the annotation export's expected extent against the cap.
+        "annotation_extent_prediction": record.get("annotation_extent_prediction"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
                           if shared_colour is not None else
@@ -687,6 +696,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     model_out = None
     anno_out = None
     recapture_refused = None
+    below_floor = None
     model_member_ids = []
     # The frame-bound lines of a view with no crop region: drawn by the
     # capture, WHITE in both passes, rolled back with the ticks.
@@ -860,6 +870,27 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         avoid, record["mark_avoidance"] = annotation_avoid_rects(
             view, _anno, getattr(raster, "view_basis", None), diag=diag,
             view_id=view_id)
+        # A diagnostic only (group A of RUN_..._SMALL_VIEWS.md): the extent
+        # the annotation export is expected to render, against the cap.
+        from .color_id_buffer import MAX_STAGE_A_AXIS_PX
+        record["annotation_extent_prediction"] = registration.annotation_extent_prediction(
+            reference, avoid, mark_fpp,
+            getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX)
+        if isinstance(layout.get("below_floor"), dict):
+            # THE CAPTURE FLOOR. The reference rectangle cannot take the
+            # twelve ticks, so nothing this capture exported could register:
+            # legends 4622 and 142022 failed this way in all 44 runs of
+            # 2025-02-03..11-01 and were counted as a measure lost. Refused
+            # here, before any export, with the measurement; the outcome is
+            # ``unmeasurable`` (csv_export.stage_a_capture_status), which the
+            # finder and the roll-up tell apart from a failed capture.
+            record["below_capture_floor"] = dict(layout["below_floor"],
+                                                 reference_source=source,
+                                                 mark_fpp_basis=record["mark_fpp_basis"])
+            raise CaptureBelowFloor(
+                "below_capture_floor: {0} (floor {1:.0f} px; reference {2}; "
+                "{3:.6g} ft/px)".format(layout.get("reason"),
+                                        layout["below_floor"]["floor_px"], source, mark_fpp))
         layout = registration.relocate_marks_clear_of(layout, avoid)
         # A tick outside the loop will not render (3939979: 12 of 12, white
         # corners); said BEFORE the export rather than found by the fitter.
@@ -1092,6 +1123,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         recapture_refused = str(ex)
         _fault("recapture_refused", "the recapture would reproduce the failure; "
                                     "nothing was exported", ex)
+    except CaptureBelowFloor as ex:
+        below_floor = str(ex)
+        _fault("below_capture_floor", "the view is below the capture floor; "
+                                      "nothing was exported", ex)
     except Exception as ex:
         _fault("registered_capture_raised", "the registered capture stopped", ex)
     finally:
@@ -1246,6 +1281,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         model_out = {"view_id": view_id, "view_name": getattr(view, "Name", None),
                      "success": False,
                      "failure_reason": ("recapture_refused" if recapture_refused
+                                        else below_floor if below_floor
                                         else "registered_capture_raised"),
                      "stage": "color_id_buffer_stage_a",
                      "tiff_path": None, "sidecar_path": None}

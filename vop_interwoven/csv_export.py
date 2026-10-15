@@ -976,11 +976,24 @@ def stage_a_capture_status(view_result):
     capture stands but the annotation capture failed; "registration_failed"
     -- the registered capture recorded faults; else "success". Each carries
     the reason the result recorded, so a failure is never a bare flag.
+
+    "unmeasurable" -- the view is below the capture floor
+    (``capture_floor.FLOOR_RULES``): the ticks cannot be placed on it, or
+    its annotation export is degenerate. Not a failed capture: a recapture
+    would refuse the same way, and the series must not show the view as a
+    measure lost. The reason names the rule.
     """
+    from .capture_floor import UNMEASURABLE, floor_fault
     if view_result.get("success") is False:
-        return "failed", view_result.get("failure_reason") or view_result.get("error") or ""
+        reason = view_result.get("failure_reason") or view_result.get("error") or ""
+        if floor_fault(reason) is not None:
+            return UNMEASURABLE, reason
+        return "failed", reason
     if view_result.get("annotation_pass_success") is False:
-        return "annotation_failed", view_result.get("annotation_pass_failure_reason") or ""
+        reason = view_result.get("annotation_pass_failure_reason") or ""
+        if floor_fault(reason) is not None:
+            return UNMEASURABLE, reason
+        return "annotation_failed", reason
     if view_result.get("registration_success") is False:
         faults = (view_result.get("registration") or {}).get("faults") or []
         return "registration_failed", ";".join(
