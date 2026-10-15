@@ -260,6 +260,68 @@ run is refused, the count invariant fails, or on bad arguments.
 
 ---
 
+### `stage_a_element_census.py` - Model elements by identity, across views and runs
+
+A per-view sum of model cells counts an element once per view it is drawn
+in, so adding a sheet set of the same geometry adds cells and no modeling.
+The census keys the model layer by **element identity**, keeping "what was
+modeled" apart from "how much it is drawn". **Read-only:** it reads what
+`stage_a_grid.py` and the capture wrote, never decodes a TIFF, and refuses
+an `--out` inside a capture folder.
+
+**Which views:** the roll-up's own rows (`stage_a_grid_rollup.run_rows`). A
+requested view is measured when its row is `gridded`; every other requested
+view is unmeasured, counted by row status, and contributes no element. A
+failed capture is never a creation or a deletion.
+
+**Keys:** `host:<element_id>` (source `HOST` or `DWG` from the sidecar's
+`near_face_w_map.host`, read through `stage_a_sidecar_shapes`; `unrecorded`
+where it is not recorded) and `link:<link_inst_id>:<link_elem_id>` from
+`near_face_w_map.link`. Link pixels are colour-per-category, so a linked
+element's views and bbox are counted and its cells are not
+(`cells_state = link_category_only`); the linked categories' cells are one
+run figure, `link_category_cells_ink`.
+
+**Per element** (`<as_of_date>__<run_id>.elements.csv`): views collected and
+with pixels; px, ink px, cells with any pixel, cells with ink, summed over
+views, each through `stage_a_kinds._key_sums` (the roll-up's reader); the
+first appearance (the view where it has the most ink cells, ties to the
+lowest view id) and the repeat cells; its `bbox_3d` extent.
+
+**Per run** (`element_census_runs.csv`): distinct elements by source,
+cells per element, the first-appearance share, the views-per-element
+distribution, the grid's own occupancy model cells summed over measured
+views (the per-view figure), and, from the previous run, the transition
+counts and the Jaccard overlap of host element ids over the views measured in
+both (the check that element ids are stable between runs).
+
+**Across runs** (`element_census_series.csv`, ordered by run_meta `date`):
+per element, the first and last run seen and how. Between adjacent runs an
+element is `persisted`, or, from the views it was in on the side that saw
+it: `unmeasured` (any of them unmeasured on the other side), else
+`created` / `gone` (any measured there), else `new_view` / `view_dropped`
+(none requested there). `gone` = not drawn in any view that drew it before;
+deleted from the model is an inference.
+
+**Refusals:** a run the roll-up refuses, a run with no as-of date, and a run
+any of whose gridded views cannot be read element by element -- a grid made
+before `ec_keys` is `grid_predates_ec_keys`, never a zero. Two runs with one
+as-of date refuse the series (exit 2).
+
+**Usage:**
+```bash
+python tools/stage_a_element_census.py path/to/run
+python tools/stage_a_element_census.py <root>/2025-02-03__* --out census/
+```
+
+**Output:** the per-run element CSVs, `element_census_runs.csv`,
+`element_census_series.csv`, then `element_census.summary.json` (written
+last, naming every CSV's sha256). Exit 0 when no run is refused and every
+requested view is measured; 1 for an unmeasured view or a refused run; 2 when
+every run is refused, two runs share an as-of date, or on bad arguments.
+
+---
+
 ### `census_registration.py` - Registration-tick census across Stage A runs
 
 One CSV row per model sidecar: what the capture RECORDED about its
