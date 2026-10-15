@@ -200,6 +200,25 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
   unpainted and counted per category under `not_painted`.
+- **A view below the capture floor is refused before any export and is
+  `unmeasurable`, not failed** (2026-10-15, `vop_interwoven/capture_floor.py`,
+  the one place the rules are named). The twelve ticks need a reference
+  rectangle at least `stage_a_registration.mark_floor_px()` on its short side
+  (192 px: three times inset 24 + gap 8 + minimum arm 32; 1.28 paper inches
+  at 150 dpi); a smaller one raises `CaptureBelowFloor` after the mark layout,
+  the group rolls back, and the outcome is `failure_reason:
+  "below_capture_floor: <measured size> ..."` with no TIFF and no sidecar.
+  `csv_export.stage_a_capture_status()` maps that, and an
+  `annotation_export_degenerate` annotation failure (Revit's 10:1 clamp, or
+  >= 4x coarsening), to `capture_status` / `CaptureStatus` `unmeasurable`.
+  `tools/find_recapture_views.py` lists such views under `below_floor` and
+  never recaptures them; `tools/stage_a_grid_rollup.py` gives them row status
+  `below_capture_floor`. Runs before this wrote the tick rule as
+  `registration_failed` with `registration_marks_incomplete;
+  registration_marks_may_not_draw`; the tools read it as the floor only when
+  the model sidecar's `registration_marks.faults` message says "too small"
+  (the one place the old capture persisted it). The policy and the per-view
+  evidence are in `tools/notes/RUN_2025-02-03_to_2025-11-01_SERIES_SMALL_VIEWS.md`.
 
 **Sidecar shape (PR #221).** Readers must accept the old and new shapes
 alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field

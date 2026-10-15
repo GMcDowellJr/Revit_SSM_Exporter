@@ -897,3 +897,111 @@ def test_two_sidecars_claiming_one_view_are_not_guessed_between(tmp_path):
     assert "2 model sidecars carry view_id 2" in r["reason"]
     assert r["cells_w"] == ""
     assert summary["count_invariant"]["difference"] == 0
+
+
+# --- the capture floor (vop_interwoven/capture_floor.py) -----------------------
+
+OLD_FLOOR_SHAPE = "registration_marks_incomplete;registration_marks_may_not_draw"
+# What a build before the ``unmeasurable`` status persisted for the tick
+# rule: no marks, no layout, and the refusal only inside the fault message.
+TOO_SMALL_FAULTS = [
+    {"fault": "registration_marks_incomplete",
+     "message": "0 of 0 marks drawn: the reference rectangle is 48 px on its short side, "
+                "too small for 32 px ticks inset 24 px", "error": None},
+    {"fault": "registration_marks_may_not_draw",
+     "message": "the view hides OST_Lines, or its state could not be read (None)",
+     "error": None}]
+
+
+def _set_registration_faults(run, n, faults, marks=()):
+    path = run / "color_id_buffer" / "V_{0}.json".format(n)
+    doc = json.loads(path.read_text())
+    doc["registration_marks"]["faults"] = list(faults)
+    doc["registration_marks"]["marks"] = list(marks)
+    doc["registration_marks"]["layout"] = None
+    path.write_text(json.dumps(doc))
+
+
+def test_a_view_below_the_capture_floor_is_a_row_of_its_own_not_a_measure_lost(tmp_path):
+    """Legends 4622 and 142022 (2025-02-03..11-01, all 44 runs): the capture
+    refuses them before exporting (no sidecar, run_meta ``unmeasurable``),
+    or an older build wrote the tick rule as registration_failed and the
+    sidecar on disk says the layout was refused for size. Either is
+    ``below_capture_floor``; the same old shape with a marks record that
+    is NOT a size refusal stays ``not_this_run`` (the control)."""
+    run = _run(tmp_path)
+    _capture(run, 1)                                                    # gridded control
+    _outcome(run, 2, status="unmeasurable",
+             reason="below_capture_floor: the reference rectangle is 48 px on its short "
+                    "side, too small for 32 px ticks inset 24 px (floor 192 px)")
+    _capture(run, 3)                                                    # old shape + sidecar
+    _outcome(run, 3, status="registration_failed", reason=OLD_FLOOR_SHAPE)
+    _set_registration_faults(run, 3, TOO_SMALL_FAULTS)
+    _capture(run, 4)                                                    # old shape, drawn
+    _outcome(run, 4, status="registration_failed", reason=OLD_FLOOR_SHAPE)
+    _set_registration_faults(run, 4, [
+        {"fault": "registration_marks_incomplete", "message": "11 of 12 marks drawn: None"},
+        {"fault": "registration_marks_may_not_draw", "message": "the view hides OST_Lines"}],
+        marks=json.loads((run / "color_id_buffer" / "V_4.json").read_text())
+        ["registration_marks"]["marks"])
+    _outcome(run, 5, status="annotation_failed", reason="annotation_export_degenerate")
+    _capture(run, 6)                                                    # unmeasurable, files
+    _outcome(run, 6, status="unmeasurable", reason="annotation_export_degenerate")
+    _outcome(run, 7, status="failed", reason="export_dim_mismatch")     # a real failure
+    assert _main(run) == 1
+    by_stem, rows, summary = _read(run / "analysis_grid")
+    by_id = dict((r["view_id"], r) for r in rows)
+    assert by_stem["V_1"]["row_status"] == "gridded"
+    r2 = by_id["2"]
+    assert (r2["row_status"], r2["run_meta_capture_status"]) == (
+        "below_capture_floor", "unmeasurable")
+    assert r2["reason"].startswith("below the capture floor (below_capture_floor, evidence "
+                                   "run_meta)")
+    assert "48 px on its short side" in r2["reason"] and r2["view_stem"] == ""
+    r3 = by_stem["V_3"]
+    assert (r3["row_status"], r3["run_meta_capture_status"]) == (
+        "below_capture_floor", "registration_failed")
+    assert "evidence sidecar" in r3["reason"] and all(r3[c] == "" for c in GRID_COLUMNS)
+    r4 = by_stem["V_4"]
+    assert (r4["row_status"], r4["run_meta_capture_status"]) == (
+        "not_this_run", "registration_failed")
+    r5 = by_id["5"]
+    assert r5["row_status"] == "below_capture_floor"
+    assert "(annotation_export_degenerate, evidence run_meta)" in r5["reason"]
+    r6 = by_stem["V_6"]
+    assert (r6["row_status"], r6["run_meta_capture_status"]) == (
+        "below_capture_floor", "unmeasurable")
+    r7 = by_id["7"]
+    assert (r7["row_status"], r7["run_meta_capture_status"]) == ("no_stage_a_capture", "failed")
+    assert summary["row_status"]["counts"]["below_capture_floor"] == 4
+    assert summary["row_status"]["counts"]["not_this_run"] == 1
+    assert summary["run_meta_capture_status"]["counts"]["unmeasurable"] == 2
+    assert summary["count_invariant"]["difference"] == 0
+
+
+def test_run_metas_floor_verdict_beats_duplicate_stale_sidecars(tmp_path):
+    """A below-floor capture writes no files, so two stale sidecars of an
+    older run can share its view id. run_meta's own verdict (unmeasurable,
+    or a floor rule named outright) does not need a sidecar and decides the
+    row; the old shape, which does, stays sidecar_ambiguous (Codex,
+    PR #237)."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    _outcome(run, 2, status="unmeasurable", reason="below_capture_floor: 48 px on its short side")
+    _capture(run, 3)
+    _outcome(run, 3, status="registration_failed", reason=OLD_FLOOR_SHAPE)
+    _set_registration_faults(run, 3, TOO_SMALL_FAULTS)
+    cap = run / "color_id_buffer"
+    for n in (2, 3):
+        for suffix in (".json", "_anno.json", ".tiff", "_anno.tiff"):
+            (cap / ("V_{0}_{0}{1}".format(n, suffix))).write_bytes(
+                (cap / ("V_{0}{1}".format(n, suffix))).read_bytes())
+    assert _main(run) == 1
+    by_stem, rows, summary = _read(run / "analysis_grid")
+    by_id = dict((r["view_id"], r) for r in rows)
+    assert by_id["2"]["row_status"] == "below_capture_floor"
+    assert by_id["2"]["view_stem"] == "V_2|V_2_2"
+    assert "2 model sidecars carry view_id 2" in by_id["2"]["registration_reason"]
+    assert by_id["3"]["row_status"] == "sidecar_ambiguous"
+    assert summary["count_invariant"]["difference"] == 0

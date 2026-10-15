@@ -133,6 +133,16 @@ MARK_MIDS = (("left_mid", "horizontal", "u0", 1.0),
              ("mid_top", "vertical", "v1", -1.0))
 
 
+def mark_floor_px(inset_px=MARK_INSET_PX, gap_px=MARK_GAP_PX, min_arm_px=MARK_MIN_ARM_PX):
+    """PURE. The shortest side, in model-lattice pixels, a reference
+    rectangle can have and still take the twelve ticks: a corner tick's arm
+    must end inside the outer third of its axis, so that third holds inset +
+    gap + the minimum arm. 192 px at the shipped sizes. THE CAPTURE FLOOR
+    (vop_interwoven/capture_floor.py): a view under it is refused before
+    anything is exported and recorded ``unmeasurable``."""
+    return 3.0 * (float(inset_px) + float(gap_px) + float(min_arm_px))
+
+
 def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
                                gap_px=MARK_GAP_PX, arm_px=MARK_ARM_PX,
                                min_arm_px=MARK_MIN_ARM_PX):
@@ -167,10 +177,21 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
     room = extent_px / 3.0 - inset_px - gap_px
     arm = min(float(arm_px), room)
     if arm < float(min_arm_px):
-        return _unavailable(
+        # THE FLOOR, as a record beside the reason: the capture refuses on
+        # the key, the tools classify on it, and the measured size is what
+        # the run note and the series compare.
+        refusal = _unavailable(
             "the reference rectangle is {0:.0f} px on its short side, too small for "
             "{1:.0f} px ticks inset {2:.0f} px".format(extent_px, min_arm_px,
                                                          inset_px))
+        refusal["below_floor"] = {
+            "short_side_px": round(extent_px, 3),
+            "floor_px": mark_floor_px(inset_px, gap_px, min_arm_px),
+            "extent_px": [round((u1 - u0) / fpp, 3), round((v1 - v0) / fpp, 3)],
+            "reference_uv": [u0, v0, u1, v1], "fpp_ft": fpp,
+            "inset_px": float(inset_px), "gap_px": float(gap_px),
+            "min_arm_px": float(min_arm_px)}
+        return refusal
     inset, gap, arm_ft = inset_px * fpp, gap_px * fpp, arm * fpp
     segments = []
     for corner, su, sv in MARK_CORNERS:
@@ -206,6 +227,48 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
             "reference_uv": [u0, v0, u1, v1], "fpp_ft": fpp,
             "inset_px": float(inset_px), "gap_px": float(gap_px),
             "arm_px": arm, "colour": list(MARK_COLOUR)}
+
+
+def annotation_extent_prediction(reference_uv, avoid, fpp_ft, max_axis_px):
+    """PURE. A DIAGNOSTIC, read by nothing in the capture: crop A
+    (``reference_uv``) united with the annotation bboxes the relocation
+    already collected (``avoid``: ``[(id, [u0, v0, u1, v1]), ...]``), in
+    pixels on the model lattice, and whether that union exceeds
+    ``max_axis_px``.
+
+    THE UNION IS NOT THE EXPORT'S EXTENT. Run 2025-09-06__20261011T094136
+    (RUN_2025-02-03_to_2025-11-01_SERIES_SMALL_VIEWS.md, group A): on five
+    Wall Types BP plans the union was 1.05-1.80x crop A (detail items with
+    bboxes far outside the crop) and the annotation export still came back
+    at crop A's size to the pixel. So ``exceeds_cap`` says the union exceeds
+    the cap, not that the export will; it is recorded to be compared with
+    the measured extent (``frame.actual_w/h``) on a run that fails, where
+    the two have not yet been seen together. No verdict is drawn here."""
+    if not reference_uv or len(reference_uv) != 4 or not fpp_ft or fpp_ft <= 0:
+        return _unavailable("no reference rectangle or lattice")
+    u0, v0, u1, v1 = (float(v) for v in reference_uv)
+    fpp = float(fpp_ft)
+    uu0, vv0, uu1, vv1 = u0, v0, u1, v1
+    used = 0
+    for _eid, rect in avoid or []:
+        try:
+            a0, b0, a1, b1 = (float(v) for v in rect)
+        except (TypeError, ValueError):
+            continue
+        used += 1
+        uu0, vv0, uu1, vv1 = min(uu0, a0), min(vv0, b0), max(uu1, a1), max(vv1, b1)
+    crop_px = [(u1 - u0) / fpp, (v1 - v0) / fpp]
+    union_px = [(uu1 - uu0) / fpp, (vv1 - vv0) / fpp]
+    cap = None if max_axis_px is None else float(max_axis_px)
+    return {"state": "value",
+            "crop_a_px": [round(v, 1) for v in crop_px],
+            "union_px": [round(v, 1) for v in union_px],
+            "union_uv": [uu0, vv0, uu1, vv1],
+            "growth": [round(union_px[i] / crop_px[i], 4) if crop_px[i] > 0 else None
+                       for i in (0, 1)],
+            "avoid_rects_used": used,
+            "max_axis_px": cap,
+            "exceeds_cap": (None if cap is None else bool(max(union_px) > cap))}
 
 
 # RELOCATION (Greg, 2026-09-30): a tick drawn under an annotation element is

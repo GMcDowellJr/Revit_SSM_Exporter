@@ -3339,6 +3339,36 @@ def annotation_export_degenerate(actual_w, actual_h, model_px, vertical):
             "coarsening_limit": ANNOTATION_COARSENING_LIMIT}
 
 
+def annotation_lattice_mismatch_faults(anno_accepted_px, anno_required_px, requested_axis,
+                                       model_accepted_px=None, model_requested_px=None):
+    """PURE. The ``annotation_lattice_mismatch`` faults of one registered
+    capture, as ``[(fault, detail), ...]``: the annotation export accepted
+    at a PixelSize other than the one the shared lattice requires (the
+    model pass's crop_px on the fitted axis), and the MODEL export accepted
+    off its own request. Either way achieved_fpp_ft, frame_px and
+    crop_offset_px in the sidecar would describe a render that did not
+    happen, and the two captures cannot be overlaid by integer translation.
+
+    A None model figure (a pass that published none) decides nothing.
+    """
+    faults = []
+    if int(anno_accepted_px) != int(anno_required_px):
+        faults.append(("annotation_lattice_mismatch",
+                       "the annotation export was accepted at {0} px on the {1} axis but "
+                       "the shared lattice requires {2} px; feet-per-pixel is not the "
+                       "model capture's and the two cannot be overlaid by integer "
+                       "translation".format(anno_accepted_px, requested_axis,
+                                            anno_required_px)))
+    if (model_accepted_px is not None and model_requested_px is not None
+            and int(model_accepted_px) != int(model_requested_px)):
+        faults.append(("annotation_lattice_mismatch",
+                       "the MODEL export was accepted at {0} px where the lattice requires "
+                       "{1} px, so the model capture is off-lattice and this annotation "
+                       "capture cannot register against it".format(
+                           model_accepted_px, model_requested_px)))
+    return faults
+
+
 def crop_write_fault(crop_write):
     """PURE. The capture fault a crop record earns, or None.
 
@@ -6999,26 +7029,17 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # mismatch backoff halves it; either way achieved_fpp_ft, frame_px and
     # crop_offset_px in the record below would describe a render that did
     # not happen.
-    if int(actual_pixel_size) != int(pixel_size):
-        _fault("annotation_lattice_mismatch",
-               "the annotation export was accepted at {0} px on the {1} axis but "
-               "the shared lattice requires {2} px; feet-per-pixel is not the "
-               "model capture's and the two cannot be overlaid by integer "
-               "translation".format(actual_pixel_size, requested_axis, pixel_size))
-
-    # The same question asked of the MODEL capture, which this pass cannot
+    #
+    # The same question is asked of the MODEL capture, which this pass cannot
     # see except through what that pass published. Registration is a claim
     # about two images: one of them rendering off-lattice breaks it just as
-    # completely, and this pass is where both halves are finally known.
-    model_accepted_px = geom.get("model_accepted_px")
-    model_requested_px = geom.get("requested_px")
-    if (model_accepted_px is not None and model_requested_px is not None
-            and int(model_accepted_px) != int(model_requested_px)):
-        _fault("annotation_lattice_mismatch",
-               "the MODEL export was accepted at {0} px where the lattice requires "
-               "{1} px, so the model capture is off-lattice and this annotation "
-               "capture cannot register against it".format(
-                   model_accepted_px, model_requested_px))
+    # completely, and this pass is where both halves are finally known. Both
+    # halves are ONE pure predicate (annotation_lattice_mismatch_faults), so
+    # a test can run the recorded numbers of a failed view through it.
+    for fault_name, fault_detail in annotation_lattice_mismatch_faults(
+            actual_pixel_size, pixel_size, requested_axis,
+            geom.get("model_accepted_px"), geom.get("requested_px")):
+        _fault(fault_name, fault_detail)
 
     if dim_report.get("dim_check") == "mismatch":
         _fault("export_dim_mismatch", dim_report.get("dim_read_error"))
