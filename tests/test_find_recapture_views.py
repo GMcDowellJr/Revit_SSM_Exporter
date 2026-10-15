@@ -198,3 +198,73 @@ def test_ticks_the_annotation_itself_covers_are_review_not_recapture():
     assert finder.verdict(row)[0] == "recapture"
     row = dict(base, marks_blocked="3", anno_found_count="1", model_found_count="1")
     assert finder.verdict(row)[0] == "recapture"
+
+
+OLD_FLOOR_SHAPE = "registration_marks_incomplete;registration_marks_may_not_draw"
+
+
+def test_views_below_the_capture_floor_are_listed_apart_and_never_recaptured(tmp_path):
+    """The policy for views under the floor: unmeasurable, not failed. The
+    finder lists them under ``below_floor``, keeps them out of ``recapture``
+    even on --include-failed (a recapture would refuse them the same way),
+    and tells the old registration_failed shape apart by the sidecar: a
+    size refusal in its marks record is the floor, anything else is a
+    failed capture whose reason says it is a candidate."""
+    from tests.test_stage_a_grid_rollup import TOO_SMALL_FAULTS, _set_registration_faults
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})            # keep
+    _outcome(run, 2, status="unmeasurable",
+             reason="below_capture_floor: the reference rectangle is 48 px on its short "
+                    "side, too small for 32 px ticks inset 24 px (floor 192 px)")
+    _capture(run, 3, gridded=False, pair_kw={"shared_anno": True})            # old shape + sidecar
+    _outcome(run, 3, status="registration_failed", reason=OLD_FLOOR_SHAPE)
+    _set_registration_faults(run, 3, TOO_SMALL_FAULTS)
+    _outcome(run, 4, status="registration_failed", reason=OLD_FLOOR_SHAPE)    # no sidecar
+    _outcome(run, 5, status="annotation_failed", reason="annotation_export_degenerate")
+    _outcome(run, 6, status="failed", reason="export raised")                 # a real failure
+    out = tmp_path / "find"
+    assert finder.main([str(run), "--out", str(out), "--include-failed"]) == 0
+    rows = dict((r["view_id"], r) for r in csv.DictReader(
+        open(str(out / finder.CSV_NAME), encoding="utf-8", newline="")))
+    assert set(rows) == {"1", "2", "3", "4", "5", "6"}
+    assert rows["1"]["verdict"] == "keep"
+    assert rows["2"]["verdict"] == "below_capture_floor" and rows["2"]["provenance"] == "no_sidecar"
+    assert rows["2"]["reason"].startswith("below_capture_floor (run_meta): capture_status "
+                                          "unmeasurable: below_capture_floor: the reference")
+    assert rows["3"]["verdict"] == "below_capture_floor" and rows["3"]["provenance"] == "not_this_run"
+    assert rows["3"]["reason"].startswith("below_capture_floor (sidecar): capture_status "
+                                          "registration_failed: registration_marks_incomplete")
+    assert rows["3"]["view_stem"] == "V_3"
+    assert rows["4"]["verdict"] == "capture_failed"
+    assert "a below-floor candidate" in rows["4"]["reason"] and "no sidecar on disk" in (
+        rows["4"]["reason"])
+    assert rows["5"]["verdict"] == "below_capture_floor"
+    assert "(run_meta): capture_status annotation_failed: annotation_export_degenerate" in (
+        rows["5"]["reason"])
+    assert rows["6"]["verdict"] == "capture_failed"
+    entry = json.loads((out / finder.LISTS_NAME).read_text())["runs"][0]
+    assert entry["recapture"] == [4, 6] and entry["include_failed"] is True
+    assert [f["view_id"] for f in entry["failed"]] == [4, 6]
+    assert [(f["view_id"], f["rule"], f["evidence"]) for f in entry["below_floor"]] == [
+        (2, "below_capture_floor", "run_meta"), (3, "below_capture_floor", "sidecar"),
+        (5, "annotation_export_degenerate", "run_meta")]
+    assert entry["below_floor"][1]["capture_status"] == "registration_failed"
+    assert entry["keep"] == 1
+
+
+def test_below_floor_captures_pure():
+    ident = {"refused": None, "requested": [], "duplicates": {}, "outcomes": {
+        "1": {"view_id": 1, "view_name": "ok", "capture_status": "success",
+              "capture_failure_reason": ""},
+        "2": {"view_id": 2, "view_name": "legend", "capture_status": "unmeasurable",
+              "capture_failure_reason": "below_capture_floor: 48 px"},
+        "3": {"view_id": 3, "view_name": "old", "capture_status": "registration_failed",
+              "capture_failure_reason": OLD_FLOOR_SHAPE},
+        "4": None}}
+    assert finder.below_floor_captures(ident) == [
+        {"view_id": 2, "view_name": "legend", "capture_status": "unmeasurable",
+         "reason": "below_capture_floor: 48 px", "rule": "below_capture_floor",
+         "evidence": "run_meta"}]
+    # The old shape is a failed capture until a sidecar decides it.
+    assert [f["view_id"] for f in finder.failed_captures(ident)] == [3]
+    assert finder.below_floor_captures(dict(ident, refused="no run_meta")) == []

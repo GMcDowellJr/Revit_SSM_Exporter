@@ -54,7 +54,12 @@ def _int(v):
 def test_the_1_0_0_columns_are_unchanged_and_first():
     assert rollup.COLUMNS[:len(COLUMNS_1_0_0)] == COLUMNS_1_0_0
     assert len(set(rollup.COLUMNS)) == len(rollup.COLUMNS)
-    assert rollup.TOOL_VERSION == "1.1.1"
+    assert rollup.TOOL_VERSION == "1.2.0"
+    # 1.2.0 appended one row status; the 1.1.x ones keep their order.
+    assert rollup.ROW_STATUSES[:-1] == (
+        "gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable",
+        "not_this_run", "no_stage_a_capture", "orphan_sidecar", "sidecar_ambiguous")
+    assert rollup.ROW_STATUSES[-1] == "below_capture_floor"
 
 
 def test_a_derived_view_carries_its_class_totals_and_legacy_shapes(tmp_path):

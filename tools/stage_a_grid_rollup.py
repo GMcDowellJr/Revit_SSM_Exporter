@@ -38,6 +38,14 @@ ROW STATUS (never blank):
     carries no run id, so it is this run's only when run_meta.json records
     that view's capture as "success" (the rule of stage_a_timing_report.py).
     A failed capture leaves an older sidecar in place;
+  * ``below_capture_floor`` -- requested, and below the capture floor
+    (``vop_interwoven/capture_floor.py``): run_meta records the capture
+    ``unmeasurable`` (no sidecar, or an older one on disk), or a build
+    before that status recorded the tick rule as ``registration_failed``
+    with ``registration_marks_incomplete;registration_marks_may_not_draw``
+    and the model sidecar records the layout refused for size. Not a
+    measure and not a measure lost: the view cannot be gridded under this
+    capture, in this run or any other, and the reason names the rule;
   * ``gridded``       -- grid.json status "value", and not stale;
   * ``grid_refused``  -- grid.json status other than "value"; its reason;
   * ``not_gridded``   -- no grid.json for this sidecar;
@@ -62,6 +70,7 @@ required for more than one): ``grid_rollup.csv``, then
 written last (CLAUDE.md, defect class 4). An empty CSV cell means "not
 applicable for this row status", never zero.
 
+1.2.0 APPENDS the row status ``below_capture_floor``; nothing else moves.
 1.1.0 (A8) APPENDS columns; every 1.0.0 column keeps its place and meaning.
 From the grid record: ``ec_rows``, ``ec_keys`` and crop A's coverage. From
 ``<view>.kinds.json`` (``stage_a_kinds.py derive``): ``kinds_state`` (value,
@@ -97,16 +106,17 @@ from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
+from vop_interwoven import capture_floor  # noqa: E402
 
 SCHEMA = "vop.stage_a.grid_rollup.v1"
-TOOL_VERSION = "1.1.1"
+TOOL_VERSION = "1.2.0"
 
 CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
 
 ROW_STATUSES = ("gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable",
                 "not_this_run", "no_stage_a_capture", "orphan_sidecar",
-                "sidecar_ambiguous")
+                "sidecar_ambiguous", "below_capture_floor")
 REGISTRATION_STATES = ("registered", "refused", "absent", "unusable")
 VIEWS_CORE_STATES = ("value", "absent", "ambiguous", "unreadable", "duplicate_rows",
                      "conflicting")
@@ -670,7 +680,12 @@ def requested_row(vid, paths, grid_dir, run_id, views_core, outcome):
     if outcome is None:
         row["run_meta_capture_status"] = "ambiguous"
     row["registration_state"], row["registration_reason"] = "absent", "no model sidecar"
-    if not paths:
+    floor = None if outcome is None else capture_floor.floor_rule(
+        outcome.get("capture_status"), outcome.get("capture_failure_reason"))
+    if not paths and floor is not None:
+        row["row_status"] = "below_capture_floor"
+        row["reason"] = floor_reason(floor, outcome, vid)
+    elif not paths:
         row["row_status"] = "no_stage_a_capture"
         row["reason"] = "requested, but no model sidecar carries view_id {0}".format(vid)
     else:
@@ -680,6 +695,24 @@ def requested_row(vid, paths, grid_dir, run_id, views_core, outcome):
             len(paths), vid)
         row["registration_reason"] = "not read: the sidecar is ambiguous"
     return row
+
+
+def floor_reason(floor, outcome, vid):
+    """The reason of a ``below_capture_floor`` row: the rule, its evidence
+    and run_meta's own words."""
+    return ("below the capture floor ({rule}, evidence {evidence}): run_meta.json records "
+            "capture_status {status!r} for view {vid}: {reason}".format(
+                rule=floor["rule"], evidence=floor["evidence"],
+                status=outcome.get("capture_status"), vid=vid,
+                reason=outcome.get("capture_failure_reason") or "(no reason recorded)"))
+
+
+def _registration_record(model_sidecar_path):
+    """The model sidecar's ``registration_marks`` record, or None."""
+    try:
+        return _load_json(model_sidecar_path).get("registration_marks")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def orphan_row(path, vid, run_id, views_core, why):
@@ -712,7 +745,16 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome):
     else:
         row["run_meta_capture_status"] = outcome.get("capture_status")
         row["run_meta_failure_reason"] = outcome.get("capture_failure_reason")
-    if row["run_meta_capture_status"] != "success":
+    floor = None if outcome is None else capture_floor.floor_rule(
+        outcome.get("capture_status"), outcome.get("capture_failure_reason"),
+        _registration_record(model_sidecar_path))
+    if floor is not None:
+        # The sidecar is not this run's measure either way (a refused
+        # capture writes none; a degenerate one writes files that are not a
+        # measure); the row says the view is below the floor, not lost.
+        row["row_status"] = "below_capture_floor"
+        row["reason"] = floor_reason(floor, outcome, row["view_id"])
+    elif row["run_meta_capture_status"] != "success":
         row["row_status"] = "not_this_run"
         row["reason"] = ("run_meta.json records capture_status {0!r} for view {1}; the "
                          "sidecar cannot be tied to run {2!r}".format(

@@ -21,13 +21,24 @@ Read-only. For every run folder given (a run directory or its
   so a series shows it as a measure lost (2025-09-13 to 2025-10-25: six
   "(N) ... Wall Types BP" plans). Listed under ``failed`` in every run's
   entry; ``--include-failed`` puts the ids in ``recapture`` too;
+* ``below_capture_floor`` -- the view is below the capture floor
+  (``vop_interwoven/capture_floor.py``): run_meta records it
+  ``unmeasurable``, or a build before that status recorded the tick rule
+  as ``registration_failed`` with exactly ``registration_marks_incomplete;
+  registration_marks_may_not_draw`` AND the model sidecar on disk records
+  the layout refused for size (``evidence`` ``sidecar``). Unmeasurable, not
+  failed: a recapture would refuse the same way, so these are listed under
+  ``below_floor`` in every run's entry and NEVER put in ``recapture``, not
+  even by ``--include-failed``. The old shape WITHOUT a sidecar stays
+  ``capture_failed``; its reason says it is a floor candidate;
 * ``not_this_run`` / ``not_requested`` -- a sidecar that is not the run's own
   capture (``provenance``) for another reason (an ambiguous outcome, a view
   the run never requested), listed and not counted.
 
 Outputs, in ``--out``: ``recapture_views.csv`` (one row per view, every run)
 and ``recapture_lists.json`` (per run: run_dir, run_id, as-of date, the
-view ids to recapture, the ids to review, the failed captures) -- the list
+view ids to recapture, the ids to review, the failed captures, the views
+below the capture floor) -- the list
 a patch capture takes. A run whose run_meta.json is refused by the roll-up's
 identity rules is listed with the reason and contributes no views.
 
@@ -45,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import census_registration as census  # noqa: E402
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
+from vop_interwoven import capture_floor  # noqa: E402
 
 SCHEMA = "vop.stage_a.recapture_views.v1"
 # 1.1.0 (2026-10-13): run_dir is the run's RECORDED directory
@@ -53,12 +65,18 @@ SCHEMA = "vop.stage_a.recapture_views.v1"
 # 1.2.0 (2026-10-15): a capture run_meta records as failed is `capture_failed`
 # (reason from run_meta; a row even with no sidecar), listed per run under
 # `failed`; --include-failed adds the ids to `recapture`.
-TOOL_VERSION = "1.2.0"
+# 1.3.0 (2026-10-15): a view below the capture floor (capture_floor.floor_rule:
+# run_meta `unmeasurable`, or the old registration_failed shape with the
+# sidecar's size refusal) is `below_capture_floor`, listed per run under
+# `below_floor` and never in `recapture`.
+TOOL_VERSION = "1.3.0"
 CSV_NAME = "recapture_views.csv"
 LISTS_NAME = "recapture_lists.json"
 # run_meta capture statuses that are a failed capture (csv_export.
-# stage_a_capture_status); "success" is the only other value it writes.
+# stage_a_capture_status); "success" and "unmeasurable" are the only other
+# values it writes.
 FAILED_STATUSES = ("failed", "annotation_failed", "registration_failed")
+BELOW_FLOOR = "below_capture_floor"
 COLUMNS = ["run_dir", "scanned_dir", "run_id", "as_of_date", "view_id", "view_stem",
            "view_name", "view_type", "scale", "provenance", "registration_state", "verdict",
            "marks_expected", "marks_painted", "marks_blocked", "anno_found_count",
@@ -116,28 +134,84 @@ def verdict(row):
     return "review", "registration state {0!r}".format(state)
 
 
+def _outcome_entry(vid, outcome):
+    return {"view_id": int(vid), "view_name": outcome.get("view_name"),
+            "capture_status": outcome.get("capture_status"),
+            "reason": outcome.get("capture_failure_reason") or ""}
+
+
 def failed_captures(ident):
     """PURE. The views run_meta.json records as a failed capture, from the
     run's identity (``stage_a_grid_rollup.run_identity``): ``[{view_id,
     view_name, capture_status, reason}]`` sorted by id. An ambiguous outcome
     (two entries that disagree, None in the identity) is not a failure that
-    can be named and is left out; a refused identity yields nothing."""
+    can be named and is left out; a refused identity yields nothing. A
+    capture whose run_meta outcome alone names a floor rule
+    (``capture_floor.floor_rule`` with no sidecar) is NOT a failure: see
+    ``below_floor_captures``."""
     if ident.get("refused"):
         return []
     failed = []
     for vid, outcome in ident["outcomes"].items():
         if outcome is None or outcome.get("capture_status") not in FAILED_STATUSES:
             continue
-        failed.append({"view_id": int(vid), "view_name": outcome.get("view_name"),
-                       "capture_status": outcome.get("capture_status"),
-                       "reason": outcome.get("capture_failure_reason") or ""})
+        if capture_floor.floor_rule(outcome.get("capture_status"),
+                                    outcome.get("capture_failure_reason")) is not None:
+            continue
+        failed.append(_outcome_entry(vid, outcome))
     return sorted(failed, key=lambda f: f["view_id"])
 
 
+def below_floor_captures(ident):
+    """PURE. The views run_meta.json alone records as below the capture
+    floor (``unmeasurable``, or a floor rule under a failed status), as
+    ``failed_captures`` shapes them plus ``rule`` and ``evidence``. The old
+    registration_failed shape needs the sidecar and is decided per row in
+    ``find``, not here."""
+    if ident.get("refused"):
+        return []
+    below = []
+    for vid, outcome in ident["outcomes"].items():
+        if outcome is None:
+            continue
+        rule = capture_floor.floor_rule(outcome.get("capture_status"),
+                                        outcome.get("capture_failure_reason"))
+        if rule is None:
+            continue
+        below.append(dict(_outcome_entry(vid, outcome), **rule))
+    return sorted(below, key=lambda f: f["view_id"])
+
+
 def failed_reason(failure):
-    """PURE. The row's reason for a failed capture."""
-    return "capture_status {0}: {1}".format(failure["capture_status"],
-                                            failure["reason"] or "(no reason recorded)")
+    """PURE. The row's reason for a failed capture; the old floor shape
+    without a sidecar to decide it says it is a candidate."""
+    reason = "capture_status {0}: {1}".format(failure["capture_status"],
+                                              failure["reason"] or "(no reason recorded)")
+    if capture_floor.old_shape_candidate(failure["capture_status"], failure["reason"]):
+        reason += ("; a below-floor candidate (an unavailable tick layout records these "
+                   "two faults) with no sidecar on disk to confirm it")
+    return reason
+
+
+def below_floor_reason(entry):
+    """PURE. The row's reason for a view below the capture floor."""
+    return "{0} ({1}): capture_status {2}: {3}".format(
+        BELOW_FLOOR, entry["evidence"], entry["capture_status"],
+        entry["reason"] or "(no reason recorded)")
+
+
+def _registration_record(folder, row):
+    """The MODEL sidecar's ``registration_marks`` record for a census row,
+    or None when the sidecar is not there or does not read."""
+    stem = row.get("view_stem")
+    if not stem:
+        return None
+    try:
+        with open(str(Path(folder) / (stem + ".json")), encoding="utf-8") as handle:
+            sidecar = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return sidecar.get("registration_marks") if isinstance(sidecar, dict) else None
 
 
 def _int(value):
@@ -153,8 +227,11 @@ def find(run_args, include_failed=False):
     for run in runs:
         folder = Path(run["capture_dir"])
         meta = dsc.find_run_meta(folder / "run_meta.json") or {}
-        failed = failed_captures(census.rollup.run_identity(meta))
+        ident = census.rollup.run_identity(meta)
+        failed = failed_captures(ident)
         failed_by_id = dict((str(f["view_id"]), f) for f in failed)
+        below = below_floor_captures(ident)
+        below_by_id = dict((str(f["view_id"]), f) for f in below)
         # run_dir is the directory the RUN records (run_meta.run_dir, the
         # exporter's own path): the list is consumed where the run lives,
         # not where it was scanned (a copy, a temp folder); the scanned path
@@ -163,17 +240,32 @@ def find(run_args, include_failed=False):
                  "scanned_dir": str(folder.parent), "run_id": run.get("run_id"),
                  "as_of_date": meta.get("date"), "refused": run.get("run_meta_refused"),
                  "recapture": [], "review": [], "keep": 0, "failed": failed,
-                 "include_failed": bool(include_failed)}
+                 "below_floor": below, "include_failed": bool(include_failed)}
         with_sidecar = set()
         for r in rows:
             if r.get("capture_dir") != run["capture_dir"]:
                 continue
             v, why = verdict(r)
-            failure = failed_by_id.get(census.rollup._vid(r.get("view_id")))
-            if failure is not None and r.get("provenance") == "not_this_run":
+            vid_key = census.rollup._vid(r.get("view_id"))
+            failure = failed_by_id.get(vid_key)
+            floor_entry = below_by_id.get(vid_key)
+            if floor_entry is not None and r.get("provenance") == "not_this_run":
+                v, why = BELOW_FLOOR, below_floor_reason(floor_entry)
+                with_sidecar.add(floor_entry["view_id"])
+            elif failure is not None and r.get("provenance") == "not_this_run":
                 # The sidecar on disk is an older capture's (or the failed
                 # attempt's own); the run's record of the view is the failure.
-                v, why = "capture_failed", failed_reason(failure)
+                # The old floor shape is decided by THIS sidecar's
+                # registration record (capture_floor.floor_rule, "sidecar").
+                rule = capture_floor.floor_rule(failure["capture_status"], failure["reason"],
+                                                _registration_record(folder, r))
+                if rule is not None:
+                    floor_entry = dict(failure, **rule)
+                    below.append(floor_entry)
+                    failed.remove(failure)
+                    v, why = BELOW_FLOOR, below_floor_reason(floor_entry)
+                else:
+                    v, why = "capture_failed", failed_reason(failure)
                 with_sidecar.add(failure["view_id"])
             out_rows.append(dict((c, r.get(c)) for c in COLUMNS if c in r) | {
                 "run_dir": entry["run_dir"], "scanned_dir": entry["scanned_dir"],
@@ -184,16 +276,22 @@ def find(run_args, include_failed=False):
                 entry["review"].append(int(r["view_id"]))
             elif v == "keep":
                 entry["keep"] += 1
-        for failure in failed:
-            if failure["view_id"] not in with_sidecar:
-                # No sidecar at all: the capture wrote nothing for the view.
-                out_rows.append(dict((c, None) for c in COLUMNS) | {
-                    "run_dir": entry["run_dir"], "scanned_dir": entry["scanned_dir"],
-                    "run_id": entry["run_id"], "as_of_date": entry["as_of_date"],
-                    "view_id": failure["view_id"], "view_name": failure["view_name"],
-                    "provenance": "no_sidecar", "verdict": "capture_failed",
-                    "reason": failed_reason(failure)})
+        for which, items, reason_of in (("capture_failed", failed, failed_reason),
+                                        (BELOW_FLOOR, below, below_floor_reason)):
+            for item in items:
+                if item["view_id"] not in with_sidecar:
+                    # No sidecar at all: the capture wrote nothing for the view.
+                    out_rows.append(dict((c, None) for c in COLUMNS) | {
+                        "run_dir": entry["run_dir"], "scanned_dir": entry["scanned_dir"],
+                        "run_id": entry["run_id"], "as_of_date": entry["as_of_date"],
+                        "view_id": item["view_id"], "view_name": item["view_name"],
+                        "provenance": "no_sidecar", "verdict": which,
+                        "reason": reason_of(item)})
+        below.sort(key=lambda f: f["view_id"])
         if include_failed:
+            # Never the views below the floor: a recapture refuses them the
+            # same way (CaptureBelowFloor), and the list must not say
+            # otherwise.
             entry["recapture"].extend(f["view_id"] for f in failed)
         entry["recapture"].sort()
         entry["review"].sort()
@@ -208,7 +306,8 @@ def main(argv=None):
     ap.add_argument("--include-failed", action="store_true",
                     help="put the views run_meta.json records as a failed capture "
                          "(failed, annotation_failed, registration_failed) in each "
-                         "run's recapture list; they are listed under 'failed' either way")
+                         "run's recapture list; they are listed under 'failed' either way. "
+                         "Views below the capture floor ('below_floor') are never added")
     args = ap.parse_args(argv)
     out = Path(args.out)
     for run_arg in args.runs:
@@ -229,10 +328,11 @@ def main(argv=None):
     for e in lists:
         total += len(e["recapture"])
         print("{0}: run {1} as of {2}: recapture {3}, review {4}, keep {5}, failed "
-              "captures {6}{7}{8}".format(
+              "captures {6}{7}, below the capture floor {8}{9}".format(
                   e["run_dir"], e["run_id"], e["as_of_date"], len(e["recapture"]),
                   len(e["review"]), e["keep"], len(e["failed"]),
                   " (in the recapture list)" if e["failed"] and e["include_failed"] else "",
+                  len(e["below_floor"]),
                   "  REFUSED: " + str(e["refused"]) if e["refused"] else ""))
     print("{0} views to recapture across {1} runs; wrote {2} and {3}".format(
         total, len(lists), out / CSV_NAME, out / LISTS_NAME))
