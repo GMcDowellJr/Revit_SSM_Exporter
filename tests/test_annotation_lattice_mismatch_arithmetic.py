@@ -175,6 +175,8 @@ def test_sizing_crop_a_against_the_bbox_union_would_change_passing_views_and_is_
 # LEVEL 5 is at scale 128 in that archive (48 on 2025-10-25).
 # A FAILING run's entries are still to come (none received).
 PASS_0906 = "2025-09-06__20261011T094136"
+FAIL_1025 = "2025-10-25__20261012T122748"
+PASS_1101 = "2025-11-01__20261013T111808"
 # The plans the cap bound on the DERIVED axis, and how many px under the
 # ceiling their annotation export came back (OBSERVED, frame.actual_h).
 DERIVED_AXIS_HEADROOM_0906 = {4148625: 1, 9468987: 2, 9560929: 1, 9595813: 1}
@@ -192,11 +194,46 @@ RECORDED = [
                  id="9595813-0906-pass"),
     pytest.param(9596211, PASS_0906, (2842, 2842), 2842, [(2842, 2842, 4988)], False,
                  id="9596211-0906-pass-scale-128"),
-    # The inferred shape of a failing run (branch 1), until one is read.
-    pytest.param(9468987, "INFERRED (no failing sidecar read)", (9555, 9555), 9555,
-                 [(9555, 9555, 10001), (4777, 4777, 5000)], True,
-                 id="9468987-inferred-branch-1"),
+    # OBSERVED, run 2025-10-25__20261012T122748 (FAILING; exporter 1.2.0, the
+    # same build and the same batch-opened detached environment as 09-06):
+    # every plan's annotation export came back TALLER than the model's by
+    # 1.2 % to 61 % -- section lines of the "Views" category past the crop
+    # (absent from the 09-06 and 11-01 memberships) -- over the ceiling,
+    # halved, accepted at half: branch 1, each one.
+    pytest.param(4148625, FAIL_1025, (7476, 7476), 7476,
+                 [(7476, 7476, 10512), (3738, 3738, 5256)], True, id="4148625-1025-fail"),
+    pytest.param(9468987, FAIL_1025, (9555, 9555), 9555,
+                 [(9555, 9555, 10345), (4777, 4777, 5172)], True, id="9468987-1025-fail"),
+    pytest.param(9560929, FAIL_1025, (9340, 9340), 9340,
+                 [(9340, 9340, 10121), (4670, 4670, 5060)], True, id="9560929-1025-fail"),
+    pytest.param(9594635, FAIL_1025, (10000, 10000), 10000,
+                 [(10000, 10000, 13575), (5000, 5000, 6787)], True, id="9594635-1025-fail"),
+    pytest.param(9595813, FAIL_1025, (9050, 9050), 9050,
+                 [(9050, 9050, 10305), (4525, 4525, 5152)], True, id="9595813-1025-fail"),
+    pytest.param(9596211, FAIL_1025, (5697, 5697), 5697,
+                 [(5697, 5697, 10273), (2848, 2848, 5135)], True, id="9596211-1025-fail-scale-48"),
+    # OBSERVED, run 2025-11-01__20261013T111808 (passing; exporter 1.3.0,
+    # opened_from null: the INTERACTIVE one). LEVEL 3 and LEVEL 4 passed
+    # with the annotation's derived axis OFF the model's (8448 vs 8425,
+    # 9852 vs 9999): under the ceiling, so no halving and no fault; the
+    # registration tool measures that scale from the ticks.
+    pytest.param(4148625, PASS_1101, (7476, 7476), 7476, [(7476, 7476, 9999)], False,
+                 id="4148625-1101-pass"),
+    pytest.param(9468987, PASS_1101, (9555, 9555), 9555, [(9555, 9555, 9998)], False,
+                 id="9468987-1101-pass"),
+    pytest.param(9560929, PASS_1101, (9340, 9340), 9340, [(9340, 9340, 9999)], False,
+                 id="9560929-1101-pass"),
+    pytest.param(9594635, PASS_1101, (10000, 10000), 10000, [(10000, 10000, 8448)], False,
+                 id="9594635-1101-pass-anno-off-lattice-0.3pct"),
+    pytest.param(9595813, PASS_1101, (9050, 9050), 9050, [(9050, 9050, 9852)], False,
+                 id="9595813-1101-pass-anno-off-lattice-1.5pct"),
+    pytest.param(9596211, PASS_1101, (5697, 5697), 5697, [(5697, 5697, 9999)], False,
+                 id="9596211-1101-pass"),
 ]
+# The model's derived axis in the two 2025-10/11 runs (same crops), to say
+# by how much the failing annotation export overran it.
+MODEL_DERIVED_1025 = {4148625: 9999, 9468987: 9998, 9560929: 9999, 9594635: 8425,
+                      9595813: 9999, 9596211: 9999}
 
 
 @pytest.mark.parametrize("view_id,run,model,anno_required,anno_attempts,fault", RECORDED)
@@ -212,3 +249,40 @@ def test_recorded_numbers_reproduce_the_outcome(view_id, run, model, anno_requir
     # derived axis: 0.03-0.06 ft of model space from a dimension mismatch.
     if run == PASS_0906 and view_id in DERIVED_AXIS_HEADROOM_0906:
         assert MAX_STAGE_A_AXIS_PX - anno_attempts[0][2] == DERIVED_AXIS_HEADROOM_0906[view_id]
+    if run == FAIL_1025:
+        # The failing export is the model's request with a taller derived
+        # axis: the halving then lands exactly at half the lattice.
+        first, second = anno_attempts
+        assert first[0] == model[0] and second[0] == model[0] // 2
+        assert first[2] > MODEL_DERIVED_1025[view_id] and first[2] > MAX_STAGE_A_AXIS_PX
+        assert second[2] <= MAX_STAGE_A_AXIS_PX
+
+
+@pytest.mark.parametrize("view_id,run,model,anno_required,anno_attempts,fault", RECORDED)
+def test_one_lattice_for_both_passes_is_cap_axes_on_the_measured_annotation_extent(
+        view_id, run, model, anno_required, anno_attempts, fault):
+    """Question (3), the fix that holds: when the annotation export's first
+    attempt overruns the ceiling, re-size BOTH passes with cap_axes on the
+    model's request and the annotation's MEASURED derived axis, and
+    re-export both at that request. The lattice coarsens by the overrun
+    (3.5 % for LEVEL 1, 61 % for LEVEL 3) and the two passes share it; a
+    view whose annotation export fits the cap (every passing entry) keeps
+    its request unchanged, so nothing that captures today changes. The
+    arithmetic only: the re-export loop is not production (note §1.4)."""
+    from vop_interwoven.resolution_contract import cap_axes
+    first = anno_attempts[0]
+    resized = cap_axes(model[0], first[2], MAX_STAGE_A_AXIS_PX)
+    if not fault:
+        assert resized["accepted_px"] == model[0] and resized["cap_applied"] is False
+        return
+    assert resized["cap_applied"] is True and resized["accepted_px"] < model[0]
+    # Both passes at the resized request: the annotation's derived axis
+    # scales with its fitted one and lands at the ceiling.
+    # cap_axes floors the request, so the derived axis lands 1-2 px under.
+    anno_h = int(resized["accepted_px"] * first[2] / float(first[1]))
+    assert anno_h <= MAX_STAGE_A_AXIS_PX and MAX_STAGE_A_AXIS_PX - anno_h <= 2
+    assert cib.annotation_lattice_mismatch_faults(
+        resized["accepted_px"], resized["accepted_px"], "width",
+        resized["accepted_px"], resized["accepted_px"]) == []
+    coarsening = model[0] / float(resized["accepted_px"])
+    assert 1.0 < coarsening < 1.7, (view_id, coarsening)
