@@ -889,7 +889,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                                  reference_source=source,
                                                  mark_fpp_basis=record["mark_fpp_basis"])
             raise CaptureBelowFloor(
-                "below_capture_floor: {0} (floor {1:.0f} px; reference {2}; "
+                "below_capture_floor: {0} (floor {1:.0f} px, reference {2}, "
                 "{3:.6g} ft/px)".format(layout.get("reason"),
                                         layout["below_floor"]["floor_px"], source, mark_fpp))
         layout = registration.relocate_marks_clear_of(layout, avoid)

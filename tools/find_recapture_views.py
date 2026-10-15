@@ -242,6 +242,7 @@ def find(run_args, include_failed=False):
                  "recapture": [], "review": [], "keep": 0, "failed": failed,
                  "below_floor": below, "include_failed": bool(include_failed)}
         with_sidecar = set()
+        reclassified = {}
         for r in rows:
             if r.get("capture_dir") != run["capture_dir"]:
                 continue
@@ -260,9 +261,16 @@ def find(run_args, include_failed=False):
                 rule = capture_floor.floor_rule(failure["capture_status"], failure["reason"],
                                                 _registration_record(folder, r))
                 if rule is not None:
-                    floor_entry = dict(failure, **rule)
-                    below.append(floor_entry)
-                    failed.remove(failure)
+                    # Once per view: two sidecars claiming one failed view
+                    # (the roll-up's sidecar_ambiguous) give two rows here,
+                    # and the second must not remove what the first did
+                    # (Codex, PR #237).
+                    floor_entry = reclassified.get(failure["view_id"])
+                    if floor_entry is None:
+                        floor_entry = dict(failure, **rule)
+                        reclassified[failure["view_id"]] = floor_entry
+                        below.append(floor_entry)
+                        failed.remove(failure)
                     v, why = BELOW_FLOOR, below_floor_reason(floor_entry)
                 else:
                     v, why = "capture_failed", failed_reason(failure)

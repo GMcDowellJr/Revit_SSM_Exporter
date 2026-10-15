@@ -373,7 +373,7 @@ Implemented (this branch):
   layout and before any export; the group still rolls back and reads the
   view back; the outcome is `success False, failure_reason
   "below_capture_floor: the reference rectangle is N px on its short side,
-  too small for 32 px ticks inset 24 px (floor 192 px; reference <source>;
+  too small for 32 px ticks inset 24 px (floor 192 px, reference <source>,
   <fpp> ft/px)"`, with `registration.below_capture_floor` carrying the
   measurement. No TIFF, no sidecar. A recapture (`recapture.run_recapture`)
   gets the same outcome and REPLACES the old failed entry and views_core row

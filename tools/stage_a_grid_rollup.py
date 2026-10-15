@@ -680,11 +680,22 @@ def requested_row(vid, paths, grid_dir, run_id, views_core, outcome):
     if outcome is None:
         row["run_meta_capture_status"] = "ambiguous"
     row["registration_state"], row["registration_reason"] = "absent", "no model sidecar"
+    # run_meta's own floor verdict (status unmeasurable, or a floor rule
+    # named outright) does not depend on any sidecar, so it decides the row
+    # whether there is no sidecar or several stale ones: a below-floor
+    # capture writes no replacement files, and the duplicates an older run
+    # left are not what the row is about (Codex, PR #237). The old
+    # registration_failed shape needs ONE sidecar's record and stays
+    # ambiguous between two.
     floor = None if outcome is None else capture_floor.floor_rule(
         outcome.get("capture_status"), outcome.get("capture_failure_reason"))
-    if not paths and floor is not None:
+    if floor is not None:
         row["row_status"] = "below_capture_floor"
         row["reason"] = floor_reason(floor, outcome, vid)
+        if paths:
+            row["view_stem"] = "|".join(p.stem for p in paths)
+            row["registration_reason"] = "not read: {0} model sidecars carry view_id {1}".format(
+                len(paths), vid)
     elif not paths:
         row["row_status"] = "no_stage_a_capture"
         row["reason"] = "requested, but no model sidecar carries view_id {0}".format(vid)

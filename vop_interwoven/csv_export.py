@@ -983,15 +983,25 @@ def stage_a_capture_status(view_result):
     would refuse the same way, and the series must not show the view as a
     measure lost. The reason names the rule.
     """
-    from .capture_floor import UNMEASURABLE, floor_fault
+    from .capture_floor import FLOOR_RULES, UNMEASURABLE, floor_fault
+    # The registered capture's faults beyond the floor rule itself -- a
+    # rollback that failed, marks left in the project, a view that did not
+    # read back -- are document-altering failures the floor must not mask
+    # (Codex, PR #237): with any present the view is a failed capture and
+    # the reason names them all, so no reader classifies it as the floor.
+    independent = [f for f in _registration_fault_names(view_result) if f not in FLOOR_RULES]
     if view_result.get("success") is False:
         reason = view_result.get("failure_reason") or view_result.get("error") or ""
         if floor_fault(reason) is not None:
+            if independent:
+                return "failed", ";".join([reason] + independent)
             return UNMEASURABLE, reason
         return "failed", reason
     if view_result.get("annotation_pass_success") is False:
         reason = view_result.get("annotation_pass_failure_reason") or ""
         if floor_fault(reason) is not None:
+            if independent:
+                return "annotation_failed", ";".join([reason] + independent)
             return UNMEASURABLE, reason
         return "annotation_failed", reason
     if view_result.get("registration_success") is False:
@@ -999,6 +1009,17 @@ def stage_a_capture_status(view_result):
         return "registration_failed", ";".join(
             str(f.get("fault")) for f in faults if isinstance(f, dict))
     return "success", ""
+
+
+def _registration_fault_names(view_result):
+    """The registered capture's fault names, from a full result
+    (``registration.faults``: records) or a view summary
+    (``registration_faults``: names). Empty when the view did not run it."""
+    record = view_result.get("registration")
+    if isinstance(record, dict):
+        return [str(f.get("fault")) if isinstance(f, dict) else str(f)
+                for f in record.get("faults") or []]
+    return [str(f) for f in view_result.get("registration_faults") or []]
 
 
 def stage_a_view_result_to_core_row(view_result, config, doc, run_id,

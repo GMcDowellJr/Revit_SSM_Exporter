@@ -268,3 +268,28 @@ def test_below_floor_captures_pure():
     # The old shape is a failed capture until a sidecar decides it.
     assert [f["view_id"] for f in finder.failed_captures(ident)] == [3]
     assert finder.below_floor_captures(dict(ident, refused="no run_meta")) == []
+
+
+def test_two_sidecars_for_one_below_floor_view_reclassify_it_once(tmp_path):
+    """Two model sidecars claiming one failed view give two census rows; the
+    first reclassifies the failure, the second must find it already done
+    rather than remove it again (Codex, PR #237)."""
+    from tests.test_stage_a_grid_rollup import TOO_SMALL_FAULTS, _set_registration_faults
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})
+    _capture(run, 3, gridded=False, pair_kw={"shared_anno": True})
+    _outcome(run, 3, status="registration_failed", reason=OLD_FLOOR_SHAPE)
+    _set_registration_faults(run, 3, TOO_SMALL_FAULTS)
+    cap = run / "color_id_buffer"
+    for suffix in (".json", "_anno.json", ".tiff", "_anno.tiff"):
+        # A second sidecar pair for the same view id: the model-sidecar name
+        # pattern needs a trailing _<digits>, so V_3_3 / V_3_3_anno.
+        (cap / ("V_3_3" + suffix)).write_bytes((cap / ("V_3" + suffix)).read_bytes())
+    out = tmp_path / "find"
+    assert finder.main([str(run), "--out", str(out), "--include-failed"]) == 0
+    rows = [r for r in csv.DictReader(open(str(out / finder.CSV_NAME), encoding="utf-8",
+                                           newline="")) if r["view_id"] == "3"]
+    assert len(rows) == 2 and all(r["verdict"] == "below_capture_floor" for r in rows)
+    entry = json.loads((out / finder.LISTS_NAME).read_text())["runs"][0]
+    assert [f["view_id"] for f in entry["below_floor"]] == [3]
+    assert entry["failed"] == [] and entry["recapture"] == []

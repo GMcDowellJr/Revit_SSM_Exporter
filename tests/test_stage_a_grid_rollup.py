@@ -977,3 +977,31 @@ def test_a_view_below_the_capture_floor_is_a_row_of_its_own_not_a_measure_lost(t
     assert summary["row_status"]["counts"]["not_this_run"] == 1
     assert summary["run_meta_capture_status"]["counts"]["unmeasurable"] == 2
     assert summary["count_invariant"]["difference"] == 0
+
+
+def test_run_metas_floor_verdict_beats_duplicate_stale_sidecars(tmp_path):
+    """A below-floor capture writes no files, so two stale sidecars of an
+    older run can share its view id. run_meta's own verdict (unmeasurable,
+    or a floor rule named outright) does not need a sidecar and decides the
+    row; the old shape, which does, stays sidecar_ambiguous (Codex,
+    PR #237)."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    _outcome(run, 2, status="unmeasurable", reason="below_capture_floor: 48 px on its short side")
+    _capture(run, 3)
+    _outcome(run, 3, status="registration_failed", reason=OLD_FLOOR_SHAPE)
+    _set_registration_faults(run, 3, TOO_SMALL_FAULTS)
+    cap = run / "color_id_buffer"
+    for n in (2, 3):
+        for suffix in (".json", "_anno.json", ".tiff", "_anno.tiff"):
+            (cap / ("V_{0}_{0}{1}".format(n, suffix))).write_bytes(
+                (cap / ("V_{0}{1}".format(n, suffix))).read_bytes())
+    assert _main(run) == 1
+    by_stem, rows, summary = _read(run / "analysis_grid")
+    by_id = dict((r["view_id"], r) for r in rows)
+    assert by_id["2"]["row_status"] == "below_capture_floor"
+    assert by_id["2"]["view_stem"] == "V_2|V_2_2"
+    assert "2 model sidecars carry view_id 2" in by_id["2"]["registration_reason"]
+    assert by_id["3"]["row_status"] == "sidecar_ambiguous"
+    assert summary["count_invariant"]["difference"] == 0

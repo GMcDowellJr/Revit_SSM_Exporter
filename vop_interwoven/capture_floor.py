@@ -74,12 +74,16 @@ def reason_faults(reason):
 
 
 def floor_fault(reason):
-    """PURE. The floor rule a failure reason names, or None. The FIRST fault
-    is the one the capture reports as the failure (color_id_buffer's
-    ``failure_reason = capture_faults[0]``), so a degenerate export behind an
-    earlier fault is that earlier fault's failure, not a floor case."""
+    """PURE. The floor rule a failure reason names, or None. EVERY fault the
+    reason names must be a floor rule: the FIRST is the one the capture
+    reports as the failure (color_id_buffer's ``failure_reason =
+    capture_faults[0]``), so a degenerate export behind an earlier fault is
+    that earlier fault's failure, and a floor refusal joined with an
+    independent fault (``below_capture_floor: ...;rollback_failed``, as
+    csv_export writes it when the registered capture also faulted) is a
+    failed capture that still has to be looked at, not a floor case."""
     names = reason_faults(reason)
-    if names and names[0] in FLOOR_RULES:
+    if names and all(n in FLOOR_RULES for n in names):
         return names[0]
     return None
 

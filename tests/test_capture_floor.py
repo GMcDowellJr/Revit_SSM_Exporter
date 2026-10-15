@@ -75,6 +75,9 @@ def test_floor_fault_is_the_first_fault_only():
     # A degenerate export behind an earlier fault is that fault's failure.
     assert floor.floor_fault("annotation_collection_failed;annotation_export_degenerate") is None
     assert floor.floor_fault("export_dim_mismatch") is None
+    # A floor refusal joined with an independent fault is not the floor.
+    assert floor.floor_fault("below_capture_floor: 48 px;rollback_failed") is None
+    assert floor.floor_rule("failed", "below_capture_floor: 48 px;rollback_failed") is None
 
 
 def test_floor_rule_new_shape_old_shape_and_candidates():
@@ -139,6 +142,36 @@ def test_capture_status_is_unmeasurable_for_a_floor_reason_and_failed_otherwise(
                                          "capture_failure_reason": reason}]
     row = stage_a_view_result_to_core_row(summary, None, None, "RUN_X", config_hash="c0ffee")
     assert row["CaptureStatus"] == "unmeasurable" and row["CaptureFailureReason"] == reason
+
+
+def test_an_independent_registration_fault_keeps_a_floor_refusal_a_failed_capture():
+    """A below-floor capture whose rollback failed or left marks in the
+    project altered the document: not unmeasurable, a failure that names
+    every fault, in both the full-result and the summary shape (Codex,
+    PR #237). The floor fault alone, or none, stays unmeasurable."""
+    reason = "below_capture_floor: the reference rectangle is 48 px on its short side"
+    full = {"success": False, "failure_reason": reason, "registration": {"faults": [
+        {"fault": "below_capture_floor"}, {"fault": "rollback_failed"},
+        {"fault": "registration_marks_left_in_project"}]}}
+    assert stage_a_capture_status(full) == (
+        "failed", reason + ";rollback_failed;registration_marks_left_in_project")
+    summary = {"success": False, "failure_reason": reason,
+               "registration_faults": ["below_capture_floor", "view_state_not_restored"]}
+    assert stage_a_capture_status(summary) == ("failed", reason + ";view_state_not_restored")
+    assert floor.floor_rule(*stage_a_capture_status(summary)) is None
+    assert view_outcomes([dict(summary, view_id=1)])[0]["capture_status"] == "failed"
+    # Controls: the floor fault alone, and no registration record at all.
+    assert stage_a_capture_status({"success": False, "failure_reason": reason,
+                                   "registration": {"faults": [{"fault": "below_capture_floor"}]}}
+                                  ) == ("unmeasurable", reason)
+    assert stage_a_capture_status({"success": False, "failure_reason": reason}) == (
+        "unmeasurable", reason)
+    # The same guard on the degenerate annotation export.
+    degenerate = {"success": True, "annotation_pass_success": False,
+                  "annotation_pass_failure_reason": "annotation_export_degenerate",
+                  "registration_faults": ["rollback_failed"]}
+    assert stage_a_capture_status(degenerate) == (
+        "annotation_failed", "annotation_export_degenerate;rollback_failed")
 
 
 # --- the capture, end to end ---------------------------------------------------
