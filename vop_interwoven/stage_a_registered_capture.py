@@ -50,6 +50,7 @@ import copy
 import hashlib
 import time
 
+from .recapture import RecaptureRefused
 from .revit.safe_api import element_id_value as _element_id_int
 
 REGISTERED_CAPTURE_SCHEMA = "vop.stage_a.registered_capture.v1"
@@ -212,6 +213,41 @@ def remove_split_for_capture(doc, view, crop_uv, Transaction, TransactionStatus,
                          after.get("value") if value is not None else after))
     record["state"] = "removed"
     return record
+
+
+def crop_shape_state(view, basis):
+    """The crop region's loops as READ, projected to view UV through
+    ``basis`` (the capture's own, so the angle is to the view's axes).
+    Three-valued: ``{"state": "value", "loop_count", "vertex_count",
+    "loops_uv": [[[u, v], ...], ...], "shape_set"}``, or ``"unavailable"``
+    with the reason -- no shape manager, a read that raised, or no loop
+    returned. Each curve contributes its start point; a curve that is not a
+    line is counted under ``non_line_curves`` (its interior is not followed).
+    """
+    try:
+        manager = view.GetCropRegionShapeManager()
+        if manager is None:
+            return {"state": "unavailable", "reason": "the view has no crop region shape manager"}
+        loops, non_line = [], 0
+        for loop in manager.GetCropShape():
+            points = []
+            for curve in loop:
+                start = curve.GetEndPoint(0)
+                uv = basis.transform_to_view_uv((float(start.X), float(start.Y), float(start.Z)))
+                points.append([round(float(uv[0]), 6), round(float(uv[1]), 6)])
+                if type(curve).__name__ not in ("Line", "_Line", "FakeLine"):
+                    non_line += 1
+            loops.append(points)
+    except Exception as ex:
+        return {"state": "unavailable",
+                "reason": "the crop shape would not read: {0}: {1}".format(
+                    type(ex).__name__, ex)}
+    if not loops:
+        return {"state": "unavailable", "reason": "GetCropShape returned no loop"}
+    return {"state": "value", "loop_count": len(loops),
+            "vertex_count": sum(len(loop) for loop in loops), "loops_uv": loops,
+            "non_line_curves": non_line,
+            "shape_set": _read(lambda: bool(manager.ShapeSet))}
 
 
 def view_state(view, primary=None):
@@ -587,6 +623,14 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # Q7: a split crop, un-split for the capture, and the view-UV bands
         # the view actually SHOWS. tools/stage_a_grid.py keeps only those.
         "split_crop": record.get("split_crop"),
+        # The crop LOOP (2026-10-12): as read in view UV, its classification
+        # (rectangular / axis_aligned / rotation_deg), and which rectangle
+        # the ticks were placed in ("crop_box" or "crop_loop_inscribed").
+        "crop_shape": record.get("crop_shape"),
+        "ticks_outside_crop_loop": record.get("ticks_outside_crop_loop"),
+        # A capture made by a RECAPTURE of an existing run (vop_interwoven
+        # .recapture): when, by which build, why; None for the run's own.
+        "recapture": record.get("recapture"),
         # A view with no crop region: the two WHITE lines that bound its
         # export to crop A (None for every other view).
         "frame_bounds": record.get("frame_bounds"),
@@ -638,9 +682,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
 
     view_id = _element_id_int(getattr(view, "Id", None))
     record = {"schema": REGISTERED_CAPTURE_SCHEMA, "view_id": view_id,
-              "faults": [], "timings_ms": {}}
+              "faults": [], "timings_ms": {},
+              "recapture": getattr(cfg, "_recapture_record", None)}
     model_out = None
     anno_out = None
+    recapture_refused = None
     model_member_ids = []
     # The frame-bound lines of a view with no crop region: drawn by the
     # capture, WHITE in both passes, rolled back with the ticks.
@@ -752,8 +798,60 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         _t = time.time()
         reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                      view_id=view_id)
-        record["mark_reference_source"] = source
         mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, cfg)
+        # ---- 1a: the crop LOOP (2026-10-12) ---------------------------------
+        # The reference above is View.CropBox, the loop's bounding box. The
+        # ticks go inside the LOOP (stage_a_registration's CROP LOOP note):
+        # an ordinary crop's loop IS the box and nothing changes; a rotated or
+        # non-rectangular one puts the ticks on the largest axis-aligned
+        # rectangle inside it. A loop that will not read is a fault, and the
+        # ticks stay on the box, as shipped.
+        loop_uv = None
+        crop_shape = {"state": "not_read", "reason": "no crop region"}
+        in_recapture = getattr(cfg, "_recapture_record", None) is not None
+        if has_crop_region and reference is not None and source != "authored_crop":
+            # A crop-INACTIVE view: the reference is crop A, which both passes
+            # activate as the crop box, so the box IS what the export renders.
+            # The view's stored loop is not (Codex, PR #236): it is not read.
+            crop_shape = {"state": "not_read",
+                          "reason": "the reference is {0}, not the authored crop; the "
+                                    "stored loop is not what the export renders".format(source)}
+        elif has_crop_region and reference is not None:
+            basis_ = getattr(raster, "view_basis", None)
+            crop_shape = (crop_shape_state(view, basis_) if basis_ is not None else
+                          {"state": "unavailable", "reason": "no view basis to project the loop"})
+            unverified = None
+            if crop_shape["state"] != "value":
+                unverified = ("the crop region's loop could not be read, so the ticks are "
+                              "placed on the crop box and may lie outside what the view "
+                              "renders: {0}".format(crop_shape.get("reason")))
+            elif crop_shape["loop_count"] != 1:
+                crop_shape["reference"] = "crop_box"
+                unverified = ("the crop region has {0} loops; the ticks are placed on the "
+                              "crop box".format(crop_shape["loop_count"]))
+            if unverified is not None:
+                _fault("crop_shape_unverified", unverified)
+                if in_recapture:
+                    # A recapture cannot show its ticks inside what the view
+                    # renders: it must not replace the old capture (Codex,
+                    # PR #236). Nothing has been exported yet.
+                    raise RecaptureRefused("recapture refused: the crop loop could not be "
+                                           "verified ({0})".format(unverified))
+            else:
+                from .color_id_buffer import CROP_READ_BACK_TOLERANCE_PX
+                loop_uv = crop_shape["loops_uv"][0]
+                ref_loop, how = registration.mark_reference_from_loop(
+                    loop_uv, reference, CROP_READ_BACK_TOLERANCE_PX * float(mark_fpp))
+                crop_shape.update(how)
+                if ref_loop is None:
+                    _fault("registration_marks_no_room_in_crop_loop",
+                           "no axis-aligned rectangle fits inside the crop loop ({0} "
+                           "vertices); the ticks are placed on the crop box".format(
+                               crop_shape["vertex_count"]))
+                elif how["reference"] == "crop_loop_inscribed":
+                    reference, source = ref_loop, "crop_loop_inscribed"
+        record["crop_shape"] = crop_shape
+        record["mark_reference_source"] = source
         layout = (registration.registration_mark_segments(reference, mark_fpp)
                   if reference is not None else {"state": "unavailable",
                                                  "reason": source})
@@ -763,6 +861,23 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             view, _anno, getattr(raster, "view_basis", None), diag=diag,
             view_id=view_id)
         layout = registration.relocate_marks_clear_of(layout, avoid)
+        # A tick outside the loop will not render (3939979: 12 of 12, white
+        # corners); said BEFORE the export rather than found by the fitter.
+        if loop_uv is not None:
+            record["ticks_outside_crop_loop"] = registration.ticks_outside_loop(layout, loop_uv)
+            if record["ticks_outside_crop_loop"]:
+                _fault("registration_marks_outside_crop_loop",
+                       "{0} of {1} ticks lie outside the crop region's loop and will not "
+                       "render: {2}".format(len(record["ticks_outside_crop_loop"]),
+                                            len(layout.get("segments") or []),
+                                            ", ".join(record["ticks_outside_crop_loop"])))
+                if in_recapture:
+                    # A recapture must not replace a capture with one that
+                    # fails the same way: stop before anything is exported,
+                    # and the view's files stay as they were.
+                    raise RecaptureRefused(
+                        "recapture refused: {0} tick(s) would still lie outside the crop "
+                        "loop".format(len(record["ticks_outside_crop_loop"])))
         # P2: reference rectangle, sizing, segments and avoidance together.
         record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
         _t = time.time()
@@ -973,6 +1088,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                         "tiff_path": None, "sidecar_path": None}
         record["timings_ms"]["annotation_pass"] = round((time.time() - _t) * 1000.0, 3)
         _pass_timings("annotation", anno_out)
+    except RecaptureRefused as ex:
+        recapture_refused = str(ex)
+        _fault("recapture_refused", "the recapture would reproduce the failure; "
+                                    "nothing was exported", ex)
     except Exception as ex:
         _fault("registered_capture_raised", "the registered capture stopped", ex)
     finally:
@@ -1125,7 +1244,9 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
 
     if not isinstance(model_out, dict):
         model_out = {"view_id": view_id, "view_name": getattr(view, "Name", None),
-                     "success": False, "failure_reason": "registered_capture_raised",
+                     "success": False,
+                     "failure_reason": ("recapture_refused" if recapture_refused
+                                        else "registered_capture_raised"),
                      "stage": "color_id_buffer_stage_a",
                      "tiff_path": None, "sidecar_path": None}
     if isinstance(anno_out, dict):

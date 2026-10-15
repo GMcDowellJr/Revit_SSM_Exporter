@@ -1,0 +1,54 @@
+view_id,view_name,tilt_source,tilt_deg,predicted_inside_best_sign,found_model,confusion,predicted_inside_other_sign
+4145854,EXISTING SITE PLAN - ENTITLEMENT,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4313642,PROPOSED FUTURE PROGRAM - ENTITLEMEN,cells 12.7/12.8,12.77,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4146881,PROPOSED SITE PLAN - ENTITLEMENT,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+7424270,SITE PLAN - ENLARGED FLOOR PLAN - GE,probe image,12.91,mid_bottom_v,mid_bottom_v,"tp=1,fp=0,fn=0,tn=11",mid_bottom_v
+3950635,SITE PLAN - LEVEL 1 - ENLARGED SERVI,cells 6.8/11.2,8.99,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2673468,SITE PLAN - LEVEL 1 - ENLARGED SERVI,cells 5.7/11.4,8.51,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2507678,SITE PLAN - LEVEL 1 - NEW SITEWORK 1,cells 12.5/13.2,12.82,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2506168,SITE PLAN - LEVEL 1 - NEW SITEWORK 1,cells 12.5/13.2,12.82,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3939979,SITE PLAN - LEVEL 1 - NEW SITEWORK 2,probe image,12.91,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3882991,SITE PLAN - LEVEL 1 - NEW SITEWORK 2,cells 13.0/13.0,12.96,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3844352,SITE PLAN - LEVEL 1 - SITEWORK 11X17,cells 12.5/13.2,12.82,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3854352,SITE PLAN - LEVEL 1 - SITEWORK 22X34,cells 12.5/13.2,12.82,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5576090,SITE PLAN - LEVEL 1 - TOPO_EXPORT,cells 13.0/13.0,12.96,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2509574,SITE PLAN - LEVEL 2  - NEW SITEWORK ,cells 12.5/13.2,12.82,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4026365,SITE PLAN - LEVEL 2  - NEW SITEWORK ,cells 12.8/12.6,12.72,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2515667,SITE PLAN - LEVEL 3 - NEW SITEWORK 1,cells 12.3/12.4,12.36,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2519331,SITE PLAN - LEVEL 3 - NEW SITEWORK 1,cells 12.5/13.2,12.82,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5067422,SITE PLAN - LEVEL 3 - NEW SITEWORK 2,cells 12.9/12.9,12.89,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3969026,SITE PLAN - LEVEL 3 - NEW SITEWORK 2,cells 12.8/12.6,12.72,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5066284,SITE PLAN - LEVEL 3 - NEW SITEWORK 2,cells 12.7/12.8,12.71,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3859943,SITE PLAN - LEVEL 3 - NEW SITEWORK 2,cells 13.0/13.0,12.96,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2520920,SITE PLAN - LEVEL 4 - NEW SITEWORK 1,cells 13.2/12.6,12.93,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4028934,SITE PLAN - LEVEL 4 - NEW SITEWORK 2,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2522808,SITE PLAN - LEVEL 5 - NEW SITEWORK 1,cells 12.3/12.4,12.36,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4029799,SITE PLAN - LEVEL 5 - NEW SITEWORK 2,cells 12.8/12.6,12.72,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3830046,SITE PLAN - LOWER LVL  - NEW SITEWOR,cells 12.9/12.5,12.7,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2524741,SITE PLAN - PENTHOUSE - NEW SITEWORK,cells 12.5/13.3,12.91,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4030827,SITE PLAN - PENTHOUSE - NEW SITEWORK,cells 12.9/13.1,13.0,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2527654,SITE PLAN - ROOF - NEW SITEWORK 11X1,cells 12.2/12.6,12.43,none,none,"tp=0,fp=0,fn=0,tn=12",none
+2529324,SITE PLAN - ROOF - NEW SITEWORK 11X1,cells 12.2/12.6,12.43,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3936500,SITE PLAN - ROOF - NEW SITEWORK 22X3,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+7442606,SITE PLAN - ROOF - NEW SITEWORK 22X3,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3924601,SITE PLAN - ROOF - NEW SITEWORK 22X3,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4489481,SITE PLAN - ROOF - SITEWORK 22X34 - ,cells 13.0/12.9,12.95,none,none,"tp=0,fp=0,fn=0,tn=12",none
+3855017,SITE PLAN - ROOF - SITEWORK 22X34 - ,cells 12.8/12.7,12.76,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4336989,SK_(N) LEVEL 1,cells 4.5/13.0,8.73,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4337599,SK_(N) LEVEL 2,cells 12.9/12.7,12.81,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4338678,SK_(N) LEVEL 4,cells 5.2/13.2,9.19,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4338930,SK_(N) LEVEL 5,cells 12.8/13.2,13.03,none,mid_bottom_v,"tp=0,fp=0,fn=1,tn=11",none
+4337430,SK_(N) LOWER LEVEL,cells 4.7/12.4,8.54,none,none,"tp=0,fp=0,fn=0,tn=12",none
+1193585,(N) HOSPITAL - SITE PLAN - LEVEL 1,cells 12.9/12.7,12.8,none,none,"tp=0,fp=0,fn=0,tn=12",none
+1191526,(N) HOSPITAL - STRUCTURAL PLAN,cells 12.6/12.0,12.27,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5400075,(N) LEVEL 1 - DEPARTMENT PLAN Copy 1,probe image,3.9,mid_top_v,none,"tp=0,fp=1,fn=0,tn=11",mid_bottom_v
+6382563,(N) LEVEL 1 COMPOSITE PLAN - BB,probe image,10.5,none,mid_bottom_v,"tp=0,fp=0,fn=1,tn=11",right_top_h
+5400334,(N) LEVEL 2 - DEPARTMENT PLAN Copy 1,cells 4.2/12.7,8.42,none,none,"tp=0,fp=0,fn=0,tn=12",none
+4610688,(N) LEVEL 2 Copy 1 - BB Test,cells 12.9/12.7,12.81,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5400744,(N) LEVEL 3 - DEPARTMENT PLAN Copy 1,cells 12.6/12.5,12.55,none,mid_bottom_v,"tp=0,fp=0,fn=1,tn=11",none
+929475,(N) LEVEL 3,cells 0.0/0.0,0.0,left_bottom_h|left_bottom_v|right_bottom_h|right_bottom_v|left_top_h|left_top_v|right_top_h|right_top_v|left_mid_h|right_mid_h|mid_bottom_v|mid_top_v,left_bottom_h|left_bottom_v|right_bottom_h|right_bottom_v|left_top_h|left_top_v|right_top_h|right_top_v|left_mid_h|right_mid_h|mid_bottom_v|mid_top_v,"tp=12,fp=0,fn=0,tn=0",left_bottom_h|left_bottom_v|right_bottom_h|right_bottom_v|left_top_h|left_top_v|right_top_h|right_top_v|left_mid_h|right_mid_h|mid_bottom_v|mid_top_v
+5401456,(N) LEVEL 4 - DEPARTMENT PLAN Copy 1,cells 6.0/12.1,9.07,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5401607,(N) LEVEL 5 - DEPARTMENT PLAN Copy 1,cells 13.3/14.2,13.78,mid_top_v,mid_bottom_v|mid_top_v,"tp=1,fp=0,fn=1,tn=10",mid_bottom_v
+5401342,(N) LOWER LEVEL - DEPARTMENT PLAN Co,cells 12.1/11.8,11.95,none,mid_bottom_v,"tp=0,fp=0,fn=1,tn=11",none
+4314545,(N) LOWER LEVEL - Dependent 1,probe image,-8.68,none,none,"tp=0,fp=0,fn=0,tn=12",none
+5401743,(N) PENTHOUSE - DEPARTMENT PLAN Copy,cells 13.5/11.6,12.51,none,mid_bottom_v,"tp=0,fp=0,fn=1,tn=11",none

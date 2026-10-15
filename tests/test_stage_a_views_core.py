@@ -234,15 +234,19 @@ def test_merged_run_meta_is_written_per_batch_and_unfinalized_until_the_end(tmp_
     assert write_merged_run_meta([], str(out), run_complete=True) is None
 
 
-def test_thinrunner_writes_the_root_run_meta_before_relocating_a_batch():
-    """The batch loop is top-level Dynamo script code, so its ORDER is pinned
-    on the source: the per-batch write must precede the relocation call."""
-    # Read as text: importing the module RUNS the Dynamo script.
+def test_the_run_loop_writes_the_root_run_meta_before_relocating_a_batch():
+    """The batch loop (capture_run.run_capture, moved out of the thinrunner's
+    top-level script code) has its ORDER pinned on the source: the per-batch
+    write must precede the relocation call."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
-        __file__))), "vop_interwoven", "thinrunner_streaming.py")).read()
+        __file__))), "vop_interwoven", "capture_run.py")).read()
     write = src.index("write_merged_run_meta(batch_meta_paths, run_dir, run_complete=False)")
-    move = src.index("_relocate_batch_stage_a_outputs(\n", src.index("for batch_index"))
+    move = src.index("relocate_batch_stage_a_outputs(\n", src.index("for batch_index"))
     assert write < move
+    # The thinrunner itself no longer carries the loop; it calls run_capture.
+    runner = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
+        __file__))), "vop_interwoven", "thinrunner_streaming.py")).read()
+    assert "for batch_index" not in runner and "run_capture(" in runner
 
 
 def test_a_failed_stage_a_view_reaches_views_core_through_the_real_loop(tmp_path, monkeypatch):

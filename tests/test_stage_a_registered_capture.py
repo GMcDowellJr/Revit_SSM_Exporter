@@ -721,3 +721,140 @@ def test_control_every_tick_takes_the_style_and_nothing_faults(tmp_path):
     assert all(m["line_style_applied"] is True
                for m in out["registration"]["marks"]["created"])
     assert not any(w.get("callsite") == "tick_line_style_apply" for w in diag.warnings)
+
+
+# --- the crop LOOP (2026-10-12) ------------------------------------------------------
+
+def _rotated_loop(view, theta_deg, w=50.0, h=40.0):
+    """A w x h rectangle rotated theta inside the fake crop (20,15)-(80,60):
+    its bounding box is 50cos+40sin by 50sin+40cos, within the crop."""
+    import math
+    cu, cv = 50.0, 37.5
+    c, s = math.cos(math.radians(theta_deg)), math.sin(math.radians(theta_deg))
+    view.crop_loop = [(cu + du * c - dv * s, cv + du * s + dv * c)
+                      for du, dv in ((-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2))]
+
+
+def test_control_an_ordinary_crops_loop_leaves_the_ticks_on_the_crop_box(tmp_path):
+    out, view, doc, exports, diag = _run(tmp_path)
+    reg = out["registration"]
+    assert reg["crop_shape"]["state"] == "value"
+    assert reg["crop_shape"]["classification"]["axis_aligned"] is True
+    assert reg["crop_shape"]["reference"] == "crop_box"
+    assert reg["mark_reference_source"] == "authored_crop"
+    assert reg["marks"]["layout"]["reference_uv"] == [20.0, 15.0, 80.0, 60.0]
+    assert reg["ticks_outside_crop_loop"] == [] and reg["faults"] == []
+    for path in (out["sidecar_path"], out["annotation_pass"]["sidecar_path"]):
+        on_disk = _sidecar(path)["registration_marks"]
+        assert on_disk["crop_shape"]["reference"] == "crop_box"
+        assert on_disk["ticks_outside_crop_loop"] == []
+
+
+def test_a_rotated_crop_loop_puts_the_ticks_inside_it_in_the_FILE(tmp_path):
+    """3939979's shape on the fake: the loop rotated 12.91 deg inside the
+    crop box. The ticks go on the largest axis-aligned rectangle inside the
+    loop, none lies outside it, no fault; the sidecars say so."""
+    out, view, doc, exports, diag = _run(
+        tmp_path, view_setup=lambda v: _rotated_loop(v, 12.91))
+    reg = out["registration"]
+    shape = reg["crop_shape"]
+    assert shape["state"] == "value" and shape["loop_count"] == 1
+    assert shape["classification"]["rectangular"] is True
+    assert shape["classification"]["axis_aligned"] is False
+    assert abs(shape["classification"]["rotation_deg"] - 12.91) < 1e-3
+    assert shape["reference"] == "crop_loop_inscribed"
+    assert reg["mark_reference_source"] == "crop_loop_inscribed"
+    ref = reg["marks"]["layout"]["reference_uv"]
+    assert ref == shape["inscribed_uv"]
+    assert 20.0 < ref[0] < ref[2] < 80.0 and 15.0 < ref[1] < ref[3] < 60.0
+    assert reg["marks"]["created_count"] == 12
+    assert reg["ticks_outside_crop_loop"] == []
+    assert [f["fault"] for f in reg["faults"]] == []
+    # Every created tick's readback lies inside the loop.
+    for mark in reg["marks"]["created"]:
+        for u, v in mark["readback_uv"]:
+            assert registration.point_in_loop(view.crop_loop, u, v), mark["key"]
+    for path in (out["sidecar_path"], out["annotation_pass"]["sidecar_path"]):
+        on_disk = _sidecar(path)["registration_marks"]
+        assert on_disk["crop_shape"]["reference"] == "crop_loop_inscribed"
+        assert on_disk["reference_source"] == "crop_loop_inscribed"
+        assert on_disk["layout"]["reference_uv"] == ref
+
+
+def test_the_shipped_placement_on_a_rotated_loop_would_have_faulted(tmp_path, monkeypatch):
+    """Mutation of the fix: with the loop's reference refused, the ticks go
+    back on the crop box and the pre-export check names all twelve."""
+    monkeypatch.setattr(registration, "mark_reference_from_loop",
+                        lambda loop, crop, tol: (None, {"reference": "none",
+                                                        "classification": {},
+                                                        "reason": "forced"}))
+    out, view, doc, exports, diag = _run(
+        tmp_path, view_setup=lambda v: _rotated_loop(v, 12.91))
+    reg = out["registration"]
+    assert reg["marks"]["layout"]["reference_uv"] == [20.0, 15.0, 80.0, 60.0]
+    # On the fake's 60 x 45 ft crop one mid tick happens to sit near the
+    # loop's tangent point (the shape the run's partial refusals had:
+    # mid_bottom_v found on 7 of 8); every corner tick is outside.
+    outside = reg["ticks_outside_crop_loop"]
+    assert len(outside) >= 11
+    assert all(k in outside for k in ("left_bottom_h", "left_bottom_v", "right_bottom_h",
+                                      "right_bottom_v", "left_top_h", "left_top_v",
+                                      "right_top_h", "right_top_v"))
+    names = [f["fault"] for f in reg["faults"]]
+    message = [f["message"] for f in reg["faults"] if f["fault"] == "registration_marks_outside_crop_loop"][0]
+    assert message.startswith("{0} of 12 ticks lie outside".format(len(outside)))
+    assert "registration_marks_outside_crop_loop" in names
+    assert "registration_marks_no_room_in_crop_loop" in names
+    for path in (out["sidecar_path"], out["annotation_pass"]["sidecar_path"]):
+        on_disk = _sidecar(path)
+        assert "registration_marks_outside_crop_loop" in [
+            f["fault"] for f in on_disk["registration_marks"]["faults"]]
+        assert "registration_marks_outside_crop_loop" in [
+            f["fault"] for f in on_disk["capture_integrity"]["capture_faults"]]
+
+
+def test_a_loop_that_will_not_read_is_a_fault_and_the_ticks_stay_on_the_box(tmp_path):
+    def _refuse(view):
+        view._manager.GetCropShape = lambda: (_ for _ in ()).throw(RuntimeError("no shape (fake)"))
+    out, view, doc, exports, diag = _run(tmp_path, view_setup=_refuse)
+    reg = out["registration"]
+    assert reg["crop_shape"]["state"] == "unavailable"
+    assert "no shape (fake)" in reg["crop_shape"]["reason"]
+    assert reg["marks"]["layout"]["reference_uv"] == [20.0, 15.0, 80.0, 60.0]
+    assert [f["fault"] for f in reg["faults"]] == ["crop_shape_unverified"]
+    assert "ticks_outside_crop_loop" not in reg
+
+
+def test_a_crop_inactive_views_stored_loop_is_not_read_and_the_ticks_stay_on_crop_A(tmp_path):
+    """Codex, PR #236: with the crop inactive the reference is crop A, which
+    both passes activate as the box; the view's stored (here rotated) loop
+    is not what the export renders, so it must not move the ticks."""
+    out, view, doc, exports, diag = _run(
+        tmp_path, crop_active=False, view_setup=lambda v: _rotated_loop(v, 12.91))
+    reg = out["registration"]
+    assert reg["mark_reference_source"] == "model_crop_a"
+    assert reg["crop_shape"]["state"] == "not_read"
+    assert "model_crop_a" in reg["crop_shape"]["reason"]
+    assert "ticks_outside_crop_loop" not in reg
+    assert not [f for f in reg["faults"] if f["fault"].startswith("crop_shape")]
+    assert reg["marks"]["created_count"] == 12 and out["success"] is True
+
+
+def test_a_recapture_is_refused_when_the_loop_cannot_be_verified(tmp_path):
+    """Codex, PR #236: the refusal guard needs the loop; without it the old
+    capture must not be replaced."""
+    from vop_interwoven import recapture as rc
+
+    def _setup(view):
+        view._manager.GetCropShape = lambda: (_ for _ in ()).throw(RuntimeError("no shape (fake)"))
+
+    def _in_recapture(cfg):
+        cfg._recapture_record = {"schema": rc.RECAPTURE_SCHEMA, "captured_at": "x",
+                                 "exporter_version": "1", "reason": rc.RECAPTURE_REASON,
+                                 "view_ids": [VIEW_ID], "replaces_exporter_version": "0"}
+    out, view, doc, exports, diag = _run(tmp_path, view_setup=_setup, cfg_setup=_in_recapture)
+    assert out["success"] is False and out["failure_reason"] == "recapture_refused"
+    assert exports == [] and out["sidecar_path"] is None
+    names = [f["fault"] for f in out["registration"]["faults"]]
+    assert "crop_shape_unverified" in names and "recapture_refused" in names
+    assert out["registration"]["restore"]["rolled_back"] is True

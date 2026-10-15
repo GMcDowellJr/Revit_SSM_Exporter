@@ -1,0 +1,1744 @@
+{
+  "checkout_commit": null,
+  "commit_without_effect": [],
+  "failed_exports": [],
+  "images": [
+    {
+      "border_band_px": [
+        36,
+        40
+      ],
+      "border_non_white_fraction": 0.023392603129445234,
+      "border_non_white_pixels": 6578,
+      "border_pixels": 281200,
+      "distinct_colours": 105,
+      "file": "Q3B_S0_3939979.tiff",
+      "grey_pixels": 905256,
+      "non_white_pixels": 975624,
+      "pixel_count": 3574000,
+      "probe_dims_px": [
+        2000,
+        1787
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        1787
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 2598376,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 895794,
+          "rgb": [
+            192,
+            192,
+            192
+          ]
+        },
+        {
+          "count": 34300,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 10362,
+          "rgb": [
+            167,
+            214,
+            237
+          ]
+        },
+        {
+          "count": 9352,
+          "rgb": [
+            232,
+            146,
+            147
+          ]
+        },
+        {
+          "count": 4570,
+          "rgb": [
+            203,
+            133,
+            97
+          ]
+        },
+        {
+          "count": 4107,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 3731,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 3659,
+          "rgb": [
+            229,
+            172,
+            137
+          ]
+        },
+        {
+          "count": 2742,
+          "rgb": [
+            255,
+            247,
+            213
+          ]
+        }
+      ],
+      "view_id": 3939979
+    },
+    {
+      "border_band_px": [
+        54,
+        40
+      ],
+      "border_non_white_fraction": 0.0,
+      "border_non_white_pixels": 0,
+      "border_pixels": 420000,
+      "distinct_colours": 40,
+      "file": "Q3B_S0_7035379.tiff",
+      "grey_pixels": 1410110,
+      "non_white_pixels": 1543900,
+      "pixel_count": 5316000,
+      "probe_dims_px": [
+        2000,
+        2658
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2658
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 3772100,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 1271831,
+          "rgb": [
+            192,
+            192,
+            192
+          ]
+        },
+        {
+          "count": 136524,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 102868,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 29336,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 341,
+          "rgb": [
+            195,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 292,
+          "rgb": [
+            137,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 227,
+          "rgb": [
+            105,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 211,
+          "rgb": [
+            35,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 208,
+          "rgb": [
+            71,
+            0,
+            0
+          ]
+        }
+      ],
+      "view_id": 7035379
+    },
+    {
+      "border_band_px": [
+        54,
+        40
+      ],
+      "border_non_white_fraction": 0.0,
+      "border_non_white_pixels": 0,
+      "border_pixels": 420000,
+      "distinct_colours": 40,
+      "file": "Q3B_S1_7035379.tiff",
+      "grey_pixels": 1410110,
+      "non_white_pixels": 1543900,
+      "pixel_count": 5316000,
+      "probe_dims_px": [
+        2000,
+        2658
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2658
+      ],
+      "step": "Q3B_S1",
+      "step_name": "S1",
+      "top_colours": [
+        {
+          "count": 3772100,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 1271831,
+          "rgb": [
+            192,
+            192,
+            192
+          ]
+        },
+        {
+          "count": 136524,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 102868,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 29336,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 341,
+          "rgb": [
+            195,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 292,
+          "rgb": [
+            137,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 227,
+          "rgb": [
+            105,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 211,
+          "rgb": [
+            35,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 208,
+          "rgb": [
+            71,
+            0,
+            0
+          ]
+        }
+      ],
+      "view_id": 7035379
+    },
+    {
+      "border_band_px": [
+        43,
+        40
+      ],
+      "border_non_white_fraction": 0.0,
+      "border_non_white_pixels": 0,
+      "border_pixels": 336560,
+      "distinct_colours": 129,
+      "file": "Q3B_S0_930011.tiff",
+      "grey_pixels": 365619,
+      "non_white_pixels": 882756,
+      "pixel_count": 4286000,
+      "probe_dims_px": [
+        2000,
+        2143
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2143
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 3403244,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 349966,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 206569,
+          "rgb": [
+            203,
+            133,
+            97
+          ]
+        },
+        {
+          "count": 123758,
+          "rgb": [
+            242,
+            215,
+            198
+          ]
+        },
+        {
+          "count": 65892,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 50214,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 34993,
+          "rgb": [
+            229,
+            172,
+            137
+          ]
+        },
+        {
+          "count": 14581,
+          "rgb": [
+            255,
+            247,
+            213
+          ]
+        },
+        {
+          "count": 11707,
+          "rgb": [
+            85,
+            85,
+            85
+          ]
+        },
+        {
+          "count": 2738,
+          "rgb": [
+            109,
+            71,
+            52
+          ]
+        }
+      ],
+      "view_id": 930011
+    },
+    {
+      "border_band_px": [
+        53,
+        40
+      ],
+      "border_non_white_fraction": 0.0,
+      "border_non_white_pixels": 0,
+      "border_pixels": 412480,
+      "distinct_colours": 7,
+      "file": "Q3B_S0_5400075.tiff",
+      "grey_pixels": 92796,
+      "non_white_pixels": 276517,
+      "pixel_count": 5224000,
+      "probe_dims_px": [
+        2000,
+        2612
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2612
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 4947483,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 123403,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 92796,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 53749,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 6131,
+          "rgb": [
+            229,
+            172,
+            137
+          ]
+        },
+        {
+          "count": 345,
+          "rgb": [
+            203,
+            133,
+            97
+          ]
+        },
+        {
+          "count": 93,
+          "rgb": [
+            0,
+            255,
+            0
+          ]
+        }
+      ],
+      "view_id": 5400075
+    },
+    {
+      "border_band_px": [
+        49,
+        40
+      ],
+      "border_non_white_fraction": 0.0011090186231429169,
+      "border_non_white_pixels": 424,
+      "border_pixels": 382320,
+      "distinct_colours": 277,
+      "file": "Q3B_S0_6382563.tiff",
+      "grey_pixels": 280687,
+      "non_white_pixels": 1871848,
+      "pixel_count": 4854000,
+      "probe_dims_px": [
+        2000,
+        2427
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2427
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 2982152,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 296912,
+          "rgb": [
+            167,
+            214,
+            237
+          ]
+        },
+        {
+          "count": 271126,
+          "rgb": [
+            232,
+            146,
+            147
+          ]
+        },
+        {
+          "count": 241284,
+          "rgb": [
+            255,
+            247,
+            213
+          ]
+        },
+        {
+          "count": 203233,
+          "rgb": [
+            192,
+            192,
+            192
+          ]
+        },
+        {
+          "count": 163742,
+          "rgb": [
+            207,
+            233,
+            245
+          ]
+        },
+        {
+          "count": 138145,
+          "rgb": [
+            203,
+            133,
+            97
+          ]
+        },
+        {
+          "count": 112454,
+          "rgb": [
+            229,
+            172,
+            137
+          ]
+        },
+        {
+          "count": 104933,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 88694,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "view_id": 6382563
+    },
+    {
+      "border_band_px": [
+        54,
+        40
+      ],
+      "border_non_white_fraction": 0.0007126567844925884,
+      "border_non_white_pixels": 300,
+      "border_pixels": 420960,
+      "distinct_colours": 118,
+      "file": "Q3B_S0_4314545.tiff",
+      "grey_pixels": 725385,
+      "non_white_pixels": 1812355,
+      "pixel_count": 5340000,
+      "probe_dims_px": [
+        2000,
+        2670
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2670
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 3527645,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 720286,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 436419,
+          "rgb": [
+            203,
+            133,
+            97
+          ]
+        },
+        {
+          "count": 259379,
+          "rgb": [
+            242,
+            215,
+            198
+          ]
+        },
+        {
+          "count": 150999,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 100218,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 73306,
+          "rgb": [
+            229,
+            172,
+            137
+          ]
+        },
+        {
+          "count": 30175,
+          "rgb": [
+            255,
+            247,
+            213
+          ]
+        },
+        {
+          "count": 4515,
+          "rgb": [
+            109,
+            71,
+            52
+          ]
+        },
+        {
+          "count": 4119,
+          "rgb": [
+            155,
+            102,
+            74
+          ]
+        }
+      ],
+      "view_id": 4314545
+    },
+    {
+      "border_band_px": [
+        41,
+        40
+      ],
+      "border_non_white_fraction": 0.0006172069825436409,
+      "border_non_white_pixels": 198,
+      "border_pixels": 320800,
+      "distinct_colours": 2,
+      "file": "Q3B_S0_7424270.tiff",
+      "grey_pixels": 0,
+      "non_white_pixels": 26269,
+      "pixel_count": 4084000,
+      "probe_dims_px": [
+        2000,
+        2042
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2042
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 4057731,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 26269,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "view_id": 7424270
+    },
+    {
+      "border_band_px": [
+        55,
+        40
+      ],
+      "border_non_white_fraction": 0.0,
+      "border_non_white_pixels": 0,
+      "border_pixels": 429440,
+      "distinct_colours": 98,
+      "file": "Q3B_S0_4314570.tiff",
+      "grey_pixels": 1073442,
+      "non_white_pixels": 2444335,
+      "pixel_count": 5456000,
+      "probe_dims_px": [
+        2000,
+        2728
+      ],
+      "question": "Q3B",
+      "size_px": [
+        2000,
+        2728
+      ],
+      "step": "Q3B_S0",
+      "step_name": "S0",
+      "top_colours": [
+        {
+          "count": 3011665,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "count": 1068816,
+          "rgb": [
+            128,
+            128,
+            128
+          ]
+        },
+        {
+          "count": 613210,
+          "rgb": [
+            203,
+            133,
+            97
+          ]
+        },
+        {
+          "count": 345355,
+          "rgb": [
+            242,
+            215,
+            198
+          ]
+        },
+        {
+          "count": 136250,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 105441,
+          "rgb": [
+            229,
+            172,
+            137
+          ]
+        },
+        {
+          "count": 105245,
+          "rgb": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "count": 39307,
+          "rgb": [
+            255,
+            247,
+            213
+          ]
+        },
+        {
+          "count": 2647,
+          "rgb": [
+            109,
+            71,
+            52
+          ]
+        },
+        {
+          "count": 2615,
+          "rgb": [
+            57,
+            37,
+            27
+          ]
+        }
+      ],
+      "view_id": 4314570
+    }
+  ],
+  "pairs_vs_s0": [
+    {
+      "baseline": "Q3B_S0_7035379.tiff",
+      "changed_fraction": 0.0,
+      "changed_pixels": 0,
+      "file": "Q3B_S1_7035379.tiff",
+      "size_px": [
+        2000,
+        2658
+      ],
+      "state": "value",
+      "step": "Q3B_S1",
+      "view_id": 7035379
+    }
+  ],
+  "probe_json": "probe_capture_state_20261012T145554.json",
+  "probe_json_sha256": "1b55a6a564242303cfe8679b4705b6fcb66820bb23ee8f4925da4873d18a3c1b",
+  "probe_version": "2026-10-05.1",
+  "q1b": [],
+  "q3": [],
+  "q3b": [
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "test",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            1787
+          ],
+          "non_white_pixels": 975624,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 3939979
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2658
+          ],
+          "non_white_pixels": 1543900,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": 0.0,
+          "exported_px": [
+            2000,
+            2658
+          ],
+          "non_white_pixels": 1543900,
+          "non_white_vs_s0": 0,
+          "read_back_extent_ft": [
+            256.3846842642191,
+            340.84024041592943
+          ],
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": [
+            256.3846842642191,
+            340.84024041592943
+          ],
+          "scope_box_at_export": -1,
+          "step": "S1",
+          "transform_kept": true,
+          "writes": {
+            "crop_box_s0_frame": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": "Committed",
+              "state": "value",
+              "took_effect": true
+            },
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": "Committed",
+              "state": "value",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 7035379
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2143
+          ],
+          "non_white_pixels": 882756,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 930011
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2612
+          ],
+          "non_white_pixels": 276517,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 5400075
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2427
+          ],
+          "non_white_pixels": 1871848,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 6382563
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2670
+          ],
+          "non_white_pixels": 1812355,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 4314545
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2042
+          ],
+          "non_white_pixels": 26269,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 7424270
+    },
+    {
+      "baseline_scope_box": -1,
+      "refused": null,
+      "role": "control",
+      "rows": [
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": [
+            2000,
+            2728
+          ],
+          "non_white_pixels": 2444335,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": null,
+          "refused_reason": null,
+          "s0_extent_ft": null,
+          "scope_box_at_export": -1,
+          "step": "S0",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "discriminator_not_applied",
+          "refused_reason": "the scope box was not cleared: write raised, read-back {'state': 'value', 'value': -1, 'error': None}",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S1",
+          "transform_kept": null,
+          "writes": {
+            "scope_box_cleared": {
+              "attempted_differs_from_before": false,
+              "commit_status_name": null,
+              "state": "raised",
+              "took_effect": true
+            }
+          }
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S2",
+          "transform_kept": null,
+          "writes": {}
+        },
+        {
+          "changed_fraction_vs_s0": null,
+          "exported_px": null,
+          "non_white_pixels": null,
+          "non_white_vs_s0": null,
+          "read_back_extent_ft": null,
+          "refused": "production_unavailable",
+          "refused_reason": "production code not importable (unavailable: no vop_interwoven package found; set IN[9] repo_root)",
+          "s0_extent_ft": null,
+          "scope_box_at_export": {
+            "unavailable": "not recorded"
+          },
+          "step": "S3",
+          "transform_kept": null,
+          "writes": {}
+        }
+      ],
+      "view_id": 4314570
+    }
+  ],
+  "q5b": [],
+  "q6": [],
+  "q6_authored": [],
+  "q7_markers": [],
+  "q7_split": [],
+  "schema": "vop.probe.capture_state.analysis.v1",
+  "status": "value",
+  "tool_version": "1.3.1",
+  "verify_changed": [],
+  "verify_summary": "ALL PROBED VIEWS RESTORED",
+  "writes": [
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)\r\n   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)",
+      "path": "/q3b/views[0]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    },
+    {
+      "attempted": {
+        "max": [
+          304.3441107769129,
+          182.10439565197748,
+          -0.1
+        ],
+        "min": [
+          47.959426512693796,
+          -158.73584476395195,
+          -1000.0
+        ],
+        "transform": {
+          "basis_x": [
+            1.0,
+            1.27675647831893e-15,
+            0.0
+          ],
+          "basis_y": [
+            -1.27675647831893e-15,
+            1.0,
+            0.0
+          ],
+          "basis_z": [
+            -0.0,
+            -0.0,
+            1.0
+          ],
+          "origin": [
+            -8.100231823786592,
+            -7.704786658079598,
+            150.99999999999994
+          ]
+        },
+        "transform_source": "given"
+      },
+      "attempted_differs_from_before": false,
+      "commit_status": "3",
+      "commit_status_name": "Committed",
+      "error": null,
+      "path": "/q3b/views[1]/steps[1]/writes/crop_box_s0_frame",
+      "read_back": {
+        "max": [
+          304.3441107769129,
+          182.10439565197748,
+          -0.1
+        ],
+        "min": [
+          47.959426512693796,
+          -158.73584476395195,
+          -1000.0
+        ],
+        "transform": {
+          "basis_x": [
+            1.0,
+            1.27675647831893e-15,
+            0.0
+          ],
+          "basis_y": [
+            -1.27675647831893e-15,
+            1.0,
+            0.0
+          ],
+          "basis_z": [
+            -0.0,
+            -0.0,
+            1.0
+          ],
+          "origin": [
+            -8.100231823786592,
+            -7.704786658079598,
+            150.99999999999994
+          ]
+        }
+      },
+      "state": "value",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": "3",
+      "commit_status_name": "Committed",
+      "error": null,
+      "path": "/q3b/views[1]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "value",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at InvokeStub_Parameter.Set(Object, Span`1)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)",
+      "path": "/q3b/views[2]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at InvokeStub_Parameter.Set(Object, Span`1)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)",
+      "path": "/q3b/views[3]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at InvokeStub_Parameter.Set(Object, Span`1)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)",
+      "path": "/q3b/views[4]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at InvokeStub_Parameter.Set(Object, Span`1)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)",
+      "path": "/q3b/views[5]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at InvokeStub_Parameter.Set(Object, Span`1)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)",
+      "path": "/q3b/views[6]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    },
+    {
+      "attempted": -1,
+      "attempted_differs_from_before": false,
+      "commit_status": null,
+      "commit_status_name": null,
+      "error": "InvalidOperationException: The parameter is read-only.\n   at Autodesk.Revit.DB.Parameter.Set(ElementId value)\r\n   at InvokeStub_Parameter.Set(Object, Span`1)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)",
+      "path": "/q3b/views[7]/steps[1]/writes/scope_box_cleared",
+      "read_back": -1,
+      "state": "raised",
+      "took_effect": true
+    }
+  ]
+}

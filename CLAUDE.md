@@ -238,6 +238,41 @@ occlusion/vop/perf CSVs are not written under Stage A. The per-date
 keyed by the exporter's run id. The element cache is in-run only; change
 detection belongs to the analysis layer.
 
+**Recapture in place** (`vop_interwoven/recapture.py`, 2026-10-12): the
+listed views of an EXISTING, finalized run are captured again into that
+run's directory from the SAME document (the open document's title must equal
+`run_meta.doc_title`; only ids in `views_requested`), under the run's own
+`run_id` and as-of date. The thinrunner takes the finder's list
+(`tools/find_recapture_views.py` -> `recapture_lists.json`) as IN[7]. Each
+recaptured view's capture files are rewritten, its `views_core` row replaced
+by `(RunId, ViewId)` and its `run_meta.views[]` entry replaced and stamped
+`recapture: {captured_at, exporter_version, reason}`; the run gains
+`recaptures: [...]` (one entry per recapture, however many batches wrote
+it) and keeps its `exporter_version`, so a run then holds two builds and the
+per-view stamp is what analysis compares on. Both sidecars carry
+`registration_marks.recapture`. The registered capture REFUSES a view whose
+ticks would still lie outside the crop loop before it exports anything
+(`failure_reason: recapture_refused`): its files, row and entry stay as they
+were, and the refusal is listed under `recaptures[].refused_view_ids`.
+
+**Batch capture across archives** (`vop_interwoven/batch_capture.py`,
+`tools/plan_capture_batch.py`, `pyrevit/VOP.extension`, 2026-10-12): a
+pyRevit button opens each archive of a `capture_plan.json` (planned from a
+Fingerprint manifest of Desktop Connector paths plus `recapture_lists.json`
+and the runs on disk), runs `capture_run.run_capture` (a new run, views by
+`select_views`: every non-template view of `DEFAULT_VIEW_TYPES`, recorded as
+`view_selection`) or `recapture.run_recapture`, closes it, goes on; a durable
+`batch_capture_<clock>.json` is written after every job and each run's
+`run_meta.json` gains `opened_from` (detached, which worksets, the title
+Revit gave the document). Documents are opened `DetachAndPreserveWorksets`
+with ALL worksets open, never `CloseAllWorksets` (closed worksets hide
+model elements), so a batch-made run is a different capture environment
+from an interactive one, and `opened_from` says so. `title_matches` accepts
+a run's title with the `_detached` suffix; whether Revit titles a detached
+document that way is unconfirmed and `opened_from.title` records it. The
+thinrunner's batched run loop moved verbatim to `capture_run.run_capture`
+so both entry points run the same loop.
+
 `color_id_buffer_registered_capture=False` selects the frame-B two-pass
 capture, kept as the named fallback: the crop is widened to frame B and model
 categories are hidden. Its knobs are `Config` parameters too:

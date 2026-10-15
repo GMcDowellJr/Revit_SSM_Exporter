@@ -970,6 +970,237 @@ def tick_line_style(doc, view, curve, diag=None, view_id=None):
     return style, record
 
 
+# CROP LOOP (run 2025-06-21__20261008T093539, 2026-10-12). 52 FloorPlans of
+# that run refused with 0 of 12 ticks found while both sidecars recorded 12
+# painted and a readback of 0.0 ft: their crop region is a SKETCH, a
+# rectangle rotated 12.9 deg against the view's axes (confirmed in Revit on
+# 3939979; the capture-state probe read four-curve loops and a rotated
+# RightDirection on others). View.CropBox reports the loop's bounding box,
+# Revit renders the loop and leaves the box's corners white, and every tick,
+# placed 24 px inside the BOX, lay outside the LOOP
+# (tools/notes/RUN_2025-06-21_20261008T093539_ROTATION.md). So the marks are
+# placed inside the loop: the largest axis-aligned rectangle it holds is the
+# reference rectangle, the ticks stay horizontal and vertical (the locator
+# and the fit are unchanged), and a tick that would still lie outside the
+# loop is a fault BEFORE the export. A loop that is the box itself (every
+# ordinary crop) leaves the reference exactly as before.
+#
+# Two states are told apart, because they are different authoring acts:
+# "not axis-aligned" (four sides, right angles, rotated against the view's
+# own RightDirection/UpDirection) and "non-rectangular" (not four sides, or
+# no right angle). The angle is to the VIEW's axes: a rotated true north with
+# the view set to it rotates the basis with the crop and reads 0 here.
+# ``tolerance_ft`` is the crop read-back tolerance (0.05 px at the model
+# lattice): an axis-aligned crop reads back at 0.0 ft; 3939979's side of
+# 3579 px at 12.91 deg has a cross-axis extent of 800 px.
+LOOP_RECTANGLE_GRID = 16
+LOOP_BOUNDARY_SAMPLE_FRACTION = 0.01
+# The loop's own vertex coordinates join the candidate set only for a loop
+# this small: with V vertices the candidate rectangles number O(V^4), and a
+# 30-vertex loop took 8 s (Codex, PR #236). Beyond it the grid alone is
+# searched; the ticks have their own inset, so a rectangle a grid step short
+# of the optimum costs nothing.
+LOOP_VERTEX_CANDIDATE_MAX = 12
+
+
+def point_in_loop(loop_uv, u, v):
+    """Even-odd test of ``(u, v)`` against a closed polygon of ``[u, v]``
+    vertices. A point on an edge may fall either side; callers that need a
+    margin keep one (the ticks are inset from any rectangle they are placed
+    in)."""
+    inside = False
+    n = len(loop_uv)
+    for i in range(n):
+        u1, v1 = loop_uv[i]
+        u2, v2 = loop_uv[(i + 1) % n]
+        if (v1 > v) != (v2 > v):
+            cross = u1 + (v - v1) * (u2 - u1) / (v2 - v1)
+            if u < cross:
+                inside = not inside
+    return inside
+
+
+def loop_bbox_uv(loop_uv):
+    us = [float(p[0]) for p in loop_uv]
+    vs = [float(p[1]) for p in loop_uv]
+    return [min(us), min(vs), max(us), max(vs)]
+
+
+def classify_crop_loop(loop_uv, crop_uv, tolerance_ft):
+    """PURE. What kind of loop the crop region is, in view UV:
+
+    * ``rectangular`` -- four vertices and each pair of consecutive sides
+      perpendicular to within ``tolerance_ft`` of cross-axis excursion over
+      the shorter side;
+    * ``axis_aligned`` -- rectangular AND every side parallel to u or v
+      (its excursion along the other axis <= ``tolerance_ft``);
+    * ``rotation_deg`` -- the angle of the longest side to the u axis, folded
+      into (-45, 45]; 0.0 for an axis-aligned loop;
+    * ``bbox_matches_crop`` -- the loop's bounding box is ``crop_uv`` to
+      within ``tolerance_ft`` on every edge.
+    """
+    import math
+    pts = [(float(p[0]), float(p[1])) for p in loop_uv]
+    n = len(pts)
+    out = {"vertex_count": n, "rectangular": False, "axis_aligned": False,
+           "rotation_deg": None, "bbox_uv": loop_bbox_uv(pts) if pts else None,
+           "bbox_matches_crop": None}
+    if crop_uv is not None and out["bbox_uv"] is not None:
+        out["bbox_matches_crop"] = all(
+            abs(float(a) - float(b)) <= tolerance_ft for a, b in zip(out["bbox_uv"], crop_uv))
+    if n < 3:
+        return out
+    sides = [(pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1])
+             for i in range(n)]
+    lengths = [math.hypot(a, b) for a, b in sides]
+    if min(lengths) <= 0.0:
+        return out
+    longest = max(range(n), key=lambda i: lengths[i])
+    angle = math.degrees(math.atan2(sides[longest][1], sides[longest][0])) % 90.0
+    out["rotation_deg"] = round(angle if angle <= 45.0 else angle - 90.0, 4)
+    if n != 4:
+        return out
+    for i in range(4):
+        a, b = sides[i], sides[(i + 1) % 4]
+        dot = a[0] * b[0] + a[1] * b[1]
+        # |dot| / |a| is b's excursion along a; a right angle keeps it within
+        # the tolerance over the shorter of the two sides.
+        if abs(dot) / lengths[i] > tolerance_ft and abs(dot) / lengths[(i + 1) % 4] > tolerance_ft:
+            return out
+    out["rectangular"] = True
+    out["axis_aligned"] = all(min(abs(a), abs(b)) <= tolerance_ft for a, b in sides)
+    if out["axis_aligned"]:
+        out["rotation_deg"] = 0.0
+    return out
+
+
+def _rect_inside_loop(loop_uv, u0, v0, u1, v1, step):
+    """Every corner and every boundary sample of the rectangle inside the
+    loop (a corner test alone misses an edge of a non-convex loop cutting
+    through a side)."""
+    for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1)):
+        if not point_in_loop(loop_uv, u, v):
+            return False
+    k = max(1, int((u1 - u0) / step))
+    for i in range(1, k):
+        u = u0 + (u1 - u0) * i / k
+        if not (point_in_loop(loop_uv, u, v0) and point_in_loop(loop_uv, u, v1)):
+            return False
+    k = max(1, int((v1 - v0) / step))
+    for i in range(1, k):
+        v = v0 + (v1 - v0) * i / k
+        if not (point_in_loop(loop_uv, u0, v) and point_in_loop(loop_uv, u1, v)):
+            return False
+    return True
+
+
+def largest_axis_aligned_rectangle(loop_uv, grid=LOOP_RECTANGLE_GRID,
+                                   boundary_fraction=LOOP_BOUNDARY_SAMPLE_FRACTION):
+    """PURE. The largest axis-aligned rectangle inside ``loop_uv`` whose
+    edges lie on a candidate set -- the loop's own vertex coordinates plus
+    ``grid`` evenly spaced values per axis across its bounding box -- as
+    ``[u0, v0, u1, v1]``, or None when no candidate rectangle fits. Largest
+    over the candidates, not over the continuum: the ticks have their own
+    inset, so a rectangle a few pixels short of the optimum costs nothing.
+    Candidates are verified by boundary sampling (``boundary_fraction`` of the
+    shorter extent), so a non-convex loop cannot pass on its corners alone.
+    """
+    pts = [(float(p[0]), float(p[1])) for p in loop_uv]
+    if len(pts) < 3:
+        return None
+    bu0, bv0, bu1, bv1 = loop_bbox_uv(pts)
+    if bu1 <= bu0 or bv1 <= bv0:
+        return None
+    own = pts if len(pts) <= LOOP_VERTEX_CANDIDATE_MAX else []
+    us = sorted(set([p[0] for p in own] + [bu0 + (bu1 - bu0) * i / (grid + 1)
+                                           for i in range(1, grid + 1)]))
+    vs = sorted(set([p[1] for p in own] + [bv0 + (bv1 - bv0) * i / (grid + 1)
+                                           for i in range(1, grid + 1)]))
+    # Each candidate point is tested ONCE (|us| x |vs| tests of O(V)), and
+    # the O(|us|^2 |vs|^2) rectangles are corner lookups.
+    inside = dict(((u, v), point_in_loop(pts, u, v)) for u in us for v in vs)
+    candidates = []
+    for i, u0 in enumerate(us):
+        for u1 in us[i + 1:]:
+            for j, v0 in enumerate(vs):
+                for v1 in vs[j + 1:]:
+                    if (inside[(u0, v0)] and inside[(u1, v0)]
+                            and inside[(u1, v1)] and inside[(u0, v1)]):
+                        candidates.append(((u1 - u0) * (v1 - v0), u0, v0, u1, v1))
+    candidates.sort(reverse=True)
+    for _area, u0, v0, u1, v1 in candidates:
+        step = boundary_fraction * min(u1 - u0, v1 - v0)
+        if step > 0 and _rect_inside_loop(pts, u0, v0, u1, v1, step):
+            return [u0, v0, u1, v1]
+    return None
+
+
+def mark_reference_from_loop(loop_uv, crop_uv, tolerance_ft):
+    """PURE. ``(reference_uv, record)``: the rectangle the ticks are placed
+    inside, given the crop LOOP. A loop that is the crop box itself
+    (axis-aligned rectangle whose bounding box is ``crop_uv``) returns
+    ``crop_uv`` unchanged (``reference: "crop_box"``) -- the shipped
+    behaviour for every ordinary crop. Anything else returns the largest
+    axis-aligned rectangle inside the loop (``"crop_loop_inscribed"``), or
+    None with the reason when none fits."""
+    record = {"classification": classify_crop_loop(loop_uv, crop_uv, tolerance_ft)}
+    c = record["classification"]
+    if c["axis_aligned"] and c["bbox_matches_crop"]:
+        record["reference"] = "crop_box"
+        return [float(x) for x in crop_uv], record
+    rect = largest_axis_aligned_rectangle(loop_uv)
+    if rect is None:
+        record["reference"] = "none"
+        record["reason"] = "no axis-aligned rectangle fits inside the crop loop"
+        return None, record
+    record["reference"] = "crop_loop_inscribed"
+    record["inscribed_uv"] = rect
+    bb = c["bbox_uv"]
+    record["inscribed_area_fraction_of_bbox"] = round(
+        (rect[2] - rect[0]) * (rect[3] - rect[1]) / ((bb[2] - bb[0]) * (bb[3] - bb[1])), 4)
+    return rect, record
+
+
+def _orient(ax, ay, bx, by, cx, cy):
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+def segment_crosses_loop(loop_uv, p, q):
+    """PURE. Whether the open segment p-q PROPERLY crosses any edge of the
+    loop (the two straddle each other strictly). A concave loop can hold
+    both endpoints of a tick while its boundary cuts the tick between them
+    (Codex, PR #236: a tick spanning the arms of a U); Revit clips that
+    part. Touching an edge at a point is not a crossing."""
+    px, py = float(p[0]), float(p[1])
+    qx, qy = float(q[0]), float(q[1])
+    n = len(loop_uv)
+    for i in range(n):
+        ax, ay = float(loop_uv[i][0]), float(loop_uv[i][1])
+        bx, by = float(loop_uv[(i + 1) % n][0]), float(loop_uv[(i + 1) % n][1])
+        d1 = _orient(px, py, qx, qy, ax, ay)
+        d2 = _orient(px, py, qx, qy, bx, by)
+        d3 = _orient(ax, ay, bx, by, px, py)
+        d4 = _orient(ax, ay, bx, by, qx, qy)
+        if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)) and d1 * d2 < 0 and d3 * d4 < 0:
+            return True
+    return False
+
+
+def ticks_outside_loop(layout, loop_uv):
+    """PURE. The keys of the layout's ticks that do not lie inside the loop:
+    an endpoint outside, or the segment crossing the loop's boundary between
+    its endpoints. Empty for a layout that is not a value."""
+    if (layout or {}).get("state") != "value" or not loop_uv:
+        return []
+    out = []
+    for seg in layout["segments"]:
+        ends = (seg["uv0"], seg["uv1"])
+        if (not all(point_in_loop(loop_uv, float(end[0]), float(end[1])) for end in ends)
+                or segment_crosses_loop(loop_uv, ends[0], ends[1])):
+            out.append(seg["key"])
+    return out
+
+
 # FRAME BOUNDS (run 1005_0947): a view with no crop region (a drafting view,
 # a legend) exports everything it draws, so its export's extent is the drawn
 # extent. The ticks cannot set it: a tick ON the frame edge sits on the

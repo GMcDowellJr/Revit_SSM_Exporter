@@ -172,7 +172,8 @@ class StreamingExporter:
                  root_cache=None,
                  view_ids=None,
                  run_id=None,
-                 run_dir=None):
+                 run_dir=None,
+                 recapture=None):
         """Initialize streaming exporter.
 
         Args:
@@ -188,8 +189,14 @@ class StreamingExporter:
             run_id: An existing run's id (a later batch); minted when None
             run_dir: The run directory to record in run_meta, when
                 ``output_dir`` is a batch subdirectory of it
+            recapture: A recapture record (vop_interwoven.recapture): this
+                call captures ``view_ids`` of the EXISTING run ``run_id``
+                again, into its directory; run_meta.json and views_core are
+                merged per view rather than written afresh
         """
         self.root_cache = root_cache
+        self.recapture = recapture
+        self.recapture_view_ids = None
 
         self.output_dir = output_dir
         self.cfg = cfg
@@ -263,7 +270,30 @@ class StreamingExporter:
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
-        if self.stage_a:
+        if recapture is not None:
+            # A recapture continues an existing, finished run: its record is
+            # read, not built, and written back only at finalize, merged.
+            from vop_interwoven.csv_export import compute_config_hash
+            from vop_interwoven.recapture import RecaptureRefused, load_run_meta
+            if not self.stage_a:
+                raise RecaptureRefused("a recapture is a Stage A capture; Stage A is off")
+            if not getattr(cfg, "color_id_buffer_registered_capture", True):
+                # The frame-B fallback neither places its ticks by the crop
+                # loop nor stamps the sidecars; a recapture through it would
+                # reproduce the failure and erase the old provenance (Codex,
+                # PR #236).
+                raise RecaptureRefused("a recapture is a REGISTERED capture; "
+                                       "color_id_buffer_registered_capture is off")
+            self.run_meta = load_run_meta(output_dir)
+            if self.run_meta.get("run_id") != self.run_id:
+                raise RecaptureRefused("{0} holds run {1!r}, not {2!r}".format(
+                    output_dir, self.run_meta.get("run_id"), self.run_id))
+            self.config_hash = compute_config_hash(cfg)
+            self.recapture_view_ids = [self._view_id_key(v) for v in (view_ids or [])]
+            # The registered capture stamps both sidecars with it, and
+            # refuses a view whose ticks would still lie outside the loop.
+            cfg._recapture_record = recapture
+        elif self.stage_a:
             from vop_interwoven.csv_export import compute_config_hash
             from vop_interwoven.run_meta import build_run_meta, write_run_meta
             self.config_hash = compute_config_hash(cfg)
@@ -312,7 +342,14 @@ class StreamingExporter:
         self.date_str = date_str
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(csv_output_dir, core_filename)
-        self.csv_core_file = open(self.core_csv_path, 'w', newline='', encoding='utf-8')
+        # A recapture writes its rows beside the run's file and merges them
+        # into it at finalize, by (RunId, ViewId); the run's file is never
+        # truncated.
+        self._recapture_csv_path = None
+        if self.recapture is not None:
+            self._recapture_csv_path = self.core_csv_path + ".recapture_rows.tmp"
+        self.csv_core_file = open(self._recapture_csv_path or self.core_csv_path,
+                                  'w', newline='', encoding='utf-8')
         if self.stage_a:
             # C9: views_core only. No views_vop / views_occlusion / views_perf
             # file is opened, so none is left behind holding only a header.
@@ -771,16 +808,40 @@ class StreamingExporter:
             "timings": view_result.get("timings")
         }
     
+    @staticmethod
+    def _view_id_key(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return v
+
+    def _merge_recapture_rows(self):
+        """The recapture's rows into the run's views_core, by (RunId, ViewId);
+        the rows file is closed first and removed after."""
+        if not getattr(self, "_recapture_csv_path", None):
+            return
+        if self.csv_core_file and not self.csv_core_file.closed:
+            self.csv_core_file.close()
+        import csv as _csv
+        from vop_interwoven.recapture import merge_views_core_rows, row_refused
+        with open(self._recapture_csv_path, newline="", encoding="utf-8") as handle:
+            reader = _csv.DictReader(handle)
+            rows, header = list(reader), list(reader.fieldnames or [])
+        # A view the capture refused keeps its old row (its files are the
+        # old ones too); the refusal is in run_meta's recaptures.
+        rows = [r for r in rows if not row_refused(r)]
+        self.recapture_rows_merged = merge_views_core_rows(self.core_csv_path, rows, header)
+        os.remove(self._recapture_csv_path)
+
     def _backfill_missing_outcomes(self):
         """Every requested view that reported nothing gets a failed outcome:
-        a views_core row, a summary and a views_failed count."""
-        def _vid(v):
-            try:
-                return int(v)
-            except (TypeError, ValueError):
-                return v
+        a views_core row, a summary and a views_failed count. A recapture
+        backfills its own ids only, never the run's other views."""
+        _vid = self._view_id_key
         seen = set(_vid(s.get("view_id")) for s in self.view_summaries)
-        for vid in (self.run_meta or {}).get("views_requested") or []:
+        requested = (self.recapture_view_ids if self.recapture is not None
+                     else (self.run_meta or {}).get("views_requested") or [])
+        for vid in requested:
             if _vid(vid) in seen:
                 continue
             seen.add(_vid(vid))
@@ -804,11 +865,20 @@ class StreamingExporter:
         if self.run_meta is not None:
             self._backfill_missing_outcomes()
             from vop_interwoven.run_meta import finalize_run_meta, write_run_meta
-            finalize_run_meta(self.run_meta, self.view_summaries)
+            if self.recapture is not None:
+                from vop_interwoven.recapture import merge_recapture_into_run_meta
+                merge_recapture_into_run_meta(self.run_meta, self.recapture,
+                                              self.view_summaries)
+                # The views_core merge FIRST, run_meta after: a merge that
+                # fails (a malformed or locked CSV) must not leave a run_meta
+                # that records outcomes the CSV does not (Codex, PR #236).
+                self._merge_recapture_rows()
+            else:
+                finalize_run_meta(self.run_meta, self.view_summaries)
             self.run_meta_path = write_run_meta(self.run_meta, self.output_dir)
 
         # Close CSV files
-        if self.csv_core_file:
+        if self.csv_core_file and not self.csv_core_file.closed:
             self.csv_core_file.close()
         if self.csv_vop_file:
             self.csv_vop_file.close()
@@ -1191,7 +1261,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
                                 pixels_per_cell=4, date_override=None,
-                                export_view_raster=False, run_id=None,
+                                export_view_raster=False, run_id=None, recapture=None,
                                 run_subdir=None):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
@@ -1258,6 +1328,8 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     from vop_interwoven.run_meta import (
         run_identity, run_directory, check_run_directory)
     run_root = output_dir
+    if recapture is not None and not run_id:
+        raise ValueError("a recapture names the run it continues (run_id)")
     continuing = bool(run_id)
     identity = run_identity(date_override, run_id=run_id)
     run_id = identity["run_id"]
@@ -1312,6 +1384,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         view_ids=view_ids,
         run_id=run_id,
         run_dir=run_dir,
+        recapture=recapture,
     )
     
     # Process with streaming callback

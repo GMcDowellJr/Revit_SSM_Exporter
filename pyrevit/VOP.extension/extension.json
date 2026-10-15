@@ -1,0 +1,6 @@
+{
+    "name": "VOP",
+    "description": "Revit SSM Exporter: Stage A batch capture across archives",
+    "author": "Greg McDowell",
+    "version": "0.1"
+}

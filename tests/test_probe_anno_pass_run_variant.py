@@ -258,6 +258,15 @@ def _open_tx():
     return stack[-1] if stack else None
 
 
+class _FakeLoopLine(object):
+    """One straight curve of a crop loop: GetEndPoint(0) is its start."""
+    def __init__(self, a, b):
+        self._ends = (FakeXYZ(a[0], a[1], 0.0), FakeXYZ(b[0], b[1], 0.0))
+
+    def GetEndPoint(self, i):
+        return self._ends[i]
+
+
 class _Manager(object):
     """ViewCropRegionShapeManager. Unsplit by default; the OWNER view's
     ``split_regions`` -- ``[(min, max, offset_x), ...]`` along u (a
@@ -279,7 +288,18 @@ class _Manager(object):
         return list(getattr(self._owner, "split_regions", None) or [(0.0, 1.0, 0.0)])
 
     def GetCropShape(self):
-        return []
+        """Revit returns the crop's loop even for an ordinary rectangular
+        crop: the owner's CropBox corners as four lines, or the owner's
+        ``crop_loop`` (``[(x, y), ...]``) when a test sketches one."""
+        owner = self._owner
+        pts = getattr(owner, "crop_loop", None)
+        if pts is None:
+            box = getattr(owner, "CropBox", None)
+            if box is None:
+                return []
+            pts = [(box.Min.X, box.Min.Y), (box.Max.X, box.Min.Y),
+                   (box.Max.X, box.Max.Y), (box.Min.X, box.Max.Y)]
+        return [[_FakeLoopLine(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]]
 
     @property
     def NumberOfSplitRegions(self):

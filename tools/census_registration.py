@@ -34,6 +34,26 @@ Per view (``COLUMNS``):
   rectangle gives the rotation (2025-06-21 view 3939979: 12.91 deg, every
   tick window white, 0 of 12 found).
 
+THE RENDERED REGION (2026-10-12 follow-up, run 2025-06-21: 41 views whose
+crop box is the bounding box of a rectangle rotated about 12.9 deg).
+``content_tilt_deg`` is the angle of the minimum-area rectangle enclosing the
+MODEL capture's ink; ``content_tilt_union_deg`` the same over the union of
+both captures' ink when the two TIFFs share a pixel size (both are sized from
+crop A), which is the denser evidence: 3939979's model ink alone, a few
+property lines, gives 61.13 deg where the union gives 12.91 deg.
+``content_tilt_edge_deg`` is the length-weighted mode of the union hull's
+long edges (``edge_tilt``), which follows the crop's straight boundary rather
+than the hull's overall shape, and is the tilt the polygon prediction uses
+when it exists (``polygon_tilt_source`` ends in ``_edges``).
+``aabb_corner_white`` says, per image corner, whether the 64 x 64 px window
+the corner ticks occupy (inset 24 + gap 8 + arm 32) holds no ink in either
+capture. ``ticks_inside_polygon_predicted`` counts the recorded ticks (moved
+positions, from the sidecar) whose both endpoints lie inside the rectangle
+inscribed in the image at the measured tilt (``inscribed_polygon``; the
+whole image when the tilt is 0.00); ``ticks_found_*`` are the ticks the fit
+located, from ``<view>_anno.registered.json``; ``ticks_predicted_vs_found_*``
+is the per-tick confusion between the two (tp / fp / fn / tn).
+
 PROVENANCE. A sidecar in a run's folder is not always that run's capture:
 run_meta.json records a failed capture while the previous capture's files
 remain, and a sidecar may carry a view the run never requested. Each row
@@ -42,9 +62,12 @@ says which (``provenance``: ``this_run``, ``not_this_run``,
 roll-up reads it (``stage_a_grid_rollup.run_identity``); the partitions count
 ``this_run`` rows only. A registration record is used only when the four
 source hashes it names (both sidecars, both TIFFs) still match the files on
-disk; otherwise its state is ``stale``, its reason names the mismatch, and
-its fit counts stay blank rather than being set beside pixels they were not
-fitted on.
+disk; a hash that does NOT match makes its state ``stale``, its reason names
+the mismatch, and its fit counts stay blank rather than being set beside
+pixels they were not fitted on. A source file that is ABSENT (an archive
+shipped without its TIFFs) is a different fact: the record is kept, its fit
+counts are reported, and ``registration_sources_verified`` is false with the
+absent file named in ``notes``.
 
 ABSENCE is named, never blank: ``notes`` lists each file that was looked for
 and not found, by name, and every column that file would have filled stays
@@ -74,10 +97,14 @@ from tools import registration_marks as rm  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
-from vop_interwoven.stage_a_registration import MARK_COLOUR  # noqa: E402
+from vop_interwoven.stage_a_registration import MARK_COLOUR, segment_crosses_loop  # noqa: E402
 
 SCHEMA = "vop.stage_a.census_registration.v1"
-TOOL_VERSION = "1.0.0"
+# 1.1.0 (2026-10-13): the rendered-region columns (content_tilt_*,
+# aabb_corner_white, ticks_inside_polygon_*, ticks_found_*,
+# ticks_predicted_vs_found_*) appended; the union, the corner whiteness and
+# the annotation confusion are measured only on a SHARED lattice.
+TOOL_VERSION = "1.1.0"
 CSV_NAME = "census_registration.csv"
 SUMMARY_NAME = "census_registration.summary.json"
 
@@ -94,7 +121,7 @@ COLUMNS = [
     # provenance: is this sidecar the run's own capture of the view?
     "provenance", "run_meta_capture_status",
     # registration
-    "registration_state", "registration_reason",
+    "registration_state", "registration_reason", "registration_sources_verified",
     "anno_found_count", "anno_expected_count", "model_found_count",
     "model_expected_count",
     # the capture's own records
@@ -116,6 +143,13 @@ COLUMNS = [
     "anno_tick_windows_white", "model_tick_windows_white",
     "anno_tick_windows_off_image", "model_tick_windows_off_image",
     "anno_ink_rect_angle_deg", "anno_ink_rect_fill",
+    # the rendered region (2026-10-12 follow-up): tilt, corners, prediction
+    "content_tilt_deg", "content_tilt_union_deg",
+    "content_tilt_edge_deg", "content_tilt_edge_support", "polygon_tilt_source",
+    "aabb_corner_white",
+    "ticks_inside_polygon_predicted", "ticks_inside_polygon_names",
+    "ticks_found_anno", "ticks_found_model",
+    "ticks_predicted_vs_found_anno", "ticks_predicted_vs_found_model",
     # absences, by file
     "notes",
 ]
@@ -212,6 +246,325 @@ def tick_windows_white(nonwhite, marks, mapping):
     return white, off_image
 
 
+# The corner ticks occupy pixels 24..64 from each image edge (MARK_INSET_PX
+# 24, MARK_GAP_PX 8, MARK_ARM_PX 32 in vop_interwoven/stage_a_registration.py);
+# a corner window of this side holds them whole.
+CORNER_WINDOW_PX = 64
+
+
+def _hull_points(nonwhite):
+    rows = np.nonzero(nonwhite.any(axis=1))[0]
+    pts = []
+    for r in rows:
+        cols = np.nonzero(nonwhite[r])[0]
+        pts.extend([(cols[0], r), (cols[-1] + 1, r + 1), (cols[0], r + 1), (cols[-1] + 1, r)])
+    return _hull(np.array(pts, dtype=float)) if pts else []
+
+
+# A hull edge counts toward the tilt vote when it is at least this fraction
+# of the image's shorter side: the rotated crop's own boundary shows as edges
+# of 0.5 to 1.7 times that length on the 06-21 site plans, while the pieces
+# of a sparse plan's hull are far shorter (5576090: longest 0.17, no vote
+# worth taking).
+EDGE_VOTE_MIN_FRACTION = 0.10
+EDGE_VOTE_BIN_DEG = 0.5
+
+
+def edge_tilt(nonwhite):
+    """``(tilt_deg, support)``: the length-weighted mode of the ink hull's
+    long edges' angles, folded modulo 90 into (-45, 45], and the total length
+    voting for it as a fraction of the shorter image side. The minimum-area
+    rectangle (``ink_rectangle``) follows the hull's OVERALL shape, which on a
+    sparse or L-shaped plan is not the crop's: 06-21 view 4150746 registered
+    12 of 12 with a min-area angle of 9.25 deg while its long hull edges lie
+    at 0 deg; 4610688 refused 0 of 12 with a min-area angle of 0.68 deg while
+    its long edges lie at 13 deg, the family's crop angle. ``(None, 0.0)``
+    with no edge long enough to vote."""
+    h, w = nonwhite.shape
+    hull = _hull_points(nonwhite)
+    votes = {}
+    n = len(hull)
+    for i in range(n):
+        (x1, y1), (x2, y2) = hull[i], hull[(i + 1) % n]
+        length = math.hypot(x2 - x1, y2 - y1)
+        if length < EDGE_VOTE_MIN_FRACTION * min(w, h):
+            continue
+        angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 90.0
+        key = (round(angle / EDGE_VOTE_BIN_DEG) * EDGE_VOTE_BIN_DEG) % 90.0
+        votes[key] = votes.get(key, 0.0) + length
+    if not votes:
+        return None, 0.0
+    angle, length = max(votes.items(), key=lambda kv: kv[1])
+    return (angle if angle <= 45.0 else angle - 90.0), round(length / min(w, h), 2)
+
+
+def inscribed_polygon(width, height, tilt_deg, sign=1):
+    """PURE. The rectangle whose axis-aligned bounding box is ``width`` x
+    ``height`` and whose sides lie at ``tilt_deg`` to the axes, as four
+    corners (x, y) in pixel coordinates, centred in the box. ``sign`` picks
+    the rotation direction. At tilt 0 it is the box itself. A tilt of 45 deg
+    or more is folded to its complement (the sides are interchangeable)."""
+    t = float(tilt_deg) % 90.0
+    if t > 45.0:
+        t = 90.0 - t
+        sign = -sign
+    th = math.radians(t)
+    c, s = math.cos(th), math.sin(th)
+    c2 = math.cos(2.0 * th)
+    # At 45 deg the inversion is singular (cos 2t = 0), and near it a
+    # non-square box has no inscribed rectangle at that tilt (a side comes
+    # out non-positive): no polygon, rather than one of 1e18 px (Codex, PR
+    # #236).
+    if abs(c2) < 1e-9:
+        return None
+    w = (width * c - height * s) / c2
+    h = (height * c - width * s) / c2
+    if w <= 0.0 or h <= 0.0:
+        return None
+    cx, cy = width / 2.0, height / 2.0
+    out = []
+    for dx, dy in ((-w / 2.0, -h / 2.0), (w / 2.0, -h / 2.0), (w / 2.0, h / 2.0),
+                   (-w / 2.0, h / 2.0)):
+        out.append((cx + dx * c - sign * dy * s, cy + sign * dx * s + dy * c))
+    return out
+
+
+def point_in_polygon(poly, x, y):
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            xi = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < xi:
+                inside = not inside
+    return inside
+
+
+def rendered_polygon(nonwhite, tilt_deg):
+    """``(polygon, reason)``: the rectangle inscribed in the image at
+    ``tilt_deg``, its rotation direction the one that holds MORE of the ink
+    hull's vertices (the found ticks are never consulted); the whole image at
+    tilt 0. ``(None, reason)`` when the two directions hold the same count
+    (sparse or centred ink: the direction is unmeasured, not the first one)
+    or no rectangle exists at that tilt (Codex, PR #236)."""
+    h, w = nonwhite.shape
+    if not tilt_deg:
+        return [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))], "tilt 0"
+    hull = _hull_points(nonwhite)
+    counts = {}
+    for sign in (1, -1):
+        poly = inscribed_polygon(w, h, tilt_deg, sign)
+        if poly is None:
+            continue
+        counts[sign] = (sum(1 for x, y in hull if point_in_polygon(poly, x, y)), poly)
+    if not counts:
+        return None, "no rectangle is inscribed in a {0}x{1} image at {2} deg".format(
+            w, h, tilt_deg)
+    if len(counts) == 2 and counts[1][0] == counts[-1][0]:
+        return None, ("rotation direction ambiguous: both directions hold {0} of the ink "
+                      "hull's {1} vertices".format(counts[1][0], len(hull)))
+    sign = max(counts, key=lambda k: counts[k][0])
+    return counts[sign][1], "direction {0}: {1} of {2} hull vertices".format(
+        "+" if sign > 0 else "-", counts[sign][0], len(hull))
+
+
+def corner_windows_white(nonwhite, side=CORNER_WINDOW_PX):
+    h, w = nonwhite.shape
+    out = {}
+    for name, (r0, c0) in (("TL", (0, 0)), ("TR", (0, w - side)),
+                           ("BL", (h - side, 0)), ("BR", (h - side, w - side))):
+        out[name] = not nonwhite[max(0, r0):r0 + side, max(0, c0):c0 + side].any()
+    return out
+
+
+def ticks_inside(poly, marks, mapping):
+    """The keys of the recorded ticks that lie inside ``poly`` on
+    ``mapping``: both endpoints inside and the segment not crossing the
+    polygon's boundary between them (a recorded concave loop can cut a tick
+    whose endpoints are both inside; the capture's own predicate,
+    ``stage_a_registration.segment_crosses_loop``, decides that here too --
+    Codex, PR #236)."""
+    inside = []
+    for m in marks:
+        ends = [(mapping["a_u"] * u + mapping["b_u"], mapping["a_v"] * v + mapping["b_v"])
+                for u, v in (m["uv0"], m["uv1"])]
+        if (all(point_in_polygon(poly, x, y) for x, y in ends)
+                and not segment_crosses_loop(poly, ends[0], ends[1])):
+            inside.append(m["key"])
+    return inside
+
+
+def found_ticks(fit, marks):
+    """The keys the fit located: every recorded tick not in its ``missing``
+    list. None when the fit record carries no missing list."""
+    if not isinstance(fit, dict) or not isinstance(fit.get("missing"), list):
+        return None
+    missing = set(str(m.get("key")) for m in fit["missing"] if isinstance(m, dict))
+    return [m["key"] for m in marks if m["key"] not in missing]
+
+
+def confusion(predicted, found, keys):
+    p, f = set(predicted), set(found)
+    return "tp={0},fp={1},fn={2},tn={3}".format(
+        sum(1 for k in keys if k in p and k in f), sum(1 for k in keys if k in p and k not in f),
+        sum(1 for k in keys if k not in p and k in f),
+        sum(1 for k in keys if k not in p and k not in f))
+
+
+def recorded_loop(model_sidecar):
+    """The crop loop the capture RECORDED (``registration_marks.crop_shape``,
+    captures since 2026-10-12), as ``[[u, v], ...]`` when there is exactly
+    one, else None. Better evidence than any pixel tilt: it is what Revit
+    rendered."""
+    shape = (model_sidecar.get("registration_marks") or {}).get("crop_shape") or {}
+    loops = shape.get("loops_uv") if shape.get("state") == "value" else None
+    return loops[0] if loops and len(loops) == 1 and len(loops[0]) >= 3 else None
+
+
+def shared_lattice(model_sidecar, anno_sidecar, registered):
+    """``(shared, reason)``: whether the annotation TIFF is on the model
+    TIFF's pixel lattice. Equal dimensions do not show it (an active authored
+    crop's annotation export fits its own extent; Codex, PR #236). It is
+    SHOWN by a registration record whose annotation->model transform is the
+    identity, and ASSUMED when both sidecars' frames record the same crop
+    and the same achieved size; otherwise it is not shared."""
+    transform = (registered or {}).get("annotation_to_model_px")
+    if isinstance(transform, dict) and transform:
+        try:
+            identity = all(abs(float(transform.get(k, 1.0)) - 1.0) < 1e-9
+                           for k in ("scale_x", "scale_y")) and all(
+                abs(float(transform.get(k, 0.0))) < 1e-9 for k in ("offset_x", "offset_y"))
+        except (TypeError, ValueError):
+            identity = False
+        if identity:
+            return True, "registered: the annotation->model transform is the identity"
+        return False, "registered: the annotation->model transform is not the identity"
+    if anno_sidecar is None:
+        return False, "no annotation sidecar"
+    mf, af = frame_record(model_sidecar), frame_record(anno_sidecar)
+    same_size = (mf.get("actual_w") == af.get("actual_w") and
+                 mf.get("actual_h") == af.get("actual_h") and mf.get("actual_w") is not None)
+    # The REGISTERED capture (both sidecars carry registration_marks) renders
+    # both passes at crop A: the annotation pass keeps the authored crop,
+    # which IS crop A when active, and is given crop A when not (CLAUDE.md,
+    # Stage A capture). Its annotation frame records no crop of its own. The
+    # frame-B fallback widens the annotation crop and is the case the
+    # assumption must not cover.
+    registered_capture = (isinstance(model_sidecar.get("registration_marks"), dict)
+                          and isinstance(anno_sidecar.get("registration_marks"), dict))
+    if registered_capture and same_size:
+        return True, ("assumed: registered capture, both passes rendered at crop A, same "
+                      "achieved size")
+    mc, ac = mf.get("crop_uv"), af.get("crop_uv")
+    same_crop = (isinstance(mc, list) and isinstance(ac, list) and len(mc) == len(ac) == 4
+                 and all(abs(float(a) - float(b)) < 1e-6 for a, b in zip(mc, ac)))
+    if same_crop and same_size:
+        return True, "assumed: both frames record the same crop and the same achieved size"
+    return False, "unregistered, and the frames record {0}".format(
+        "different sizes" if not same_size else "different crops")
+
+
+def rendered_region_columns(masks, marks, crop, fits, loop_uv=None, lattice=None):
+    """The tilt, corner, prediction and found columns, from the nonwhite
+    masks of the captures read (``masks[which]``, ticks excluded), the
+    recorded marks, crop A and the registration record's fits. With
+    ``loop_uv`` (the capture's own crop loop, in view UV) the prediction
+    uses that loop instead of a rectangle inscribed at the measured tilt
+    (``polygon_tilt_source`` "recorded_loop"). ``lattice`` is
+    ``shared_lattice()``'s answer; the union of the two captures' ink, the
+    corner whiteness ("no ink in EITHER capture") and the annotation
+    confusion are measured only when it says shared. Returns ``(columns,
+    notes)``; every blank is explained in ``notes``."""
+    cols, notes = {}, []
+    model = masks.get("model")
+    if model is None:
+        notes.append("content_tilt_deg: the model TIFF was not read")
+        return cols, notes
+    angle, _fill = ink_rectangle(model)
+    if angle is None:
+        notes.append("content_tilt_deg: the model TIFF holds no ink to measure")
+    cols["content_tilt_deg"] = angle
+    anno = masks.get("anno")
+    shared, why = lattice if lattice is not None else (False, "lattice not checked")
+    union, source = model, "model"
+    if anno is not None and anno.shape != model.shape:
+        notes.append("content_tilt_union_deg: the annotation TIFF is {0}x{1}, the model "
+                     "TIFF {2}x{3}; not on one lattice".format(
+                         anno.shape[1], anno.shape[0], model.shape[1], model.shape[0]))
+        anno = None
+    elif anno is not None and not shared:
+        notes.append("content_tilt_union_deg: the annotation TIFF is not shown to be on "
+                     "the model lattice ({0})".format(why))
+        anno = None
+    if anno is not None:
+        union = model | anno
+        cols["content_tilt_union_deg"], _fill = ink_rectangle(union)
+        if cols["content_tilt_union_deg"] is not None:
+            source = "union"
+        if why.startswith("assumed"):
+            notes.append("content_tilt_union_deg: lattice {0}".format(why))
+    tilt = cols.get("content_tilt_union_deg") if source == "union" else angle
+    edge, support = edge_tilt(union)
+    cols["content_tilt_edge_deg"], cols["content_tilt_edge_support"] = edge, support
+    if edge is not None:
+        tilt, source = edge, source + "_edges"
+    if loop_uv is not None:
+        source = "recorded_loop"
+    cols["polygon_tilt_source"] = source if (tilt is not None or loop_uv is not None) else None
+    if anno is not None:
+        corners = corner_windows_white(union)
+        cols["aabb_corner_white"] = "|".join("{0}:{1}".format(k, "true" if v else "false")
+                                             for k, v in corners.items())
+    else:
+        notes.append("aabb_corner_white: needs both captures on one lattice")
+    if tilt is None and loop_uv is None:
+        notes.append("ticks_inside_polygon_predicted: no tilt measured and no loop recorded")
+        return cols, notes
+    if not marks or not crop:
+        notes.append("ticks_inside_polygon_predicted: no recorded marks or crop to place")
+        return cols, notes
+    h, w = model.shape
+    mapping = grid.nominal_mapping(crop, w, h)
+    if loop_uv is not None:
+        poly = [(mapping["a_u"] * u + mapping["b_u"], mapping["a_v"] * v + mapping["b_v"])
+                for u, v in loop_uv]
+    else:
+        poly, reason = rendered_polygon(union, tilt)
+        if poly is None:
+            notes.append("ticks_inside_polygon_predicted: {0}".format(reason))
+            return cols, notes
+    predicted = ticks_inside(poly, marks, mapping)
+    keys = [m["key"] for m in marks]
+    cols["ticks_inside_polygon_predicted"] = len(predicted)
+    # A measured empty list is "none", never a blank (a blank is unmeasured).
+    cols["ticks_inside_polygon_names"] = "|".join(predicted) or "none"
+    for which in ("anno", "model"):
+        if which == "anno" and anno is None:
+            notes.append("ticks_predicted_vs_found_anno: the prediction is on the model "
+                         "lattice, which the annotation TIFF is not shown to share")
+            continue
+        found = found_ticks((fits or {}).get(which), marks)
+        if found is not None:
+            cols["ticks_predicted_vs_found_" + which] = confusion(predicted, found, keys)
+    return cols, notes
+
+
+def found_tick_columns(fits, marks, notes):
+    """``ticks_found_anno`` / ``ticks_found_model`` from the registration
+    record alone (no image needed); a fit that cannot be read is noted."""
+    cols = {}
+    for which in ("anno", "model"):
+        found = found_ticks((fits or {}).get(which), marks) if marks else None
+        if found is None:
+            notes.append("ticks_found_{0}: no usable {1}_fit in the registration "
+                         "record".format(which, "annotation" if which == "anno" else "model"))
+            continue
+        cols["ticks_found_" + which] = "|".join(found) or "none"
+    return cols
+
+
 def _pack(rgb):
     return (rgb[..., 0].astype(np.uint32) << 16) | (rgb[..., 1].astype(np.uint32) << 8) \
         | rgb[..., 2].astype(np.uint32)
@@ -246,7 +599,8 @@ def image_columns(tiff_path, which, sidecar, excluded_ids, marks, crop):
     colours, its colour map). The tick windows are placed on the nominal
     mapping of ``crop`` onto THIS image's own pixel size (the annotation
     capture is sized from the same crop A as the model's; its own dimensions
-    are used). Returns ``(columns, note)``."""
+    are used). Returns ``(columns, note, ink)``, ``ink`` the non-white,
+    non-tick pixel mask for the rendered-region columns."""
     rgb = dsc._load_rgb_array(tiff_path)
     mapping = None
     if crop and marks:
@@ -259,6 +613,14 @@ def image_columns(tiff_path, which, sidecar, excluded_ids, marks, crop):
     nonwhite = packed != 0xFFFFFF
     cols = {which + "_tick_px": int(np.count_nonzero(tick)),
             which + "_nonwhite_px": int(np.count_nonzero(nonwhite))}
+    # The ink handed to the rendered-region measures excludes the ticks'
+    # anti-aliased fringes too (registration_marks.mark_ink_mask, the fit's
+    # own attribution; Codex, PR #236): a fringe near the perimeter would
+    # widen the hull and un-white a corner. ``_tick_px`` stays the exact
+    # colour count.
+    payload, _refusal = rm.recorded_marks(sidecar)
+    if payload is not None:
+        tick = tick | rm.mark_ink_mask(rgb, payload, reserved_colours=rm.palette_colours(sidecar))
     if marks and mapping:
         white, off_image = tick_windows_white(nonwhite, marks, mapping)
         cols[which + "_tick_windows_white"] = white
@@ -277,7 +639,7 @@ def image_columns(tiff_path, which, sidecar, excluded_ids, marks, crop):
             cols["anno_palette_px"], cols["anno_colours_present"] = 0, 0
         angle, fill = ink_rectangle(nonwhite & ~tick)
         cols["anno_ink_rect_angle_deg"], cols["anno_ink_rect_fill"] = angle, fill
-    return cols, note
+    return cols, note, nonwhite & ~tick
 
 
 def marks_columns(model_sidecar):
@@ -300,8 +662,11 @@ def marks_columns(model_sidecar):
                 lines_category_hidden_before=unhidden.get("lines_category_hidden_before"))
     marks = rmk.get("marks") or []
     layout = rmk.get("layout") or {}
+    # marks_painted is None when no mark records whether it painted (an
+    # older record), never 0 for "unknown".
     cols.update(marks_expected=len(marks),
-                marks_painted=sum(1 for m in marks if m.get("painted") is True),
+                marks_painted=(sum(1 for m in marks if m.get("painted") is True)
+                               if any("painted" in m for m in marks) else None),
                 marks_original=sum(1 for m in marks if m.get("placement") == "original"),
                 marks_moved=sum(1 for m in marks if m.get("placement") == "moved"),
                 marks_blocked=sum(1 for m in marks if m.get("placement") == "blocked"),
@@ -336,12 +701,13 @@ def crop_columns(model_sidecar):
 
 
 def registration_staleness(registered, model_path, model, anno_path, anno):
-    """Why a registration record no longer describes the files beside it:
-    each of the four source hashes it names (``source_*_sha256``) that does
-    not match the file on disk now, or whose file cannot be hashed. Empty
-    when every hash matches. A record naming no hash for a source is stale
-    for that source: nothing ties it to the file."""
-    reasons = []
+    """``(stale, unverified)``: why a registration record no longer describes
+    the files beside it -- each of the four source hashes it names
+    (``source_*_sha256``) that does NOT match the file on disk now, or that
+    the record does not name -- and, separately, each source whose file is
+    absent or unreadable, which proves nothing either way. Both empty when
+    every hash matches."""
+    reasons, unverified = [], []
     sources = [("source_model_sidecar_sha256", "model sidecar", lambda: model_path),
                ("source_annotation_sidecar_sha256", "annotation sidecar",
                 lambda: anno_path)]
@@ -360,11 +726,11 @@ def registration_staleness(registered, model_path, model, anno_path, anno):
         try:
             now = grid.sha256_file(resolve())
         except (OSError, ValueError, FileNotFoundError) as ex:
-            reasons.append("the {0} cannot be hashed now ({1})".format(what, _err(ex)))
+            unverified.append("the {0} cannot be hashed now ({1})".format(what, _err(ex)))
             continue
         if now != recorded:
             reasons.append("{0} does not match the {1} on disk".format(key, what))
-    return reasons
+    return reasons, unverified
 
 
 def provenance(ident, view_id):
@@ -430,18 +796,25 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
     else:
         notes.append("no {0}".format(reg_path.name))
     if registered is not None:
-        stale = registration_staleness(registered, model_sidecar_path, model,
-                                       anno_path, anno)
+        stale, unverified = registration_staleness(registered, model_sidecar_path, model,
+                                                   anno_path, anno)
         if stale:
             row["registration_state"] = "stale"
             row["registration_reason"] = "; ".join(stale)
+            row["registration_sources_verified"] = False
             registered = None
+        else:
+            row["registration_sources_verified"] = not unverified
+            for why in unverified:
+                notes.append("registration sources: " + why)
+    fits = {}
     if registered is not None:
         for name, prefix in (("annotation_fit", "anno"), ("model_fit", "model")):
             fit = registered.get(name)
             if isinstance(fit, dict):
                 row[prefix + "_found_count"] = fit.get("found_count")
                 row[prefix + "_expected_count"] = fit.get("expected_count")
+                fits[prefix] = fit
             else:
                 notes.append("{0} carries no {1}".format(reg_path.name, name))
 
@@ -454,7 +827,9 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
     if not crop:
         notes.append("{0} frame carries no crop_uv".format(model_sidecar_path.name))
 
+    row.update(found_tick_columns(fits, marks, notes))
     if pixels:
+        masks = {}
         for which, side, side_path in (("model", model, model_sidecar_path),
                                        ("anno", anno, anno_path)):
             if side is None:
@@ -469,12 +844,18 @@ def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):
                 continue
             excluded = [m.get("id") for m in (marks or []) if m.get("id") is not None]
             try:
-                cols, note = image_columns(Path(tiff), which, side, excluded, marks, crop)
+                cols, note, ink = image_columns(Path(tiff), which, side, excluded, marks, crop)
                 row.update(cols)
+                masks[which] = ink
                 if note:
                     notes.append("{0}: {1}".format(which, note))
             except (OSError, ValueError) as ex:
                 notes.append("{0} unreadable: {1}".format(Path(tiff).name, _err(ex)))
+        cols, region_notes = rendered_region_columns(
+            masks, marks, crop, fits, loop_uv=recorded_loop(model),
+            lattice=shared_lattice(model, anno, registered))
+        row.update(cols)
+        notes.extend(region_notes)
     row["notes"] = "; ".join(notes)
     return row
 
@@ -509,7 +890,11 @@ def census(run_args, pixels=True):
                                     "absent: no views_core_*.csv in {0} or {1}".format(
                                         folder.parent, folder))})
         for path in sidecars:
-            rows.append(view_row(path, run_id, (state, by_id), pixels=pixels, ident=ident))
+            row = view_row(path, run_id, (state, by_id), pixels=pixels, ident=ident)
+            # The row's source run, for a join that does not depend on run_id
+            # (None for two refused runs; a clock id can collide).
+            row["capture_dir"] = str(folder)
+            rows.append(row)
     return runs, rows
 
 
@@ -528,7 +913,8 @@ def summarise(runs, rows, csv_path):
     partitions = dict((key, _partition(own, key)) for key in (
         "view_type", "scale", "orig_view_template_id", "line_style_id",
         "line_style_path", "split_crop_state", "crop_source",
-        "anno_tick_windows_white", "model_tick_windows_white"))
+        "anno_tick_windows_white", "model_tick_windows_white",
+        "ticks_inside_polygon_predicted", "ticks_predicted_vs_found_model"))
     return {"schema": SCHEMA, "tool_version": TOOL_VERSION, "runs": runs,
             "denominator": len(rows),
             "denominator_rule": "one row per model sidecar stage_a_grid.model_sidecars "

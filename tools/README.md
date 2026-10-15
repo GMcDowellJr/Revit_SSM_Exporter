@@ -280,6 +280,64 @@ python tools/census_registration.py <run> --out <dir> --no-pixels   # sidecars o
 The summary JSON partitions `registration_state` by view type, scale,
 template, line style, split state and the tick-window counts; it fits no model.
 
+Since the 2026-10-12 follow-up (`RUN_2025-06-21_20261008T093539_ROTATION.md`)
+each row also carries the rendered region: the content's tilt (model TIFF, and
+the union of both captures when they share a lattice), which image corners are
+white, the ticks predicted to lie inside the rectangle inscribed at that tilt,
+the ticks each fit found, and the per-tick confusion between the two.
+
+---
+
+### `find_recapture_views.py` - Which views of which runs need a new Stage A capture
+
+Read-only; runs the sidecar half of `census_registration.py` (no TIFF read)
+over each run and classifies every one of the run's own views: `recapture`
+(ticks drawn, not found by the fit, or no registration record), `review`
+(refused with every tick found, or a record that does not match its files),
+`keep` (registered), `capture_failed` (run_meta.json records the capture as
+`failed`, `annotation_failed` or `registration_failed`, with its reason; a
+row even when no sidecar exists, `provenance` `no_sidecar`). Writes
+`recapture_views.csv` and `recapture_lists.json`, the per-run id lists a
+recapture takes as input; each run's entry also lists its failed captures
+under `failed`, and `--include-failed` puts their ids in `recapture` too.
+A failed capture is never gridded, so a series shows it as a measure lost
+on that run (2025-09-13 to 2025-10-25: six "(N) ... Wall Types BP" plans);
+the reason says whether a recapture can be expected to succeed.
+
+```bash
+python tools/find_recapture_views.py <run> [<run> ...] --out <dir> [--include-failed]
+```
+
+The recapture itself is the exporter's (`vop_interwoven/recapture.py`): in
+Dynamo, with the archive the run was captured from open,
+`thinrunner_streaming.py` with IN[5] True and IN[7] the path to
+`recapture_lists.json` captures each listed view again into its own run
+directory, replacing its files and rows and stamping them (`recapture` in
+the sidecars, `recaptures[]` in run_meta.json). Then re-run
+`register_stage_a_annotation.py`, `stage_a_grid.py`, `stage_a_kinds.py` and
+`stage_a_grid_rollup.py` over the run. Across many archives, use the batch
+below instead of opening each by hand.
+
+---
+
+### `plan_capture_batch.py` - Which archive gets which capture job (for the pyRevit batch)
+
+Joins a Fingerprint manifest CSV (`include=1` rows: Desktop Connector
+paths) with `recapture_lists.json` and the runs already under the output
+root, and writes `capture_plan.json`: a RECAPTURE job for every run whose
+recorded `doc_title` is the file's stem, else a CAPTURE job (a new run,
+as-of the date the file name ends with) unless a finalized run was captured
+from the file already. Runs with no archive in the manifest are listed as
+`unmatched_runs`. Review and edit the plan, then run it from Revit with the
+pyRevit button (`pyrevit/README.md`): it opens each archive detached with
+all worksets, runs the job, closes it, resumes where it stopped.
+
+```bash
+python tools/plan_capture_batch.py <manifest.csv> --output-root <Exports> \
+    [--recapture-lists recapture_lists.json] [--mode both|capture|recapture] \
+    [--no-skip-captured] [--view-types FloorPlan,Section,...] [--out capture_plan.json]
+```
+
 ---
 
 ### `stage_a_runs_index.py` - One fact row per Stage A run under an export root
