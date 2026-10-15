@@ -370,3 +370,26 @@ def test_a_model_only_view_does_not_blank_the_runs_annotation_cells(tmp_path):
     assert runs["RUN_A"]["views_measured"] == "2"
     assert runs["RUN_A"]["anno_cells_views"] == "1"
     assert int(runs["RUN_A"]["anno_cells_occupancy"]) == occ["anno_only"] + occ["overlap"] > 0
+
+
+# --- 7. 1.2.0: the bbox centre ------------------------------------------------------
+
+def test_the_bbox_centre_is_read_through_the_shared_reader_in_either_shape(tmp_path):
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1)                                                     # C3 plain {min, max}
+    _view(run, 2, eid=8, host=_host_entry(bbox={"state": "value", "value": {
+        "min": [10.0, -4.0, 1.0], "max": [12.0, 0.0, 3.0]}}))          # pre-C3 state shape
+    _view(run, 3, eid=9, host=_host_entry(bbox={"state": "unavailable", "reason": "r"}))
+    out = tmp_path / "out"
+    census.main([str(run), "--out", str(out)])
+    els = _elements(out, "2025-01-01", "RUN_A")
+    e7, e8, e9 = els["host:{0}".format(EID)], els["host:8"], els["host:9"]
+    assert [float(e7[c]) for c in ("bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft")] == [2.75, 2.25, 5.0]
+    assert [float(e8[c]) for c in ("bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft")] == [11.0, -2.0, 2.0]
+    assert [float(e8[c]) for c in ("bbox_dx_ft", "bbox_dy_ft", "bbox_dz_ft")] == [2.0, 4.0, 2.0]
+    assert e9["bbox_state"] == "unavailable"
+    assert (e9["bbox_cx_ft"], e9["bbox_dx_ft"]) == ("", "")         # not 0
+    header = next(csv.reader(open(str(out / "2025-01-01__RUN_A.elements.csv"),
+                                  encoding="utf-8")))
+    assert header[-3:] == ["bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft"]   # appended
+    assert header.index("bbox_dz_ft") == census.ELEMENT_COLUMNS.index("bbox_dz_ft") == 21

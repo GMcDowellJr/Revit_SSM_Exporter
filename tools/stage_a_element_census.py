@@ -38,9 +38,12 @@ the views where it holds a pixel, and summed over views: px, ink px, cells
 with any pixel and cells with ink (``ink >= stage_a_grid.OCCUPANCY_MIN_INK_PX``,
 the grid's model occupancy rule). Every per-key sum is
 ``stage_a_kinds._key_sums`` -- the roll-up's reader -- over the grid's
-``ec_`` rows, one row per (key, cell). Its bbox extent is the sidecar's
-``bbox_3d`` (``model_entry_bbox_3d``), from the first measured view, with a
-count of views whose bbox differs.
+``ec_`` rows, one row per (key, cell). Its bbox extent and centre are the
+sidecar's ``bbox_3d`` (``model_entry_bbox_3d``), from the first measured
+view, with a count of views whose bbox differs. ``bbox_3d`` is the element's
+axis-aligned extent in model/host feet, an upper bound on its shape
+(``color_id_buffer._collect_near_face_w_data``), so the centre is a place to
+match on, not the element's centroid.
 
 FIRST APPEARANCE. An element's first appearance is the measured view where
 it holds the most ink cells (ties: the lowest view id). Request order is not
@@ -96,6 +99,12 @@ element-in-view records). ``anno_cells_occupancy`` sums the measured views
 that counted an annotation layer, and the appended ``anno_cells_views``
 says how many did; 1.0.0 left it blank when any one view was model-only.
 
+1.2.0 appends ``bbox_cx_ft`` / ``bbox_cy_ft`` / ``bbox_cz_ft`` to the
+element CSV: the bbox_3d centre, so an element gone in one run and one
+created in the next can be matched on category, place and size (the 44-run
+series: 30-50 % of a week's gone and created match on category and size
+alone, with no position to tell replace-in-place from new modeling).
+
 Exit 0 when no run is refused and every requested view is measured; 1 for
 an unmeasured view or a refused run; 2 when every run is refused, two runs
 share an as-of date, or on bad arguments (a run that is not a directory).
@@ -121,7 +130,7 @@ from tools import stage_a_kinds as kinds  # noqa: E402
 from tools import stage_a_sidecar_shapes as shapes  # noqa: E402
 
 SCHEMA = "vop.stage_a.element_census.v1"
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 
 ELEMENTS_SUFFIX = ".elements.csv"
 RUNS_CSV = "element_census_runs.csv"
@@ -143,6 +152,8 @@ ELEMENT_COLUMNS = [
     "px", "ink_px", "cells_px", "cells_ink", "first_view_id", "first_cells",
     "repeat_cells", "bbox_state", "bbox_dx_ft", "bbox_dy_ft", "bbox_dz_ft",
     "bbox_differs_views", "source_conflict_views",
+    # 1.2.0: appended. The bbox_3d centre, in the sidecar's model/host feet.
+    "bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft",
 ]
 RUN_COLUMNS = (
     ["as_of_date", "run_id", "run_dir", "refused", "views_requested", "views_measured",
@@ -237,7 +248,9 @@ def _bbox(entry):
         return state, None
     try:
         lo, hi = payload["min"], payload["max"]
-        return shapes.VALUE, tuple(round(float(hi[k]) - float(lo[k]), 6) for k in range(3))
+        extent = tuple(round(float(hi[k]) - float(lo[k]), 6) for k in range(3))
+        centre = tuple(round((float(hi[k]) + float(lo[k])) / 2.0, 6) for k in range(3))
+        return shapes.VALUE, extent + centre
     except (KeyError, TypeError, ValueError, IndexError):
         return "unreadable", None
 
@@ -444,7 +457,7 @@ def element_rows(run):
     rows = []
     for key in sorted(run["elements"]):
         a = run["elements"][key]
-        bbox = a["bbox"] or (None, None, None)
+        bbox = a["bbox"] or (None,) * 6
         rows.append({
             "run_id": run["run_id"], "as_of_date": run["as_of_date"], "element_key": key,
             "source": a["source"], "element_id": a["element_id"],
@@ -456,7 +469,8 @@ def element_rows(run):
             "first_cells": a["first_cells"], "repeat_cells": a["repeat_cells"],
             "bbox_state": a["bbox_state"], "bbox_dx_ft": bbox[0], "bbox_dy_ft": bbox[1],
             "bbox_dz_ft": bbox[2], "bbox_differs_views": a["bbox_differs_views"],
-            "source_conflict_views": a["source_conflict_views"]})
+            "source_conflict_views": a["source_conflict_views"],
+            "bbox_cx_ft": bbox[3], "bbox_cy_ft": bbox[4], "bbox_cz_ft": bbox[5]})
     return rows
 
 

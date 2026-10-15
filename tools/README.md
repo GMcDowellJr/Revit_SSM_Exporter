@@ -286,7 +286,9 @@ run figure, `link_category_cells_ink`.
 with pixels; px, ink px, cells with any pixel, cells with ink, summed over
 views, each through `stage_a_kinds._key_sums` (the roll-up's reader); the
 first appearance (the view where it has the most ink cells, ties to the
-lowest view id) and the repeat cells; its `bbox_3d` extent.
+lowest view id) and the repeat cells; its `bbox_3d` extent and (1.2.0,
+appended) centre, so a gone element and a created one can be matched on
+category, place and size.
 
 **Per run** (`element_census_runs.csv`): distinct elements by source,
 cells per element, the first-appearance share, the views-per-element
