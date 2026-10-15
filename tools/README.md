@@ -314,6 +314,13 @@ python tools/stage_a_element_census.py path/to/run
 python tools/stage_a_element_census.py <root>/2025-02-03__* --out census/
 ```
 
+It prints one line per run as it reads it (time, views, elements), refuses
+a run argument that is not a directory before reading anything (exit 2), and
+records each run by its absolute path. Views are folded into the run's
+totals one at a time, so memory follows distinct elements rather than views
+x elements. `anno_cells_occupancy` sums the views that counted an annotation
+layer; `anno_cells_views` says how many.
+
 **Output:** the per-run element CSVs, `element_census_runs.csv`,
 `element_census_series.csv`, then `element_census.summary.json` (written
 last, naming every CSV's sha256). Exit 0 when no run is refused and every

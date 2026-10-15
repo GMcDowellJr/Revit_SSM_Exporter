@@ -84,9 +84,21 @@ Columns are appended, never reordered.
 
     python tools/stage_a_element_census.py <run> [<run> ...] [--out DIR]
 
+One line is printed as each run is read (its time, views and elements), so
+a series run shows where it is. A run argument that is not a directory is a
+bad argument (exit 2) before anything is read, and runs are recorded by
+their absolute path.
+
+1.1.0: views are folded into the run's per-element totals one at a time and
+their element records dropped, so memory follows distinct elements, not
+views x elements (2025-11-01: 12,768 elements in 358 views, ~281,000
+element-in-view records). ``anno_cells_occupancy`` sums the measured views
+that counted an annotation layer, and the appended ``anno_cells_views``
+says how many did; 1.0.0 left it blank when any one view was model-only.
+
 Exit 0 when no run is refused and every requested view is measured; 1 for
 an unmeasured view or a refused run; 2 when every run is refused, two runs
-share an as-of date, or on bad arguments.
+share an as-of date, or on bad arguments (a run that is not a directory).
 """
 from __future__ import annotations
 
@@ -95,6 +107,7 @@ import csv
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -108,7 +121,7 @@ from tools import stage_a_kinds as kinds  # noqa: E402
 from tools import stage_a_sidecar_shapes as shapes  # noqa: E402
 
 SCHEMA = "vop.stage_a.element_census.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 ELEMENTS_SUFFIX = ".elements.csv"
 RUNS_CSV = "element_census_runs.csv"
@@ -142,7 +155,10 @@ RUN_COLUMNS = (
        "link_category_cells_ink", "views_per_element_mean", "views_per_element_median",
        "views_per_element_max", "link_identity_unrecorded_views",
        "prev_as_of_date", "common_measured_views", "host_id_jaccard_common_views"]
-    + [t for t in TRANSITIONS] + ["{0}_LINK".format(t) for t in TRANSITIONS])
+    + [t for t in TRANSITIONS] + ["{0}_LINK".format(t) for t in TRANSITIONS]
+    # 1.1.0: appended. anno_cells_occupancy sums the measured views that
+    # counted an annotation layer; this many did (the rest are model-only).
+    + ["anno_cells_views"])
 SERIES_COLUMNS = [
     "element_key", "source", "category", "first_as_of_date", "first_run_id",
     "first_how", "last_as_of_date", "last_run_id", "last_how", "runs_seen",
@@ -344,7 +360,7 @@ def census_run(run_arg):
     rows = rollup.run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id), ident)
     run = _blank_run(run_dir, run_id, date, None)
     run["requested"] = rollup.unique_requested(ident["requested"])
-    refusals = []
+    refusals, gridded = [], []
     for r in rows:
         if r["row_status"] == "orphan_sidecar":
             continue
@@ -353,12 +369,20 @@ def census_run(run_arg):
             run["unmeasured"][vid] = {"row_status": r["row_status"], "reason": r["reason"],
                                       "capture_status": r["run_meta_capture_status"]}
             continue
-        stem = r["view_stem"]
+        gridded.append((vid, r["view_stem"]))
+    # One view's elements at a time, folded into the run's totals and dropped:
+    # a 358-view run holds ~280,000 element-in-view records (2025-11-01), and
+    # keeping them all for every run of a series is what memory cannot hold.
+    # Views are folded in view-id order, so "first seen" is order-free.
+    for vid, stem in sorted(gridded, key=lambda vs: _vid_sort(vs[0])):
         try:
-            run["views"][vid] = view_census(folder / (stem + ".json"),
-                                            Path(grid_dir) / (stem + ".grid.json"))
+            view = view_census(folder / (stem + ".json"),
+                               Path(grid_dir) / (stem + ".grid.json"))
         except CensusRefusal as ex:
             refusals.append(str(ex))
+            continue
+        fold(run["elements"], vid, view.pop("elements"), view)
+        run["views"][vid] = view
     if refusals:
         named = any(s.startswith("grid_predates_ec_keys") for s in refusals)
         return _blank_run(run_dir, run_id, date, "{0}{1} gridded view(s) cannot be read "
@@ -366,51 +390,54 @@ def census_run(run_arg):
                               "grid_predates_ec_keys: " if named else "", len(refusals),
                               "; ".join(refusals[:5])))
     run["measured"] = sorted(run["views"], key=_vid_sort)
-    run["elements"] = aggregate(run["views"])
+    finish(run["elements"])
     return run
 
 
-def aggregate(views):
-    """Per element key, its figures summed over the measured views."""
-    out = {}
-    for vid in sorted(views, key=_vid_sort):
-        for key, e in views[vid]["elements"].items():
-            a = out.get(key)
-            if a is None:
-                a = out[key] = {
-                    "source": e["source"], "element_id": e["element_id"],
-                    "link_inst_id": e["link_inst_id"], "link_elem_id": e["link_elem_id"],
-                    "category": e["category"], "cells_state": e["cells_state"],
-                    "views": [], "views_with_px": 0, "bbox_state": e["bbox_state"],
-                    "bbox": e["bbox"], "bbox_differs_views": 0, "source_conflict_views": 0,
-                    "per_view_cells": {}}
-                for f in ("px", "ink_px", "cells_px", "cells_ink"):
-                    a[f] = 0 if e["cells_state"] == "value" else None
-            a["views"].append(vid)
-            if a["source"] == "unrecorded":
-                a["source"] = e["source"]
-            elif e["source"] not in ("unrecorded", a["source"]):
-                a["source_conflict_views"] += 1
-            if a["category"] is None:
-                a["category"] = e["category"]
-            if e["bbox"] != a["bbox"]:
-                a["bbox_differs_views"] += 1
-            if e["cells_state"] == "value":
-                for f in ("px", "ink_px", "cells_px", "cells_ink"):
-                    a[f] += e[f]
-                a["views_with_px"] += int(e["px"] > 0)
-                a["per_view_cells"][vid] = e["cells_ink"]
+def fold(out, vid, elements, view):
+    """Add one measured view's elements to the per-element totals ``out``.
+    Views must arrive in ascending view-id order (``census_run`` sorts them):
+    the first view seen gives an element's category and bbox, and a tie for
+    the largest view keeps the lower id. Records the view's host-document
+    element keys on ``view["host_keys"]`` for the id-overlap check."""
+    view["host_keys"] = frozenset(k for k, e in elements.items() if e["source"] in HOST_BUCKET)
+    for key, e in elements.items():
+        a = out.get(key)
+        if a is None:
+            a = out[key] = {
+                "source": e["source"], "element_id": e["element_id"],
+                "link_inst_id": e["link_inst_id"], "link_elem_id": e["link_elem_id"],
+                "category": e["category"], "cells_state": e["cells_state"],
+                "views": [], "views_with_px": 0, "bbox_state": e["bbox_state"],
+                "bbox": e["bbox"], "bbox_differs_views": 0, "source_conflict_views": 0,
+                "first_view_id": None, "first_cells": None}
+            for f in ("px", "ink_px", "cells_px", "cells_ink"):
+                a[f] = 0 if e["cells_state"] == "value" else None
+        a["views"].append(vid)
+        if a["source"] == "unrecorded":
+            a["source"] = e["source"]
+        elif e["source"] not in ("unrecorded", a["source"]):
+            a["source_conflict_views"] += 1
+        if a["category"] is None:
+            a["category"] = e["category"]
+        if e["bbox"] != a["bbox"]:
+            a["bbox_differs_views"] += 1
+        if e["cells_state"] == "value":
+            for f in ("px", "ink_px", "cells_px", "cells_ink"):
+                a[f] += e[f]
+            a["views_with_px"] += int(e["px"] > 0)
+            if a["first_cells"] is None or e["cells_ink"] > a["first_cells"]:
+                a["first_view_id"], a["first_cells"] = vid, e["cells_ink"]
+
+
+def finish(out):
+    """Close the per-element totals once every view is folded."""
     for a in out.values():
         if a["cells_state"] != "value":
             a.update(first_view_id=None, first_cells=None, repeat_cells=None,
                      views_with_px=None)
-            continue
-        first = max(sorted(a["per_view_cells"], key=_vid_sort),
-                    key=lambda v: a["per_view_cells"][v])
-        a["first_view_id"] = first
-        a["first_cells"] = a["per_view_cells"][first]
-        a["repeat_cells"] = a["cells_ink"] - a["first_cells"]
-    return out
+        else:
+            a["repeat_cells"] = a["cells_ink"] - a["first_cells"]
 
 
 def element_rows(run):
@@ -472,7 +499,10 @@ def run_stats(run):
                                          if u["row_status"] == "below_capture_floor"),
         "model_cells_occupancy": _sum("model_cells"),
         "model_cells_occupancy_inside_crop_a": _sum("model_cells_inside"),
-        "anno_cells_occupancy": _sum("anno_cells"),
+        "anno_cells_occupancy": sum(v["anno_cells"] for v in run["views"].values()
+                                    if v["anno_cells"] is not None),
+        "anno_cells_views": sum(1 for v in run["views"].values()
+                                if v["anno_cells"] is not None),
         "elements_distinct": len(els),
         "element_cells_ink": total,
         "host_elements_with_ink": sum(1 for c in cells if c > 0),
@@ -562,8 +592,7 @@ def host_id_overlap(prev, cur):
     common = set(prev["measured"]) & set(cur["measured"])
 
     def _ids(run):
-        return set(k for vid in common for k, e in run["views"][vid]["elements"].items()
-                   if e["source"] in HOST_BUCKET)
+        return set(k for vid in common for k in run["views"][vid]["host_keys"])
     a, b = _ids(prev), _ids(cur)
     union = a | b
     return len(common), (len(a & b) / float(len(union)) if union else None)
@@ -625,10 +654,23 @@ def _write_csv(path, columns, rows):
     return grid.sha256_file(path)
 
 
-def census(run_args, out_dir):
+def census(run_args, out_dir, progress=None):
     """Every run, the series, the CSVs, then the summary. Raises
-    CensusRefusal (exit 2) when two runs share an as-of date."""
-    runs = [census_run(a) for a in run_args]
+    CensusRefusal (exit 2) when two runs share an as-of date. ``progress``,
+    when given, is called with one line per run as it is read."""
+    runs = []
+    for n, arg in enumerate(run_args, 1):
+        started = time.time()
+        run = census_run(arg)
+        runs.append(run)
+        if progress is not None:
+            progress("[{0}/{1}] {2:.0f}s {3}".format(
+                n, len(run_args), time.time() - started,
+                "REFUSED {0}: {1}".format(run["run_dir"], run["refused"]) if run["refused"]
+                else "{0} {1}: {2} measured / {3} requested views, {4} distinct "
+                     "elements".format(run["as_of_date"], run["run_id"],
+                                       len(run["measured"]), len(run["requested"]),
+                                       len(run["elements"]))))
     live = [r for r in runs if not r["refused"]]
     dates = {}
     for r in live:
@@ -704,6 +746,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if len(args.runs) > 1 and not args.out:
         ap.error("--out is required with more than one run")
+    missing = [run for run in args.runs if not Path(run).is_dir()]
+    if missing:
+        ap.error("not a directory: {0}".format(", ".join(missing)))
+    args.runs = [str(Path(run).resolve()) for run in args.runs]
     layouts = [rollup.run_layout(run) for run in args.runs]
     out = Path(args.out) if args.out else layouts[0][3]
     for _s, folder, _r, _g in layouts:
@@ -711,17 +757,11 @@ def main(argv=None):
             ap.error("--out {0} is inside the capture folder {1}; the census never "
                      "writes there".format(out, folder))
     try:
-        summary, runs = census(args.runs, out)
+        summary, runs = census(args.runs, out,
+                               progress=lambda line: print(line, flush=True))
     except CensusRefusal as ex:
         print("REFUSED: {0}".format(ex))
         return 2
-    for r in runs:
-        if r["refused"]:
-            print("REFUSED run {0}: {1}".format(r["run_dir"], r["refused"]))
-        else:
-            print("{0} {1}: {2} measured / {3} requested views, {4} distinct elements".format(
-                r["as_of_date"], r["run_id"], len(r["measured"]), len(r["requested"]),
-                len(r["elements"])))
     print("wrote {0}".format(out / SUMMARY_NAME))
     refused = summary["refused_runs"]["count"]
     if refused == len(runs):

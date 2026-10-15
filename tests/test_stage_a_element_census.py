@@ -42,7 +42,8 @@ def _link_entry(inst, elem, category="Walls"):
             "link_inst_id": inst, "link_elem_id": elem}
 
 
-def _view(run, n, eid=EID, host=None, link=None, date=None, status="success"):
+def _view(run, n, eid=EID, host=None, link=None, date=None, status="success",
+          register=True):
     """View ``n`` in ``run`` with model element ``eid`` (the shared element,
     re-numbered), its near_face_w_map, registered and gridded after the
     edit (both record the model sidecar's hash)."""
@@ -53,7 +54,8 @@ def _view(run, n, eid=EID, host=None, link=None, date=None, status="success"):
     side["near_face_w_map"] = {"host": {str(eid): host if host is not None else _host_entry()},
                                "link": link or {}}
     model_path.write_text(json.dumps(side))
-    reg.register(anno_path)
+    if register:
+        reg.register(anno_path)
     grid.grid_view(model_path, run / "analysis_grid")
     _outcome(run, n, status=status, reason="" if status == "success" else "annotation_failed",
              **({"date": date} if date else {}))
@@ -315,3 +317,56 @@ def test_the_summary_is_written_last_and_names_every_csv(tmp_path):
     header = next(csv.reader(open(str(out / census.RUNS_CSV), encoding="utf-8")))
     assert header == census.RUN_COLUMNS
     assert census.RUN_COLUMNS[:4] == ["as_of_date", "run_id", "run_dir", "refused"]
+
+
+# --- 6. 1.1.0: progress, paths, memory, annotation total ---------------------------
+
+def test_a_run_that_is_not_a_directory_is_a_bad_argument_before_anything_is_read(tmp_path):
+    import pytest
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1)
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit) as ex:
+        census.main([str(run), str(tmp_path / "<a run folder>"), "--out", str(out)])
+    assert ex.value.code == 2
+    assert not out.exists()                              # nothing written, not a refusal row
+
+
+def test_runs_are_recorded_by_absolute_path_and_reported_as_read(tmp_path, monkeypatch,
+                                                                 capsys):
+    a = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(a, 1)
+    b = _dated_run(tmp_path, "2025-02-01", "RUN_B")
+    _view(b, 1)
+    monkeypatch.chdir(tmp_path)
+    assert census.main([a.name, b.name, "--out", "out"]) == 0
+    _s, runs, _series = _out(tmp_path / "out")
+    assert runs["RUN_A"]["run_dir"] == str(a.resolve())
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("[")]
+    assert [ln.split(" ")[0] for ln in lines] == ["[1/2]", "[2/2]"]
+    assert "RUN_A" in lines[0] and "1 measured / 1 requested" in lines[0]
+
+
+def test_a_runs_view_records_drop_their_elements_once_folded(tmp_path):
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1)
+    _view(run, 2, eid=8)
+    r = census.census_run(run)
+    assert sorted(r["elements"]) == ["host:7", "host:8"]
+    for vid, view in r["views"].items():
+        assert "elements" not in view, vid
+    assert r["views"]["2"]["host_keys"] == frozenset(["host:8"])
+
+
+def test_a_model_only_view_does_not_blank_the_runs_annotation_cells(tmp_path):
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1)
+    _view(run, 2, register=False)                        # gridded, no annotation layer
+    out = tmp_path / "out"
+    census.main([str(run), "--out", str(out)])
+    _s, runs, _series = _out(out)
+    g = json.loads((run / "analysis_grid" / "V_1.grid.json").read_text())
+    occ = g["occupancy"]["all_cells"]
+    assert runs["RUN_A"]["views_measured"] == "2"
+    assert runs["RUN_A"]["anno_cells_views"] == "1"
+    assert int(runs["RUN_A"]["anno_cells_occupancy"]) == occ["anno_only"] + occ["overlap"] > 0
