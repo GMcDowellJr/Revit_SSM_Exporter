@@ -18,7 +18,10 @@ absence names the store checked.
 ## 0. Answer
 
 **Received: three runs**, each as `run_meta.json` plus the six Wall Types
-BP plans' model and annotation sidecars (no TIFF, no group B sidecar):
+BP plans' model and annotation sidecars; then the group B sidecars of the
+10-25 run (five model sidecars, four annotation sidecars and one
+annotation TIFF); and the finder's `recapture_views.csv` for the 44-run
+series (10,090 rows):
 
 | archive | run_id | exporter | `opened_from` | the six plans | label on the zip |
 |---|---|---|---|---|---|
@@ -62,13 +65,24 @@ pass from fail.
   and LEVEL 4: annotation derived axis 0.3 % and 1.5 % off the model's,
   under the cap, no fault): the registration tool measures and resamples
   that; the refusal is about the cap, not about a shared lattice as such.
-- **Group B**: the run_meta of 10-25 and 11-01 record every named view
-  (OBSERVED, §2.1): 4622, 142022, 9236660, 8902097 and 10981328 in the
-  tick-floor shape; 8169028, 9080636, 11067410, 11067417 and 11067424 as
-  `annotation_export_degenerate`. The measured sizes still need those
-  views' sidecars. The policy is implemented (§2.2); the finder over the
-  three run_metas separates the degenerate five from the five candidates
-  (§2.3).
+- **Group B is settled (OBSERVED, §2.1).** Nine of the ten named views
+  are under the tick floor by measurement: short sides of 64 to 162 px
+  against the 192 the ticks need (0.40 to 1.06 paper inches), in the
+  model sidecar's `registration_marks_incomplete` message. The four
+  recorded as `annotation_export_degenerate` are under the tick floor
+  TOO (139-162 px) and their annotation export then came back at Revit's
+  10:1 clamp (`aspect_clamp`, aspect 10.00-10.01). The tenth, 8169028,
+  has only its annotation TIFF on hand: 5042 x 504 px, aspect 10.004, the
+  clamp. The policy is implemented (§2.2); with the sidecars beside the
+  10-25 run the finder lists all ten under `below_floor` and the roll-up
+  gives all ten `below_capture_floor` (§2.3).
+- **The 207 rows of the series split 119 / 44 / 44** (OBSERVED, §2.4):
+  119 tick-floor rows over five views, 44 degenerate rows over six views,
+  44 lattice-mismatch rows over eight views -- the six plans, 09-13 to
+  10-25 (LEVEL 5 from 09-27, when its scale went from 128 to 48), and two
+  1/48 Emergency Department plans on 03-06 and 03-10. Every one of the
+  207 has a sidecar on disk; finder 1.3.0 over the series reclassifies the
+  163 floor rows and leaves the 44 lattice rows `capture_failed`.
 - **Deliverable (d)**: `capture_status` / `CaptureStatus` `unmeasurable`,
   reason `below_capture_floor: ...` or `annotation_export_degenerate` (§3).
 - **Comparability**: `Analysis-Impact: none` on every commit (§4).
@@ -280,21 +294,40 @@ OBSERVED rules:
   reason>" and `registration_marks_may_not_draw` on the None): BOTH faults,
   every time, and the capture went on to export both passes.
 
-Per view. The SHAPE column is OBSERVED from `run_meta.views[]` of the
-three received runs (identical in 10-25 and 11-01; 09-06 did not request
-the four 10-11 legends); the measured size needs the view's sidecar, not
-received:
+Per view, from the 10-25 run's sidecars (OBSERVED): the model sidecar's
+`frame.crop_uv` / `crop_px` / `achieved_fpp_ft` and its
+`registration_marks.faults[registration_marks_incomplete].message`; the
+annotation sidecar's `capture_faults[annotation_export_degenerate].detail`.
+The shapes are the same in the 09-06 and 11-01 run_metas (09-06 did not
+request the four 10-11 views).
 
-| view | type / scale (views_core 10-25) | floor on the short side | shape recorded (OBSERVED) | rule | settles the size |
-|---|---|---|---|---|---|
-| 4622 Drawing Index Submission Matrix Legend | Legend / 1 | 192 px = 1.28 in | `registration_failed`; `registration_marks_incomplete;registration_marks_may_not_draw` (all three runs) | tick floor (the shape an unavailable layout writes; a lines-hidden view losing a tick writes the same -- INFERENCE until the sidecar's fault message is read) | model sidecar `registration_marks.faults[registration_marks_incomplete].message` ("... N px on its short side, too small for ...") |
-| 142022 Frame Types | Legend / 48 | 192 px = 5.12 ft | same, all three runs | tick floor (same caveat) | same |
-| 9236660 Section 12 | Section / 128 | 192 px = 13.65 ft | same, all three runs | tick floor, NOT the aspect clamp (same caveat) | same, plus `frame.crop_uv` |
-| 8902097 ILLUSTRATIVE VIEW - Level 1 - Providers Sleep Room - AB | not in views_core 10-25 | -- | same, all three runs | tick floor (same caveat); not in Greg's list, same shape | same |
-| 10981328 PLANNING KEYNOTE LEGEND | Legend / 128 | 13.65 ft | same, 10-25 and 11-01 (not requested 09-06) | tick floor (same caveat) | same |
-| 8169028 Glazing Study - L4 East | Elevation / 96 | -- | `annotation_failed`; `annotation_export_degenerate`, all three runs | degenerate export (OBSERVED by fault name); `aspect_clamp` vs `coarsening` needs the detail | annotation `capture_faults[annotation_export_degenerate].detail` (`reason`, `actual_px`, `model_px`, `aspect`, `coarsening_lower_bound`) |
-| 9080636 ILLUSTRATIVE VIEW ... AB Copy 1 | not in views_core 10-25 | -- | same, all three runs | same | same |
-| 11067410, 11067417, 11067424 (G010) | Legend / 1 | 1.28 in | `annotation_failed`; `annotation_export_degenerate`, 10-25 and 11-01 (not requested 09-06) | degenerate export, NOT the tick floor: a scale-1 text block that took the ticks and whose annotation export is at the 10:1 clamp or 4x coarser (INFERENCE which) | same detail |
+| view | type / scale | reference rectangle | px on the model lattice (short side) | paper inches | tick rule (192 px) | annotation export |
+|---|---|---|---|---|---|---|
+| 4622 Drawing Index Submission Matrix Legend | Legend / 1 | elements + one cell, no crop region | 302 x 160 (**160**) | 2.01 x 1.06 | refused: "160 px on its short side, too small for 32 px ticks inset 24 px" | 302 x 159, not degenerate |
+| 142022 Frame Types | Legend / 48 | elements + one cell | 64 x 83 (**64**; the 64 px fitted-axis floor applied) | 0.40 x 0.51 | refused: 64 px | 64 x 82, not degenerate |
+| 10981328 PLANNING KEYNOTE LEGEND | Legend / 128 | elements + one cell | 812 x 89 (**88**) | 5.41 x 0.59 | refused: 88 px | 812 x 88, not degenerate |
+| 9236660 Section 12 | Section / 128 | authored crop 10.15 x 69.5 ft | 143 x 980 (**143**) | 0.95 x 6.52 | refused: 143 px | 143 x 979, not degenerate (aspect 6.8) |
+| 8902097 ILLUSTRATIVE VIEW ... AB | FloorPlan / 128 | authored crop 10.6 x 24.4 ft | 149 x 343 (**149**) | 1.00 x 2.29 | refused: 149 px | 149 x 342, not degenerate |
+| 9080636 ILLUSTRATIVE VIEW ... AB Copy 1 | FloorPlan / 128 | authored crop (the same 149 x 343) | **149** | 1.00 x 2.29 | refused: 149 px | **149 x 1490**, `aspect_clamp` (10.0): the annotation extent is 4.3x the crop's height and Revit clamped it at 10:1 |
+| 11067410 LICENSED BED SUMMARY CONTENT | Legend / 1 | elements + one cell | 1781 x 163 (**162**) | 11.9 x 1.09 | refused: 162 px | **1781 x 178**, `aspect_clamp` (10.006) |
+| 11067424 OSHPD INTENT | Legend / 1 | elements + one cell | 1781 x 163 (**162**) | 11.9 x 1.09 | refused: 162 px | **1781 x 178**, `aspect_clamp` (10.006) |
+| 11067417 PROJECT DESCRIPTION | Legend / 1 | elements + one cell | 1471 x 140 (**139**) | 9.8 x 0.93 | refused: 139 px | **1471 x 147**, `aspect_clamp` (10.007) |
+| 8169028 Glazing Study - L4 East | Elevation / 96 | (no sidecar received) | -- | -- | not read | **5042 x 504**, aspect 10.004 (the TIFF; run_meta: `aspect_clamp` by fault name) |
+
+Two things the measurements add to the inference:
+
+- **The tick rule is the floor for nine of the ten**, the degenerate
+  ones included: a scale-1 text legend 1.09 in tall, or a 1 in wide plan
+  crop, is under 192 px before any annotation export is made. Under this
+  branch these nine are refused before the export with the figure in the
+  reason (`below_capture_floor: the reference rectangle is 162 px ...`)
+  and the degenerate check is never reached for them. 8169028 is the one
+  case the degenerate rule may decide alone; its model sidecar would say.
+- **The 10:1 clamp is reached from BOTH sides**: a wide text block whose
+  model export is already 10.9:1 (11067410: 1781 x 163) comes back as
+  1781 x 178, and a 1 x 2.3 in plan whose annotation reaches 4.3x past
+  its crop (9080636) comes back as 149 x 1490. `annotation_export_
+  degenerate` names both `aspect_clamp`; neither is a capture defect.
 
 ### 2.2 The policy, decided and implemented
 
@@ -374,17 +407,47 @@ received `run_meta.json` plus the six plans' sidecars:
 The six plans are listed `recapture` on 09-06 and 11-01 ("ticks drawn but
 no registration record") only because the zips carry no
 `_anno.registered.json`; on 10-25 they are `capture_failed` with
-`annotation_lattice_mismatch`, which is not a floor rule. With the five
-candidates' model sidecars beside the run_meta the same command moves them
-to `below_floor` with `evidence sidecar`, or leaves them `capture_failed`
-if their fault message is not the size refusal.
+`annotation_lattice_mismatch`, which is not a floor rule.
 
-On the series: re-running the finder over the 44 runs (no recapture needed)
-reclassifies every old-shape row whose model sidecar is on disk with the
-"too small" fault message, and every `annotation_export_degenerate` row;
-a row whose sidecar is gone stays `capture_failed` and says it is a
-candidate. The six group A plans stay `capture_failed`
-(`annotation_lattice_mismatch` is not a floor rule).
+**With the group B sidecars beside the 10-25 run** (the second upload
+copied into its `color_id_buffer/`), the same command lists all ten under
+`below_floor`: 4622, 142022, 8902097, 9236660, 10981328 with `rule
+below_capture_floor, evidence sidecar` (provenance `not_this_run`: the
+sidecar is on disk), and the five degenerate views with `evidence
+run_meta`; `failed` keeps the six plans and the 65 gated 3D views;
+`recapture` is empty. `tools/stage_a_grid_rollup.py` over the same folder
+gives 10 rows `below_capture_floor`, 6 `not_this_run` (the plans) and 415
+`no_stage_a_capture` (the zip holds 16 of 431 sidecars), summary
+`run_meta_capture_status` `{annotation_failed 11, failed 65,
+registration_failed 5, success 350}`, count invariant difference 0.
+
+
+### 2.4 The 207 rows of the series (OBSERVED, finder 1.2.0 `recapture_views.csv`)
+
+44 runs, 10,090 rows: 7,937 `keep`, 20 `review`, 2,133 `capture_failed`
+of which 1,926 are 3D views "rejected by capability gating" and **207**
+are the Stage A failures of this note. All 207 have `provenance
+not_this_run`: a sidecar is on disk for every one.
+
+| reason (run_meta) | rows | views | runs per view |
+|---|---|---|---|
+| `registration_marks_incomplete;registration_marks_may_not_draw` (tick floor) | 119 | 5 | 4622 x44, 142022 x44 (every run), 8902097 x14 (08-09..11-01), 9236660 x13 (08-16..11-01), 10981328 x4 (10-11..11-01) |
+| `annotation_export_degenerate` | 44 | 6 | 8169028 x18 (07-12..11-01), 9080636 x13 (08-16..11-01), 11067410 / 11067417 / 11067424 x4 each (10-11..11-01), 630579 "Elevation 4 - a" x1 (02-03) |
+| `annotation_lattice_mismatch` | 44 | 8 | 4148625, 9468987, 9560929, 9594635, 9595813 x7 each (09-13..10-25); 9596211 x5 (09-27..10-25); 3101390, 3101872 "(E) EMERGENCY DEPARTMENT - LEVEL 1 - ULTRASOUND ..." x2 each (03-06, 03-10) |
+
+LEVEL 5 (9596211) joins the lattice failures on 09-27, not 09-13: at
+1/128 (09-06, §1.2) it is far under the cap; its scale became 48 between
+09-20 and 09-27 and the cap then binds its derived axis like the other
+five -- the sidecar reading of §1.2 and the series agree. The two
+Emergency Department plans on 03-06 and 03-10 are the same fault in an
+earlier archive window; their sidecars were not read.
+
+On the series: re-running finder 1.3.0 over the 44 runs (no recapture
+needed) reclassifies the 119 tick-floor rows by their sidecars' fault
+message (INFERENCE that every one carries it, as the 10-25 five do) and
+the 44 degenerate rows by run_meta: 163 `below_capture_floor`, 44
+`capture_failed` (the lattice mismatch, which a capture fix would
+address, §1.4), 20 `review` unchanged.
 
 ## 3. Deliverable (d): what BI filters on
 
@@ -424,7 +487,7 @@ floor, or a crop that shrank).
 
 - `python -m pytest tests/ -q`: 2584 passed at `c75b750` before the change
   (2 xfailed); 2603 after the first push, 2609 with the 09-06 entries,
-  and the count with all three runs' entries is in the PR.
+  2638 with all three runs' entries.
 - Mutation (OBSERVED, this session): with `raise CaptureBelowFloor`
   disabled, `tests/test_capture_floor.py::test_a_view_under_the_floor_is_
   refused_before_any_export` is red (the view exports twice and comes back
@@ -439,14 +502,9 @@ floor, or a crop that shrank).
 
 ## 6. Files still needed
 
-Group A needs no more files: the cause is OBSERVED. What would move §1.3's
-INFERENCE to OBSERVED is a Revit-side diff of the six plans' view settings
-between the 09-06 and 09-13 archives (template, filters, the section
-markers' "hide at scales coarser than", worksets, design options), which
-no sidecar records.
-
-Group B: the model and annotation sidecars of 4622, 142022, 9236660,
-8902097 and 10981328 (the `registration_marks_incomplete` fault message
-with the measured px), and of 8169028, 9080636, 11067410, 11067417 and
-11067424 (the degenerate detail), from the 10-25 or 11-01 run. Plus the
-finder's `recapture_views.csv` for the series.
+None for the findings of this note. Two would sharpen it: the model
+sidecar of 8169028 (whether its crop is under the tick floor as well as
+at the clamp), and the 03-06 sidecars of 3101390 and 3101872 (whether the
+Emergency Department plans' lattice mismatch is the same section-marker
+overrun). The co-sizing fix of §1.4 needs a Revit probe on the six plans
+of the 10-25 archive, not files.
