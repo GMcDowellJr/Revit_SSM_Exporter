@@ -66,6 +66,29 @@ def model_entry_bbox_3d(entry: dict[str, Any]) -> tuple[str, Any]:
     return _state_read(entry.get("bbox_3d"), "no bbox_3d recorded")
 
 
+def model_entry_source(entry: dict[str, Any]) -> tuple[str, Any]:
+    """A host ``near_face_w_map`` entry's ``source`` as ``(state, "HOST"|"DWG"|reason)``.
+
+    C2 writes the plain string; before it, ``{"state": "value", "value": ...}``.
+    Either shape may record a failed read as a state object. An entry with no
+    ``source`` key (a LINK entry, or a sidecar before Stage A step 1) is
+    ``unavailable``, never a stand-in "HOST"."""
+    return _state_read(entry.get("source"), "no source recorded")
+
+
+def model_entry_category(entry: dict[str, Any]) -> tuple[str, Any]:
+    """A ``near_face_w_map`` entry's category as ``(state, name|reason)``.
+
+    C4 writes the plain ``category`` and a ``category_state`` only when the
+    read FAILED; before it, every entry carried ``category_state``, a
+    ``"value"`` state on success. A failed ``category_state`` wins over the
+    bare key, which the writer leaves null on failure."""
+    cat_state = entry.get("category_state")
+    if isinstance(cat_state, dict) and cat_state.get("state") not in (None, VALUE):
+        return (cat_state.get("state"), cat_state.get("reason") or "no reason recorded")
+    return _state_read(entry.get("category"), "no category recorded")
+
+
 # --- C5: one frame record per sidecar ---------------------------------------
 #
 # Before C5 a model sidecar carried "resolution", "export_frame" and a

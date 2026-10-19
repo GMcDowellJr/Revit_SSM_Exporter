@@ -671,11 +671,11 @@ def _blank_row(run_id, view_id, views_core, outcome):
     return row
 
 
-def requested_row(vid, paths, grid_dir, run_id, views_core, outcome):
+def requested_row(vid, paths, grid_dir, run_id, views_core, outcome, with_keys=True):
     """The row for one requested view id (``outcome`` None: run_meta lists it
     with conflicting outcomes)."""
     if len(paths) == 1:
-        return view_row(paths[0], grid_dir, run_id, views_core, outcome)
+        return view_row(paths[0], grid_dir, run_id, views_core, outcome, with_keys)
     row = _blank_row(run_id, vid, views_core, outcome)
     if outcome is None:
         row["run_meta_capture_status"] = "ambiguous"
@@ -736,7 +736,7 @@ def orphan_row(path, vid, run_id, views_core, why):
     return row
 
 
-def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome):
+def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome, with_keys=True):
     """One row for the one model sidecar of a requested view. Every key of
     COLUMNS is present."""
     model_sidecar_path = Path(model_sidecar_path)
@@ -796,7 +796,10 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome):
             row.update(grid_columns(record))
             row.update(element_cell_columns(record))
             row.update(kinds_columns(grid_dir, stem, grid_json)[0])
-            row["_keys"] = row_keys(grid_json)
+            # The summary's per-key detail; a caller that reads the accounting
+            # itself (the element census) skips it: one tuple per key per
+            # view, and the npz read a second time.
+            row["_keys"] = row_keys(grid_json) if with_keys else None
         else:
             row["row_status"] = "grid_refused"
             row["reason"] = record.get("reason") or "grid status {0!r}".format(
@@ -941,14 +944,15 @@ def summarise(runs, rows, csv_path):
     })
 
 
-def run_rows(sidecars, grid_dir, run_id, views_core, ident):
+def run_rows(sidecars, grid_dir, run_id, views_core, ident, with_keys=True):
     """Every row of one run that was not refused: the requested views, then
-    the orphan sidecars."""
+    the orphan sidecars. ``with_keys`` False leaves each gridded row's
+    ``_keys`` (the summary's per-key detail) unread."""
     by_vid, unreadable = sidecars_by_view(sidecars)
     rows = []
     for vid in unique_requested(ident["requested"]):
         rows.append(requested_row(vid, by_vid.get(vid, []), grid_dir, run_id, views_core,
-                                  ident["outcomes"].get(vid)))
+                                  ident["outcomes"].get(vid), with_keys))
     requested = set(ident["requested"])
     for vid, paths in sorted(by_vid.items()):
         if vid not in requested:
