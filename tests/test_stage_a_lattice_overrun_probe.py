@@ -254,3 +254,21 @@ def test_probe_variant_selection_refuses_what_this_build_lacks():
 
 def test_the_probe_offers_co_sized_on_a_build_that_has_it():
     assert probe._available_variants() == list(probe.VARIANTS)
+
+
+def test_the_probe_refuses_a_stale_production_and_names_what_is_missing():
+    """Run 20261019T1413: probe .2 drove the vop_interwoven an earlier Dynamo
+    run had left in sys.modules, so the variant ran the .1 code again. The
+    probe now purges the package and refuses a build without what it needs."""
+    import importlib
+    import types as _types
+    files = probe.check_production(importlib.import_module)       # this checkout: new enough
+    assert files["vop_interwoven.stage_a_registered_capture"].endswith(
+        "stage_a_registered_capture.py")
+    stale = _types.ModuleType("vop_interwoven.stage_a_registered_capture")
+    stale.ANNO_EXTENT_VARIANTS = ("as_is",)
+    with pytest.raises(RuntimeError, match="annotation_crop_parameter"):
+        probe.check_production(lambda name: stale)
+    cached = {"vop_interwoven": 1, "vop_interwoven.config": 2, "vop_interwovenX": 3, "os": 4}
+    assert probe.purge_cached_modules(cached) == ["vop_interwoven", "vop_interwoven.config"]
+    assert sorted(cached) == ["os", "vop_interwovenX"]

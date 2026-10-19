@@ -79,7 +79,7 @@ import sys
 import time
 
 PROBE_NAME = "stage_a_lattice_overrun"
-PROBE_VERSION = "2026-10-19.2"
+PROBE_VERSION = "2026-10-19.3"
 SCHEMA = "vop.probe.lattice_overrun.v1"
 
 DEFAULT_VIEW_IDS = (4148625, 9468987, 9560929, 9594635, 9595813, 9596211)
@@ -216,24 +216,68 @@ def parse_options(value):
 # REVIT
 # ======================================================================
 
+# What this probe version needs of the production it drives. Run 20261019T1413
+# (probe .2) ran against the vop_interwoven a previous Dynamo run had left in
+# sys.modules ("repo_root": "already importable"): the probe was new, the
+# capture code was not, and annotation_crop_on failed the .1 way again. So the
+# package is purged and imported afresh (the thinrunner does the same), and a
+# build lacking these symbols is refused rather than measured.
+REQUIRED_PRODUCTION = {
+    "vop_interwoven.stage_a_registered_capture": ("ANNO_EXTENT_VARIANTS",
+                                                  "annotation_crop_parameter"),
+}
+
+
+def purge_cached_modules(modules):
+    """Remove vop_interwoven and its submodules from ``modules`` (sys.modules);
+    returns the names removed."""
+    names = sorted(k for k in list(modules)
+                   if k == "vop_interwoven" or k.startswith("vop_interwoven."))
+    for name in names:
+        del modules[name]
+    return names
+
+
+def check_production(import_module, required=None):
+    """Raise naming every missing symbol, or return ``{module: __file__}``."""
+    missing, files = [], {}
+    for name, symbols in sorted((required or REQUIRED_PRODUCTION).items()):
+        module = import_module(name)
+        files[name] = getattr(module, "__file__", None)
+        missing.extend("{0}.{1}".format(name, s) for s in symbols if not hasattr(module, s))
+    if missing:
+        raise RuntimeError("the vop_interwoven loaded is older than probe {0} needs (missing "
+                           "{1}; loaded from {2}): update the checkout, or restart Dynamo "
+                           "if it holds an old copy".format(PROBE_VERSION, missing, files))
+    return files
+
+
 def _ensure_repo(repo_root):
+    """Import vop_interwoven FRESH: purge any copy a previous run left, put the
+    checkout first on sys.path, import, and check it is new enough."""
+    import importlib
     candidates = [repo_root, os.environ.get("REVIT_SSM_EXPORTER_ROOT"),
                   os.path.join(os.path.expanduser("~"), "Documents", "Revit_SSM_Exporter"),
                   os.path.join(os.path.expanduser("~"), "Documents", "GitHub",
                                "Revit_SSM_Exporter")]
+    purged = purge_cached_modules(sys.modules)
+    importlib.invalidate_caches()
+    root = None
+    for cand in [c for c in candidates if c]:
+        if os.path.isdir(os.path.join(cand, "vop_interwoven")):
+            root = cand
+            break
+    if root is not None:
+        if root in sys.path:
+            sys.path.remove(root)
+        sys.path.insert(0, root)
     try:
-        import vop_interwoven  # noqa: F401
-        return "already importable"
+        importlib.import_module("vop_interwoven")
     except ImportError:
-        pass
-    for root in [c for c in candidates if c]:
-        if os.path.isdir(os.path.join(root, "vop_interwoven")):
-            if root not in sys.path:
-                sys.path.insert(0, root)
-            __import__("vop_interwoven")
-            return root
-    raise RuntimeError("vop_interwoven not found; set IN[3] repo_root. Tried: {0}".format(
-        [c for c in candidates if c]))
+        raise RuntimeError("vop_interwoven not found; set IN[3] repo_root. Tried: {0}".format(
+            [c for c in candidates if c]))
+    files = check_production(importlib.import_module)
+    return {"root": root, "purged_modules": len(purged), "loaded_from": files}
 
 
 def _available_variants():

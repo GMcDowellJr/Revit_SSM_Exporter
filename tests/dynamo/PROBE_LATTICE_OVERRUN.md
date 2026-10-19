@@ -14,8 +14,14 @@ made a Python attribute that read back True, and nothing in Revit changed
 (the six exports at the `as_is` size, `view_state_not_restored` on all six
 because the before-read failed). `2026-10-19.2` writes the
 VIEWER_ANNOTATION_CROP_ACTIVE parameter and believes a write only when that
-parameter read before it. Check every variant's `variant_record.took_effect`
-and that `restore_faults` is empty before reading anything else.
+parameter read before it. The `.2` rerun (run `20261019T1413`) measured
+nothing new: Dynamo still held the `.1` session's vop_interwoven
+(`repo_root: "already importable"`), so the variant ran the old code. `.3`
+purges `vop_interwoven` from `sys.modules`, imports it from the checkout,
+records where it loaded from (`repo_root.loaded_from`) and refuses a build
+missing what it needs (`REQUIRED_PRODUCTION`). Check every variant's
+`variant_record.took_effect` and that `restore_faults` is empty before
+reading anything else.
 
 ## What it runs
 
