@@ -4,6 +4,30 @@ Quality assurance and testing utilities for the SSM/VOP exporter.
 
 ## Scripts
 
+### Run file layout (2026-10-19)
+
+Names live in one place, `vop_interwoven/output_layout.py`, and every tool
+reads both layouts. A run keeps the layout it was created in; tools write into
+a run in its own layout.
+
+| | v1 (every run before 2026-10-19) | v2 (new runs) |
+|---|---|---|
+| run record | `run_meta.json` | `run_meta_<d>.json` |
+| capture folder | `color_id_buffer/` | `color_id/` |
+| grid folder | `analysis_grid/` | `grid/` |
+| registered annotation | `<stem>_anno.registered.tiff/.json` | `<stem>_anno.reg.tiff/.json` |
+| roll-up | `grid_rollup.csv` / `.summary.json` | `grid_rollup_<d>.csv` / `.summary.json` |
+| kinds inventory | `kinds_inventory.csv` / `.json` | `kinds_inventory_<d>.csv` / `.json` |
+| run id | `YYYYMMDDTHHMMSS` | `YYYYMMDDTHHMM` |
+
+`<d>` is the run's file date: the thinrunner's tag when it was given one,
+else the as-of date -- the same suffix as `views_core_<d>.csv`. A view's file
+stem is `<view name>_<view id>`, the name cut only as far as the 260-character
+Windows path limit requires; the full name is in the sidecar (`view_name`).
+With several runs and no `--out`, the roll-up, the kinds inventory and
+`stage_a_analyze.py` give each run its own outputs in its own grid folder.
+
+
 
 ### `verify_invariant_core.py` - Path-independent verification invariant core
 
@@ -252,11 +276,15 @@ python tools/stage_a_grid_rollup.py path/to/run
 python tools/stage_a_grid_rollup.py run_a run_b/color_id_buffer --out rollup/
 ```
 
-**Output:** `grid_rollup.csv`, then `grid_rollup.summary.json` (written last,
-naming the CSV's sha256), in `<run>/analysis_grid/` for one run; `--out` is
-required for more than one. Exit 0 when no run is refused and every row is
-`gridded` and `registered`; 1 for any other row or a refused run; 2 when every
-run is refused, the count invariant fails, or on bad arguments.
+**Output:** each run's own roll-up in its own grid folder, as if rolled up
+alone -- `grid/grid_rollup_<d>.csv` and `.summary.json` in a v2 run (see "Run
+file layout" below), `analysis_grid/grid_rollup.csv` and
+`grid_rollup.summary.json` in a v1 run; the summary is written last, naming the
+CSV's sha256. `--out DIR` instead writes one combined roll-up of every run
+given. Exit 0 when no run is refused and every row is `gridded` and
+`registered`; 1 for any other row or a refused run; 2 when every run is
+refused, the count invariant fails, or on bad arguments (per run without
+`--out`: the worst of the runs' codes).
 
 ---
 
@@ -362,9 +390,12 @@ indexed, and each is listed under `scan.warnings` ("run folder parent is
 root; model_key undefined") and printed as a `WARNING` line. `model_key` is
 never invented from `doc_title`.
 
-**Discovery.** A run folder is any folder that directly holds `run_meta.json`.
+**Discovery.** A run folder is any folder that directly holds a run record
+(`run_meta.json`, or `run_meta_<d>.json` in a v2 run; two is a skip, never a
+guess).
 The walk lists one directory at a time (never a recursive glob), stops at a
-run folder, never enters `color_id_buffer/` or `analysis_grid/`, does not
+run folder, never enters `color_id/`, `color_id_buffer/`, `grid/` or
+`analysis_grid/`, does not
 follow symlinks, and stops at `--max-depth` (root = 0). Every folder it skips
 is listed under `scan.skipped` with its reason: an unparsable `run_meta.json`,
 a run folder not named `<YYYY-MM-DD>__<run_id>`, a reserved name, a symlink,
@@ -399,8 +430,8 @@ reported in `*_reason`. `n_runs_same_model_as_of` is empty for a run with no
 |---|---|---|
 | identity | `model_key` (root to the run's parent; never `doc_title`), `run_dir_rel`, `run_dir_name`, `run_id` (opaque, never parsed), `run_tag`, `as_of_date` (run_meta `date`), `doc_title`, `doc_path`, `config_hash`, `git_commit`, `exporter_version`, `revit_version_number`, `run_meta_schema`, `finalized` | `run_meta.json`, keys below |
 | views | `views_requested_count`, `views_count`, `capture_status_counts` (JSON) | `run_meta.json` |
-| roll-up | `rollup_state`, `rollup_reason`, `rollup_location` (`top` \| `analysis_grid`), `rollup_csv_path_rel`, `rollup_summary_path_rel`, `rollup_schema`, `rollup_tool_version`, `rollup_csv_sha256` (re-hashed), `rollup_csv_sha256_match`, `rollup_class_map_sha256`, `rollup_class_map_version`, `rollup_refused_runs_count`, `rollup_count_invariant_difference`, `rollup_row_status_counts`, `rollup_registration_state_counts`, `rollup_flag_counts`, `rollup_run_ids` (JSON) | `grid_rollup.summary.json`, at the run's top level first, then `analysis_grid/` |
-| kinds | `kinds_state`, `kinds_reason`, `kinds_location`, `kinds_csv_path_rel`, `kinds_schema`, `kinds_tool_version`, `kinds_class_map_sha256`, `kinds_csv_sha256`, `kinds_csv_sha256_match`, `kinds_grid_used`, `kinds_grid_denominator` | `kinds_inventory.json`, same search order |
+| roll-up | `rollup_state`, `rollup_reason`, `rollup_location` (`top` \| `grid` \| `analysis_grid`), `rollup_csv_path_rel`, `rollup_summary_path_rel`, `rollup_schema`, `rollup_tool_version`, `rollup_csv_sha256` (re-hashed), `rollup_csv_sha256_match`, `rollup_class_map_sha256`, `rollup_class_map_version`, `rollup_refused_runs_count`, `rollup_count_invariant_difference`, `rollup_row_status_counts`, `rollup_registration_state_counts`, `rollup_flag_counts`, `rollup_run_ids` (JSON) | `grid_rollup.summary.json` (`grid_rollup_<d>.summary.json` in a v2 run), at the run's top level first, then its grid folder |
+| kinds | `kinds_state`, `kinds_reason`, `kinds_location`, `kinds_csv_path_rel`, `kinds_schema`, `kinds_tool_version`, `kinds_class_map_sha256`, `kinds_csv_sha256`, `kinds_csv_sha256_match`, `kinds_grid_used`, `kinds_grid_denominator` | `kinds_inventory.json` (`kinds_inventory_<d>.json` in a v2 run), same search order |
 | per-run files | `views_core_state` / `_reason` / `_path_rel` / `_rows` (data rows), `element_map_*`, `diagnostics_*` | `views_core_<d>.csv`, `vop_view_element_map_<d>.json`, `views_diagnostics_<d>.json` at the run's top level; presence only |
 | consistency | `chk_folder_date_eq_as_of`, `chk_folder_run_id_eq_run_meta`, `chk_rollup_run_id_eq_run_meta` (the summary's run ids are exactly this run's), `chk_kinds_class_map_eq_rollup` | `true` / `false`, empty when not computable |
 | group | `n_runs_same_model_as_of`, `n_config_hash_in_model` (distinct non-empty hashes) | across rows |

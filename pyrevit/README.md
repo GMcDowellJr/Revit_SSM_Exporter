@@ -27,7 +27,8 @@ The loop is the Fingerprint extension's; what it runs is the exporter's
 
    Every file gets a RECAPTURE job for each run of the lists whose recorded
    `doc_title` is the file's stem, else a CAPTURE job (a new run under
-   `<Exports>/<project_folder>/<stem without date>/`, as-of the date the
+   `<Exports>/` itself -- the folder given as `--output-root`, not a derived
+   subfolder (2026-10-19) -- as-of the date the
    file name ends with), unless a finalized run was captured from it
    already. `unmatched_runs` lists runs the manifest holds no archive for.
    Edit the plan if needed (drop jobs, change `output_dir`, `view_types`).
