@@ -1,4 +1,4 @@
-"""tools/stage_a_analyze.py: the five analysis tools, in order, in one call.
+"""tools/stage_a_analyze.py: the analysis tools, in order, in one call.
 
 Views are captured by the roll-up harness but NOT registered or gridded, so
 every product below was made by the one call. Assertions read the files the
@@ -14,8 +14,9 @@ from tools import stage_a_kinds as kinds
 
 def _run(tmp_path, name="run_a", run_id="RUN_A"):
     """The roll-up's run, plus the views_core_<date>.csv a Stage A run
-    writes, so the timing stage has this run's rows to report."""
-    run = _rollup_run(tmp_path, name, run_id)
+    writes, so the timing stage has this run's rows to report, and the as-of
+    date the census needs."""
+    run = _rollup_run(tmp_path, name, run_id, date="2026-10-07")
     (run / "views_core_2026-10-07.csv").write_text(
         "RunId,ViewId,ViewName,ElapsedSec\n"
         "{0},1,V 1,3.0\n{0},2,V 2,4.0\n".format(run_id))
@@ -42,6 +43,9 @@ def test_one_call_registers_grids_derives_inventories_and_rolls_up(tmp_path):
     assert timing["run_id"] == "RUN_A"
     assert sorted(v["view_name"] for v in timing["views"]) == ["V 1", "V 2"]
     assert (run / "views_timing_2026-10-07.csv").is_file()
+    census_rec = json.loads((out / "element_census.summary.json").read_text())
+    assert (census_rec["state"], census_rec["figures"]["views_measured"]) == ("value", 2)
+    assert census_rec["csv_sha256"] == kinds.sha256_file(out / "element_census.csv")
 
 
 def test_a_refused_view_does_not_stop_the_others(tmp_path):
@@ -95,7 +99,7 @@ def test_a_run_the_timing_report_cannot_read_costs_nothing_else(tmp_path):
     code, results = analyze.analyze([run])
     assert code == 2
     assert [r["stage"] for r in results] == list(analyze.STAGES)
-    assert [r["exit"] for r in results if r["stage"] != "timing"] == [0] * 5
+    assert [r["exit"] for r in results if r["stage"] != "timing"] == [0] * 6
     assert not list(run.glob("views_timing*"))
     by_stem, _rows, _s = _read(run / "analysis_grid")
     assert by_stem["V_1"]["row_status"] == "gridded"

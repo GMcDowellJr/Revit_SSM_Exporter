@@ -4,9 +4,11 @@ Two layouts exist on disk and both are read:
 
 * ``v1`` -- every run before this module: ``run_meta.json``,
   ``color_id_buffer/``, ``analysis_grid/``, ``<stem>_anno.registered.*``,
-  ``grid_rollup.csv``, ``kinds_inventory.csv``.
+  ``grid_rollup.csv``, ``kinds_inventory.csv``, ``element_census.csv``,
+  ``element_transitions.csv``.
 * ``v2`` -- new runs: ``run_meta_<d>.json``, ``color_id/``, ``grid/``,
-  ``<stem>_anno.reg.*``, ``grid_rollup_<d>.csv``, ``kinds_inventory_<d>.csv``.
+  ``<stem>_anno.reg.*``, ``grid_rollup_<d>.csv``, ``kinds_inventory_<d>.csv``,
+  ``element_census_<d>.csv``, ``element_transitions_<d>.csv``.
   ``<d>`` is the run's file date (``file_date``): the value every other dated
   file of the run is named by (``views_core_<d>.csv``), so a run's files
   pulled together from several runs do not collide.
@@ -144,6 +146,21 @@ def inventory_names(layout, d):
     if layout == V1:
         return "kinds_inventory.csv", "kinds_inventory.json"
     return "kinds_inventory_{0}.csv".format(d), "kinds_inventory_{0}.json".format(d)
+
+
+def census_names(layout, d):
+    """(csv, summary) of the per-run element census (tools/stage_a_element_census)."""
+    if layout == V1:
+        return "element_census.csv", "element_census.summary.json"
+    return "element_census_{0}.csv".format(d), "element_census_{0}.summary.json".format(d)
+
+
+def transitions_names(layout, d):
+    """(csv, summary) of a run's element transitions against its predecessor."""
+    if layout == V1:
+        return "element_transitions.csv", "element_transitions.summary.json"
+    return ("element_transitions_{0}.csv".format(d),
+            "element_transitions_{0}.summary.json".format(d))
 
 
 def grid_dir_for_capture(capture_dir):

@@ -11,7 +11,11 @@ Then, across all runs:
   4. inventory  -- stage_a_kinds inventory
   5. rollup     -- stage_a_grid_rollup
 Then, per run again:
-  6. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
+  6. census     -- stage_a_element_census on the run alone: element_census[_<d>].csv
+                   and .summary.json in the run's grid folder. The transitions
+                   against the run's predecessor are not made here (they need
+                   the model folder): run ``stage_a_element_census.py --root``.
+  7. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
                    named as views_core is and written beside it
 
 Each stage is the tool's own ``main()``, called as it would be from the
@@ -41,13 +45,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import register_stage_a_annotation as reg  # noqa: E402
+from tools import stage_a_element_census as census  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 from tools import stage_a_timing_report as timing  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 
-STAGES = ("register", "grid", "derive", "inventory", "rollup", "timing")
+STAGES = ("register", "grid", "derive", "inventory", "rollup", "census", "timing")
 
 
 def _stage(name, label, fn, argv, results):
@@ -81,6 +86,10 @@ def analyze(runs, out=None):
                            ("rollup", rollup.main, runs + out_args)):
         if _stage(name, "all runs", fn, argv, results) >= 2:
             return 2, results
+    # The census reads the grids and the roll-up's own rows, never what the
+    # inventory or roll-up wrote, so a run it refuses (exit 2) stops nothing.
+    for run, run_dir in zip(runs, run_dirs):
+        _stage("census", str(run), census.main, [run_dir], results)
     for run, run_dir in zip(runs, run_dirs):
         _stage("timing", str(run), timing.main, [run_dir], results)
     return max(r["exit"] for r in results), results
