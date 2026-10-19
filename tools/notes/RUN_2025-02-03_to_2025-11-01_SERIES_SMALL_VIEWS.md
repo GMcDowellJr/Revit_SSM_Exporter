@@ -268,6 +268,27 @@ change_passing_views_and_is_not_the_fix`).
   10-25 with the overrun and the halving pinned, six passing on 11-01 two
   of them with the annotation off the model's lattice under the cap).
 
+### 1.6 The probe and the fix (2026-10-19, branch `claude/quirky-meitner-d004g1`)
+
+- **Probe** (`f147884`, Analysis-Impact none): `tests/dynamo/
+  probe_stage_a_lattice_overrun.py` runs the six plans through the production
+  registered capture under `as_is`, `section_markers_hidden` and
+  `annotation_crop_on` (a probe-only switch applied after the model pass,
+  inside the group) and, on a build with the fix, `co_sized`. UNVERIFIED in
+  Revit; to be run on the 10-25 archive (tests/dynamo/PROBE_LATTICE_OVERRUN.md).
+- **Fix** (`43c23a3`, `fix(capture)!`): §1.4's co-sizing, made before the
+  probe has run, on these grounds (INFERENCE): hiding the markers removes
+  annotation the capture keeps on purpose, and an annotation crop hides
+  every annotation touching it, inside crop A too; co-sizing hides nothing
+  and changes no view that fits. The probe's `annotation_crop_on` row is
+  what would overturn the choice (RECAPTURE_WALL_TYPES_BP_LATTICE.md §1).
+  The registered capture runs marks..annotation pass as an attempt in a
+  nested group; after an overrun on the derived axis it re-runs it with both
+  passes and the ticks at `co_sized_request` -- `cap_axes(R, D + 1)`, one
+  pixel under §1.4's table on four plans: 7111, 9235, 9227, 7365, 8781,
+  5545. One retry; any other failure is not re-sized.
+- **Recapture** of the 40 view-runs: tools/notes/RECAPTURE_WALL_TYPES_BP_LATTICE.md.
+
 ## 2. Group B — views below the capture floor
 
 ### 2.1 The rules, and which each view trips

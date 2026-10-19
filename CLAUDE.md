@@ -220,6 +220,24 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   (the one place the old capture persisted it). The policy and the per-view
   evidence are in `tools/notes/RUN_2025-02-03_to_2025-11-01_SERIES_SMALL_VIEWS.md`.
 
+- **An annotation export that overruns the ceiling is co-sized**
+  (2026-10-19, `fix(capture)!`). Marks..annotation pass run as an ATTEMPT
+  in a nested TransactionGroup, rolled back when it ends. When the first
+  attempt's annotation export came back over 10000 px on its derived axis
+  alone (section lines past the crop: the six Wall Types BP plans,
+  09-13..10-25), a second attempt sizes both passes and the ticks at
+  `resolution_contract.co_sized_request` (`cap_axes(R, D + 1)`; the private
+  `_stage_a_co_sized_fit_px` feeds `frame_export_geometry(fit_px_limit=)`
+  in the model pass and `mark_fpp_ft()` alike). One retry only; recorded as
+  `registration_marks.co_sizing` and the model frame's `co_sized_fit_px`. A
+  view that fits runs once at its own size. The probe-only switches
+  `color_id_buffer_anno_extent_variant` and `color_id_buffer_co_size`
+  (getattr, absent from Config) serve
+  `tests/dynamo/probe_stage_a_lattice_overrun.py`.
+- **A recapture list's `run_dir` that does not exist is refused**, naming it
+  and the finder's `scanned_dir` (a renamed export folder leaves every
+  run_meta's recorded path stale); a list entry may carry its own `reason`.
+
 **Sidecar shape (PR #221).** Readers must accept the old and new shapes
 alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field
 that exists in more than one shape, and `tools/reencode_stage_a_sidecar.py`
