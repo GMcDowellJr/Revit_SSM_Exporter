@@ -32,6 +32,14 @@ IN[2]  all
 IN[3]  {"repo_root": "<checkout>", "expected_config_hash": "9400eaef"}
 ```
 
+**Ran 2026-10-19** (probe `2026-10-19.1`, record in
+`tools/notes/data/probe_lattice_overrun_20261019T132321/`): `as_is`,
+`section_markers_hidden` and `co_sized` as expected below, to the pixel;
+`annotation_crop_on` did not apply (no `AnnotationCropActive` on Revit 2025's
+ViewPlan) and is unmeasured. To measure it, rerun that variant alone with
+probe `2026-10-19.2` (IN[2] `annotation_crop_on`); co-sizing does not wait on
+it.
+
 Read `verdict` in `probe_lattice_overrun_<clock>.json`
 (tests/dynamo/PROBE_LATTICE_OVERRUN.md). The fix shipped assumes:
 
@@ -115,6 +123,12 @@ Per view, the model sidecar's `registration_marks.co_sizing`:
 `attempts 2`, `fit_px` as the probe gave it (for 10-25: the table in §1), and
 `second_attempt.annotation_failure_reason` null; `capture_integrity.
 capture_faults` empty in both sidecars.
+
+**ConfigHash.** The recapture's `views_core` rows carry this build's hash
+(the probe's: `be3a80a1`), not the series' `9400eaef`: Config has gained
+fields since 1.2.0. An analysis that joins views_core on ConfigHash will see
+the 40 rows as another configuration; join on `(RunId, ViewId)` and the
+`recapture` stamp instead.
 
 ## 5. Analysis, then the index
 

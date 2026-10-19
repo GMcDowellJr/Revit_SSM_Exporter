@@ -1,0 +1,2438 @@
+{
+  "completed_at": "2026-10-19T14:02:20",
+  "config_hash": "be3a80a1",
+  "config_hash_matches": null,
+  "doc_title": "KSRF_Hosp_Interior_AR_V48_3.7 GB_2025-10-25",
+  "probe": "stage_a_lattice_overrun",
+  "probe_version": "2026-10-19.1",
+  "repo_root": "C:\\Users\\gmcdowell\\Documents\\Revit_SSM_Exporter",
+  "runs": {
+    "annotation_crop_on": {
+      "elapsed_s": 521.8,
+      "run_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Probes\\lattice_overrun\\annotation_crop_on\\2026-10-19__20261019T1340_probe_annotation_crop_on",
+      "run_id": "20261019T1340_probe_annotation_crop_on",
+      "views": [
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 10512,
+              "actual_w": 7476,
+              "dim_check": "mismatch",
+              "requested_px": 7476
+            },
+            {
+              "accepted_px": 3738,
+              "actual_h": 5256,
+              "actual_w": 3738,
+              "dim_check": "pass",
+              "requested_px": 3738
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10512,
+          "anno_over_model_derived_px": 513,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029773811023791945,
+          "model_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 9999,
+              "actual_w": 7476,
+              "dim_check": "pass",
+              "requested_px": 7476
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 213,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.010416666666666666
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.05925382170935963
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.8196041427388141
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.028484911517723154
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 4148625
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 10345,
+              "actual_w": 9555,
+              "dim_check": "mismatch",
+              "requested_px": 9555
+            },
+            {
+              "accepted_px": 4777,
+              "actual_h": 5172,
+              "actual_w": 4777,
+              "dim_check": "pass",
+              "requested_px": 4777
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10345,
+          "anno_over_model_derived_px": 347,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029290527693540402,
+          "model_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 9998,
+              "actual_w": 9555,
+              "dim_check": "pass",
+              "requested_px": 9555
+            }
+          ],
+          "model_derived_px": 9998,
+          "painted_elements": 647,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9468987
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 10121,
+              "actual_w": 9340,
+              "dim_check": "mismatch",
+              "requested_px": 9340
+            },
+            {
+              "accepted_px": 4670,
+              "actual_h": 5060,
+              "actual_w": 4670,
+              "dim_check": "pass",
+              "requested_px": 4670
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10121,
+          "anno_over_model_derived_px": 122,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.030022981402693646,
+          "model_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 9999,
+              "actual_w": 9340,
+              "dim_check": "pass",
+              "requested_px": 9340
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 373,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.02482835006334918
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.03945459588084508
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9560929
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 13575,
+              "actual_w": 10000,
+              "dim_check": "mismatch",
+              "requested_px": 10000
+            },
+            {
+              "accepted_px": 5000,
+              "actual_h": 6787,
+              "actual_w": 5000,
+              "dim_check": "pass",
+              "requested_px": 5000
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 13575,
+          "anno_over_model_derived_px": 5150,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.034168829226574104,
+          "model_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 8425,
+              "actual_w": 10000,
+              "dim_check": "pass",
+              "requested_px": 10000
+            }
+          ],
+          "model_derived_px": 8425,
+          "painted_elements": 851,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.025775193798449877
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9594635
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 10305,
+              "actual_w": 9050,
+              "dim_check": "mismatch",
+              "requested_px": 9050
+            },
+            {
+              "accepted_px": 4525,
+              "actual_h": 5152,
+              "actual_w": 4525,
+              "dim_check": "pass",
+              "requested_px": 4525
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10305,
+          "anno_over_model_derived_px": 306,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.031119643887730124,
+          "model_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 9999,
+              "actual_w": 9050,
+              "dim_check": "pass",
+              "requested_px": 9050
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 517,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9595813
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 10273,
+              "actual_w": 5697,
+              "dim_check": "mismatch",
+              "requested_px": 5697
+            },
+            {
+              "accepted_px": 2848,
+              "actual_h": 5135,
+              "actual_w": 2848,
+              "dim_check": "pass",
+              "requested_px": 2848
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10273,
+          "anno_over_model_derived_px": 274,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.03547034573674158,
+          "model_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 9999,
+              "actual_w": 5697,
+              "dim_check": "pass",
+              "requested_px": 5697
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 418,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9596211
+        }
+      ]
+    },
+    "as_is": {
+      "elapsed_s": 532.3,
+      "run_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Probes\\lattice_overrun\\as_is\\2026-10-19__20261019T1323_probe_as_is",
+      "run_id": "20261019T1323_probe_as_is",
+      "views": [
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 10512,
+              "actual_w": 7476,
+              "dim_check": "mismatch",
+              "requested_px": 7476
+            },
+            {
+              "accepted_px": 3738,
+              "actual_h": 5256,
+              "actual_w": 3738,
+              "dim_check": "pass",
+              "requested_px": 3738
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch"
+          ],
+          "anno_first_derived_px": 10512,
+          "anno_over_model_derived_px": 513,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029773811023791945,
+          "model_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 9999,
+              "actual_w": 7476,
+              "dim_check": "pass",
+              "requested_px": 7476
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 213,
+          "restore_faults": [],
+          "state": "overrun",
+          "variant_record": {
+            "applied": "nothing",
+            "variant": "as_is"
+          },
+          "view_id": 4148625
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 10345,
+              "actual_w": 9555,
+              "dim_check": "mismatch",
+              "requested_px": 9555
+            },
+            {
+              "accepted_px": 4777,
+              "actual_h": 5172,
+              "actual_w": 4777,
+              "dim_check": "pass",
+              "requested_px": 4777
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch"
+          ],
+          "anno_first_derived_px": 10345,
+          "anno_over_model_derived_px": 347,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029290527693540402,
+          "model_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 9998,
+              "actual_w": 9555,
+              "dim_check": "pass",
+              "requested_px": 9555
+            }
+          ],
+          "model_derived_px": 9998,
+          "painted_elements": 647,
+          "restore_faults": [],
+          "state": "overrun",
+          "variant_record": {
+            "applied": "nothing",
+            "variant": "as_is"
+          },
+          "view_id": 9468987
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 10121,
+              "actual_w": 9340,
+              "dim_check": "mismatch",
+              "requested_px": 9340
+            },
+            {
+              "accepted_px": 4670,
+              "actual_h": 5060,
+              "actual_w": 4670,
+              "dim_check": "pass",
+              "requested_px": 4670
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch"
+          ],
+          "anno_first_derived_px": 10121,
+          "anno_over_model_derived_px": 122,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.030022981402693646,
+          "model_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 9999,
+              "actual_w": 9340,
+              "dim_check": "pass",
+              "requested_px": 9340
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 373,
+          "restore_faults": [],
+          "state": "overrun",
+          "variant_record": {
+            "applied": "nothing",
+            "variant": "as_is"
+          },
+          "view_id": 9560929
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 13575,
+              "actual_w": 10000,
+              "dim_check": "mismatch",
+              "requested_px": 10000
+            },
+            {
+              "accepted_px": 5000,
+              "actual_h": 6787,
+              "actual_w": 5000,
+              "dim_check": "pass",
+              "requested_px": 5000
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch"
+          ],
+          "anno_first_derived_px": 13575,
+          "anno_over_model_derived_px": 5150,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.034168829226574104,
+          "model_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 8425,
+              "actual_w": 10000,
+              "dim_check": "pass",
+              "requested_px": 10000
+            }
+          ],
+          "model_derived_px": 8425,
+          "painted_elements": 851,
+          "restore_faults": [],
+          "state": "overrun",
+          "variant_record": {
+            "applied": "nothing",
+            "variant": "as_is"
+          },
+          "view_id": 9594635
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 10305,
+              "actual_w": 9050,
+              "dim_check": "mismatch",
+              "requested_px": 9050
+            },
+            {
+              "accepted_px": 4525,
+              "actual_h": 5152,
+              "actual_w": 4525,
+              "dim_check": "pass",
+              "requested_px": 4525
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch"
+          ],
+          "anno_first_derived_px": 10305,
+          "anno_over_model_derived_px": 306,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.031119643887730124,
+          "model_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 9999,
+              "actual_w": 9050,
+              "dim_check": "pass",
+              "requested_px": 9050
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 517,
+          "restore_faults": [],
+          "state": "overrun",
+          "variant_record": {
+            "applied": "nothing",
+            "variant": "as_is"
+          },
+          "view_id": 9595813
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 10273,
+              "actual_w": 5697,
+              "dim_check": "mismatch",
+              "requested_px": 5697
+            },
+            {
+              "accepted_px": 2848,
+              "actual_h": 5135,
+              "actual_w": 2848,
+              "dim_check": "pass",
+              "requested_px": 2848
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch"
+          ],
+          "anno_first_derived_px": 10273,
+          "anno_over_model_derived_px": 274,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.03547034573674158,
+          "model_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 9999,
+              "actual_w": 5697,
+              "dim_check": "pass",
+              "requested_px": 5697
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 418,
+          "restore_faults": [],
+          "state": "overrun",
+          "variant_record": {
+            "applied": "nothing",
+            "variant": "as_is"
+          },
+          "view_id": 9596211
+        }
+      ]
+    },
+    "co_sized": {
+      "elapsed_s": 787.4,
+      "run_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Probes\\lattice_overrun\\co_sized\\2026-10-19__20261019T1349_probe_co_sized",
+      "run_id": "20261019T1349_probe_co_sized",
+      "views": [
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 7111,
+              "actual_h": 9999,
+              "actual_w": 7111,
+              "dim_check": "pass",
+              "requested_px": 7111
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9999,
+          "anno_over_model_derived_px": 489,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": {
+            "anno_derived_bound_px": 10513,
+            "anno_measured_px": [
+              7476,
+              10512
+            ],
+            "attempts": 2,
+            "coarsening": 1.051329,
+            "first_attempt": {
+              "annotation_failure_reason": "annotation_lattice_mismatch",
+              "annotation_frame": {
+                "actual_h": 5256,
+                "actual_w": 3738,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 7476,
+                    "actual_h": 10512,
+                    "actual_w": 7476,
+                    "dim_check": "mismatch",
+                    "dim_read_error": null,
+                    "requested_px": 7476
+                  },
+                  {
+                    "accepted_px": 3738,
+                    "actual_h": 5256,
+                    "actual_w": 3738,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 3738
+                  }
+                ],
+                "pixel_size": 3738
+              },
+              "capture_faults": [],
+              "mark_ids": [
+                11865847,
+                11865848,
+                11865849,
+                11865850,
+                11865851,
+                11865852,
+                11865853,
+                11865854,
+                11865855,
+                11865856,
+                11865857,
+                11865858
+              ],
+              "model_frame": {
+                "actual_h": 9999,
+                "actual_w": 7476,
+                "cap_applied": true,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 7476,
+                    "actual_h": 9999,
+                    "actual_w": 7476,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 7476
+                  }
+                ],
+                "pixel_size": 7476
+              }
+            },
+            "fit_px": 7111,
+            "max_axis_px": 10000,
+            "model_requested_px": 7476,
+            "predicted_anno_derived_px": 9999,
+            "second_attempt": {
+              "annotation_failure_reason": null,
+              "annotation_frame": {
+                "actual_h": 9999,
+                "actual_w": 7111,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 7111,
+                    "actual_h": 9999,
+                    "actual_w": 7111,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 7111
+                  }
+                ],
+                "pixel_size": 7111
+              },
+              "model_frame": {
+                "actual_h": 9510,
+                "actual_w": 7111,
+                "cap_applied": true,
+                "co_sized_fit_px": 7111,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 7111,
+                    "actual_h": 9510,
+                    "actual_w": 7111,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 7111
+                  }
+                ],
+                "pixel_size": 7111
+              }
+            },
+            "state": "applies"
+          },
+          "model_achieved_fpp_ft": 0.03130206879677522,
+          "model_attempts": [
+            {
+              "accepted_px": 7111,
+              "actual_h": 9510,
+              "actual_w": 7111,
+              "dim_check": "pass",
+              "requested_px": 7111
+            }
+          ],
+          "model_derived_px": 9510,
+          "painted_elements": 213,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": null,
+          "view_id": 4148625
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9235,
+              "actual_h": 9998,
+              "actual_w": 9235,
+              "dim_check": "pass",
+              "requested_px": 9235
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9998,
+          "anno_over_model_derived_px": 335,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": {
+            "anno_derived_bound_px": 10346,
+            "anno_measured_px": [
+              9555,
+              10345
+            ],
+            "attempts": 2,
+            "coarsening": 1.034651,
+            "first_attempt": {
+              "annotation_failure_reason": "annotation_lattice_mismatch",
+              "annotation_frame": {
+                "actual_h": 5172,
+                "actual_w": 4777,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9555,
+                    "actual_h": 10345,
+                    "actual_w": 9555,
+                    "dim_check": "mismatch",
+                    "dim_read_error": null,
+                    "requested_px": 9555
+                  },
+                  {
+                    "accepted_px": 4777,
+                    "actual_h": 5172,
+                    "actual_w": 4777,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 4777
+                  }
+                ],
+                "pixel_size": 4777
+              },
+              "capture_faults": [],
+              "mark_ids": [
+                11865871,
+                11865872,
+                11865873,
+                11865874,
+                11865875,
+                11865876,
+                11865877,
+                11865878,
+                11865879,
+                11865880,
+                11865881,
+                11865882
+              ],
+              "model_frame": {
+                "actual_h": 9998,
+                "actual_w": 9555,
+                "cap_applied": true,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9555,
+                    "actual_h": 9998,
+                    "actual_w": 9555,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9555
+                  }
+                ],
+                "pixel_size": 9555
+              }
+            },
+            "fit_px": 9235,
+            "max_axis_px": 10000,
+            "model_requested_px": 9555,
+            "predicted_anno_derived_px": 9999,
+            "second_attempt": {
+              "annotation_failure_reason": null,
+              "annotation_frame": {
+                "actual_h": 9998,
+                "actual_w": 9235,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9235,
+                    "actual_h": 9998,
+                    "actual_w": 9235,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9235
+                  }
+                ],
+                "pixel_size": 9235
+              },
+              "model_frame": {
+                "actual_h": 9663,
+                "actual_w": 9235,
+                "cap_applied": true,
+                "co_sized_fit_px": 9235,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9235,
+                    "actual_h": 9663,
+                    "actual_w": 9235,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9235
+                  }
+                ],
+                "pixel_size": 9235
+              }
+            },
+            "state": "applies"
+          },
+          "model_achieved_fpp_ft": 0.030305467472850952,
+          "model_attempts": [
+            {
+              "accepted_px": 9235,
+              "actual_h": 9663,
+              "actual_w": 9235,
+              "dim_check": "pass",
+              "requested_px": 9235
+            }
+          ],
+          "model_derived_px": 9663,
+          "painted_elements": 647,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": null,
+          "view_id": 9468987
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9227,
+              "actual_h": 9998,
+              "actual_w": 9227,
+              "dim_check": "pass",
+              "requested_px": 9227
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9998,
+          "anno_over_model_derived_px": 119,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": {
+            "anno_derived_bound_px": 10122,
+            "anno_measured_px": [
+              9340,
+              10121
+            ],
+            "attempts": 2,
+            "coarsening": 1.012247,
+            "first_attempt": {
+              "annotation_failure_reason": "annotation_lattice_mismatch",
+              "annotation_frame": {
+                "actual_h": 5060,
+                "actual_w": 4670,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9340,
+                    "actual_h": 10121,
+                    "actual_w": 9340,
+                    "dim_check": "mismatch",
+                    "dim_read_error": null,
+                    "requested_px": 9340
+                  },
+                  {
+                    "accepted_px": 4670,
+                    "actual_h": 5060,
+                    "actual_w": 4670,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 4670
+                  }
+                ],
+                "pixel_size": 4670
+              },
+              "capture_faults": [],
+              "mark_ids": [
+                11865895,
+                11865896,
+                11865897,
+                11865898,
+                11865899,
+                11865900,
+                11865901,
+                11865902,
+                11865903,
+                11865904,
+                11865905,
+                11865906
+              ],
+              "model_frame": {
+                "actual_h": 9999,
+                "actual_w": 9340,
+                "cap_applied": true,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9340,
+                    "actual_h": 9999,
+                    "actual_w": 9340,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9340
+                  }
+                ],
+                "pixel_size": 9340
+              }
+            },
+            "fit_px": 9227,
+            "max_axis_px": 10000,
+            "model_requested_px": 9340,
+            "predicted_anno_derived_px": 9999,
+            "second_attempt": {
+              "annotation_failure_reason": null,
+              "annotation_frame": {
+                "actual_h": 9998,
+                "actual_w": 9227,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9227,
+                    "actual_h": 9998,
+                    "actual_w": 9227,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9227
+                  }
+                ],
+                "pixel_size": 9227
+              },
+              "model_frame": {
+                "actual_h": 9879,
+                "actual_w": 9227,
+                "cap_applied": true,
+                "co_sized_fit_px": 9227,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9227,
+                    "actual_h": 9879,
+                    "actual_w": 9227,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9227
+                  }
+                ],
+                "pixel_size": 9227
+              }
+            },
+            "state": "applies"
+          },
+          "model_achieved_fpp_ft": 0.03039066286996409,
+          "model_attempts": [
+            {
+              "accepted_px": 9227,
+              "actual_h": 9879,
+              "actual_w": 9227,
+              "dim_check": "pass",
+              "requested_px": 9227
+            }
+          ],
+          "model_derived_px": 9879,
+          "painted_elements": 373,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": null,
+          "view_id": 9560929
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 7365,
+              "actual_h": 9998,
+              "actual_w": 7365,
+              "dim_check": "pass",
+              "requested_px": 7365
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9998,
+          "anno_over_model_derived_px": 3793,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": {
+            "anno_derived_bound_px": 13576,
+            "anno_measured_px": [
+              10000,
+              13575
+            ],
+            "attempts": 2,
+            "coarsening": 1.357773,
+            "first_attempt": {
+              "annotation_failure_reason": "annotation_lattice_mismatch",
+              "annotation_frame": {
+                "actual_h": 6787,
+                "actual_w": 5000,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 10000,
+                    "actual_h": 13575,
+                    "actual_w": 10000,
+                    "dim_check": "mismatch",
+                    "dim_read_error": null,
+                    "requested_px": 10000
+                  },
+                  {
+                    "accepted_px": 5000,
+                    "actual_h": 6787,
+                    "actual_w": 5000,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 5000
+                  }
+                ],
+                "pixel_size": 5000
+              },
+              "capture_faults": [],
+              "mark_ids": [
+                11865919,
+                11865920,
+                11865921,
+                11865922,
+                11865923,
+                11865924,
+                11865925,
+                11865926,
+                11865927,
+                11865928,
+                11865929,
+                11865930
+              ],
+              "model_frame": {
+                "actual_h": 8425,
+                "actual_w": 10000,
+                "cap_applied": true,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 10000,
+                    "actual_h": 8425,
+                    "actual_w": 10000,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 10000
+                  }
+                ],
+                "pixel_size": 10000
+              }
+            },
+            "fit_px": 7365,
+            "max_axis_px": 10000,
+            "model_requested_px": 10000,
+            "predicted_anno_derived_px": 9998,
+            "second_attempt": {
+              "annotation_failure_reason": null,
+              "annotation_frame": {
+                "actual_h": 9998,
+                "actual_w": 7365,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 7365,
+                    "actual_h": 9998,
+                    "actual_w": 7365,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 7365
+                  }
+                ],
+                "pixel_size": 7365
+              },
+              "model_frame": {
+                "actual_h": 6205,
+                "actual_w": 7365,
+                "cap_applied": true,
+                "co_sized_fit_px": 7365,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 7365,
+                    "actual_h": 6205,
+                    "actual_w": 7365,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 7365
+                  }
+                ],
+                "pixel_size": 7365
+              }
+            },
+            "state": "applies"
+          },
+          "model_achieved_fpp_ft": 0.0463935223714516,
+          "model_attempts": [
+            {
+              "accepted_px": 7365,
+              "actual_h": 6205,
+              "actual_w": 7365,
+              "dim_check": "pass",
+              "requested_px": 7365
+            }
+          ],
+          "model_derived_px": 6205,
+          "painted_elements": 851,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": null,
+          "view_id": 9594635
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 8781,
+              "actual_h": 9999,
+              "actual_w": 8781,
+              "dim_check": "pass",
+              "requested_px": 8781
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9999,
+          "anno_over_model_derived_px": 298,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": {
+            "anno_derived_bound_px": 10306,
+            "anno_measured_px": [
+              9050,
+              10305
+            ],
+            "attempts": 2,
+            "coarsening": 1.030634,
+            "first_attempt": {
+              "annotation_failure_reason": "annotation_lattice_mismatch",
+              "annotation_frame": {
+                "actual_h": 5152,
+                "actual_w": 4525,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9050,
+                    "actual_h": 10305,
+                    "actual_w": 9050,
+                    "dim_check": "mismatch",
+                    "dim_read_error": null,
+                    "requested_px": 9050
+                  },
+                  {
+                    "accepted_px": 4525,
+                    "actual_h": 5152,
+                    "actual_w": 4525,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 4525
+                  }
+                ],
+                "pixel_size": 4525
+              },
+              "capture_faults": [],
+              "mark_ids": [
+                11865943,
+                11865944,
+                11865945,
+                11865946,
+                11865947,
+                11865948,
+                11865949,
+                11865950,
+                11865951,
+                11865952,
+                11865953,
+                11865954
+              ],
+              "model_frame": {
+                "actual_h": 9999,
+                "actual_w": 9050,
+                "cap_applied": true,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 9050,
+                    "actual_h": 9999,
+                    "actual_w": 9050,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 9050
+                  }
+                ],
+                "pixel_size": 9050
+              }
+            },
+            "fit_px": 8781,
+            "max_axis_px": 10000,
+            "model_requested_px": 9050,
+            "predicted_anno_derived_px": 9999,
+            "second_attempt": {
+              "annotation_failure_reason": null,
+              "annotation_frame": {
+                "actual_h": 9999,
+                "actual_w": 8781,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 8781,
+                    "actual_h": 9999,
+                    "actual_w": 8781,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 8781
+                  }
+                ],
+                "pixel_size": 8781
+              },
+              "model_frame": {
+                "actual_h": 9701,
+                "actual_w": 8781,
+                "cap_applied": true,
+                "co_sized_fit_px": 8781,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 8781,
+                    "actual_h": 9701,
+                    "actual_w": 8781,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 8781
+                  }
+                ],
+                "pixel_size": 8781
+              }
+            },
+            "state": "applies"
+          },
+          "model_achieved_fpp_ft": 0.03207297314473951,
+          "model_attempts": [
+            {
+              "accepted_px": 8781,
+              "actual_h": 9701,
+              "actual_w": 8781,
+              "dim_check": "pass",
+              "requested_px": 8781
+            }
+          ],
+          "model_derived_px": 9701,
+          "painted_elements": 517,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": null,
+          "view_id": 9595813
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 5545,
+              "actual_h": 9999,
+              "actual_w": 5545,
+              "dim_check": "pass",
+              "requested_px": 5545
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9999,
+          "anno_over_model_derived_px": 266,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": {
+            "anno_derived_bound_px": 10274,
+            "anno_measured_px": [
+              5697,
+              10273
+            ],
+            "attempts": 2,
+            "coarsening": 1.027412,
+            "first_attempt": {
+              "annotation_failure_reason": "annotation_lattice_mismatch",
+              "annotation_frame": {
+                "actual_h": 5135,
+                "actual_w": 2848,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 5697,
+                    "actual_h": 10273,
+                    "actual_w": 5697,
+                    "dim_check": "mismatch",
+                    "dim_read_error": null,
+                    "requested_px": 5697
+                  },
+                  {
+                    "accepted_px": 2848,
+                    "actual_h": 5135,
+                    "actual_w": 2848,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 2848
+                  }
+                ],
+                "pixel_size": 2848
+              },
+              "capture_faults": [],
+              "mark_ids": [
+                11865967,
+                11865968,
+                11865969,
+                11865970,
+                11865971,
+                11865972,
+                11865973,
+                11865974,
+                11865975,
+                11865976,
+                11865977,
+                11865978
+              ],
+              "model_frame": {
+                "actual_h": 9999,
+                "actual_w": 5697,
+                "cap_applied": true,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 5697,
+                    "actual_h": 9999,
+                    "actual_w": 5697,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 5697
+                  }
+                ],
+                "pixel_size": 5697
+              }
+            },
+            "fit_px": 5545,
+            "max_axis_px": 10000,
+            "model_requested_px": 5697,
+            "predicted_anno_derived_px": 9999,
+            "second_attempt": {
+              "annotation_failure_reason": null,
+              "annotation_frame": {
+                "actual_h": 9999,
+                "actual_w": 5545,
+                "cap_applied": null,
+                "co_sized_fit_px": null,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 5545,
+                    "actual_h": 9999,
+                    "actual_w": 5545,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 5545
+                  }
+                ],
+                "pixel_size": 5545
+              },
+              "model_frame": {
+                "actual_h": 9733,
+                "actual_w": 5545,
+                "cap_applied": true,
+                "co_sized_fit_px": 5545,
+                "dim_check": "pass",
+                "dim_check_attempts": [
+                  {
+                    "accepted_px": 5545,
+                    "actual_h": 9733,
+                    "actual_w": 5545,
+                    "dim_check": "pass",
+                    "dim_read_error": null,
+                    "requested_px": 5545
+                  }
+                ],
+                "pixel_size": 5545
+              }
+            },
+            "state": "applies"
+          },
+          "model_achieved_fpp_ft": 0.03644266179661258,
+          "model_attempts": [
+            {
+              "accepted_px": 5545,
+              "actual_h": 9733,
+              "actual_w": 5545,
+              "dim_check": "pass",
+              "requested_px": 5545
+            }
+          ],
+          "model_derived_px": 9733,
+          "painted_elements": 418,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": null,
+          "view_id": 9596211
+        }
+      ]
+    },
+    "section_markers_hidden": {
+      "elapsed_s": 497.6,
+      "run_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Probes\\lattice_overrun\\section_markers_hidden\\2026-10-19__20261019T1332_probe_section_markers_hidden",
+      "run_id": "20261019T1332_probe_section_markers_hidden",
+      "views": [
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 9999,
+              "actual_w": 7476,
+              "dim_check": "pass",
+              "requested_px": 7476
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9999,
+          "anno_over_model_derived_px": 0,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029773811023791945,
+          "model_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 9999,
+              "actual_w": 7476,
+              "dim_check": "pass",
+              "requested_px": 7476
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 182,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": {
+            "already_hidden": 0,
+            "hidden": 31,
+            "hide_error": null,
+            "section_markers": {
+              "category": "OST_Viewers",
+              "category_ids": [
+                -2000278
+              ],
+              "count": 31,
+              "ids": [
+                986127,
+                994723,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4153586,
+                4291781,
+                4292019,
+                4292476,
+                7425548,
+                7425562,
+                7497500,
+                8008166,
+                8008222,
+                8008300,
+                8008318,
+                8008357,
+                8008415,
+                8008479,
+                8008728,
+                8922319,
+                8926457,
+                9109887,
+                9199122,
+                9199132,
+                9199192,
+                9201338,
+                10549376
+              ],
+              "past_reference": 11,
+              "past_reference_ids": [
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7497500
+              ],
+              "resolution_error": null
+            },
+            "took_effect": true,
+            "unreadable": [],
+            "variant": "section_markers_hidden"
+          },
+          "view_id": 4148625
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 9998,
+              "actual_w": 9555,
+              "dim_check": "pass",
+              "requested_px": 9555
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9998,
+          "anno_over_model_derived_px": 0,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029290527693540402,
+          "model_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 9998,
+              "actual_w": 9555,
+              "dim_check": "pass",
+              "requested_px": 9555
+            }
+          ],
+          "model_derived_px": 9998,
+          "painted_elements": 618,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": {
+            "already_hidden": 0,
+            "hidden": 29,
+            "hide_error": null,
+            "section_markers": {
+              "category": "OST_Viewers",
+              "category_ids": [
+                -2000278
+              ],
+              "count": 29,
+              "ids": [
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4153586,
+                4291781,
+                4292019,
+                4292476,
+                7425562,
+                7497500,
+                8008166,
+                8008222,
+                8008272,
+                8008300,
+                8008318,
+                8008357,
+                8008415,
+                8008479,
+                8008728,
+                8922319,
+                8926457,
+                9109887,
+                9199122,
+                9199132,
+                9199192,
+                9201338
+              ],
+              "past_reference": 11,
+              "past_reference_ids": [
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7497500
+              ],
+              "resolution_error": null
+            },
+            "took_effect": true,
+            "unreadable": [],
+            "variant": "section_markers_hidden"
+          },
+          "view_id": 9468987
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 9999,
+              "actual_w": 9340,
+              "dim_check": "pass",
+              "requested_px": 9340
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9999,
+          "anno_over_model_derived_px": 0,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.030022981402693646,
+          "model_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 9999,
+              "actual_w": 9340,
+              "dim_check": "pass",
+              "requested_px": 9340
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 337,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": {
+            "already_hidden": 0,
+            "hidden": 36,
+            "hide_error": null,
+            "section_markers": {
+              "category": "OST_Viewers",
+              "category_ids": [
+                -2000278
+              ],
+              "count": 36,
+              "ids": [
+                895119,
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4153586,
+                4291781,
+                4292019,
+                4292476,
+                7425562,
+                7497500,
+                8008272,
+                8008300,
+                8008318,
+                8008479,
+                8008524,
+                8008599,
+                8008768,
+                8008832,
+                8008872,
+                8008912,
+                8009008,
+                8922319,
+                8926457,
+                9109887,
+                9199122,
+                9199132,
+                9199192,
+                9201338,
+                9236659,
+                10153620,
+                10153630,
+                10153640
+              ],
+              "past_reference": 11,
+              "past_reference_ids": [
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7497500
+              ],
+              "resolution_error": null
+            },
+            "took_effect": true,
+            "unreadable": [],
+            "variant": "section_markers_hidden"
+          },
+          "view_id": 9560929
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 8448,
+              "actual_w": 10000,
+              "dim_check": "pass",
+              "requested_px": 10000
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 8448,
+          "anno_over_model_derived_px": 23,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.034168829226574104,
+          "model_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 8425,
+              "actual_w": 10000,
+              "dim_check": "pass",
+              "requested_px": 10000
+            }
+          ],
+          "model_derived_px": 8425,
+          "painted_elements": 814,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": {
+            "already_hidden": 0,
+            "hidden": 37,
+            "hide_error": null,
+            "section_markers": {
+              "category": "OST_Viewers",
+              "category_ids": [
+                -2000278
+              ],
+              "count": 37,
+              "ids": [
+                630732,
+                848295,
+                870212,
+                984913,
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7425562,
+                7497500,
+                8008524,
+                8008599,
+                8008768,
+                8008832,
+                8008912,
+                8168997,
+                8169007,
+                8169017,
+                8922319,
+                8926457,
+                9109887,
+                9199122,
+                9199132,
+                9199192,
+                9201338,
+                9236659,
+                10153620,
+                10153630,
+                10153650,
+                10153660,
+                10153672,
+                10153684
+              ],
+              "past_reference": 11,
+              "past_reference_ids": [
+                986127,
+                1625260,
+                1820032,
+                1873156,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7497500,
+                8922319
+              ],
+              "resolution_error": null
+            },
+            "took_effect": true,
+            "unreadable": [],
+            "variant": "section_markers_hidden"
+          },
+          "view_id": 9594635
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 9852,
+              "actual_w": 9050,
+              "dim_check": "pass",
+              "requested_px": 9050
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9852,
+          "anno_over_model_derived_px": -147,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.031119643887730124,
+          "model_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 9999,
+              "actual_w": 9050,
+              "dim_check": "pass",
+              "requested_px": 9050
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 474,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": {
+            "already_hidden": 0,
+            "hidden": 43,
+            "hide_error": null,
+            "section_markers": {
+              "category": "OST_Viewers",
+              "category_ids": [
+                -2000278
+              ],
+              "count": 43,
+              "ids": [
+                986127,
+                994723,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4153586,
+                4291781,
+                4292019,
+                4292476,
+                7425548,
+                7425562,
+                7497500,
+                8168997,
+                8169007,
+                8169027,
+                8169037,
+                8169047,
+                8169057,
+                8922319,
+                8926457,
+                9109887,
+                9199122,
+                9199132,
+                9199192,
+                9201338,
+                9236659,
+                10153650,
+                10153660,
+                10153672,
+                10153684,
+                10153696,
+                10153706,
+                10153716,
+                10233615,
+                10233633,
+                10233650,
+                10233663,
+                10233675,
+                10233686,
+                10233699
+              ],
+              "past_reference": 12,
+              "past_reference_ids": [
+                994723,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7425548,
+                7497500
+              ],
+              "resolution_error": null
+            },
+            "took_effect": true,
+            "unreadable": [],
+            "variant": "section_markers_hidden"
+          },
+          "view_id": 9595813
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 9999,
+              "actual_w": 5697,
+              "dim_check": "pass",
+              "requested_px": 5697
+            }
+          ],
+          "anno_faults": [],
+          "anno_first_derived_px": 9999,
+          "anno_over_model_derived_px": 0,
+          "capture_failure_reason": "",
+          "capture_faults": [],
+          "capture_status": "success",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.03547034573674158,
+          "model_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 9999,
+              "actual_w": 5697,
+              "dim_check": "pass",
+              "requested_px": 5697
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 388,
+          "restore_faults": [],
+          "state": "fits",
+          "variant_record": {
+            "already_hidden": 0,
+            "hidden": 30,
+            "hide_error": null,
+            "section_markers": {
+              "category": "OST_Viewers",
+              "category_ids": [
+                -2000278
+              ],
+              "count": 30,
+              "ids": [
+                986127,
+                1077604,
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4153586,
+                4291781,
+                4292019,
+                4292476,
+                7425562,
+                7425574,
+                7497500,
+                8169027,
+                8169037,
+                8169047,
+                8169057,
+                8922319,
+                8926457,
+                9109887,
+                9199122,
+                9199132,
+                9199192,
+                9201338,
+                9236659,
+                10153696,
+                10153706,
+                10153716
+              ],
+              "past_reference": 10,
+              "past_reference_ids": [
+                1625260,
+                1820032,
+                1873156,
+                2537144,
+                3196570,
+                3246467,
+                4291781,
+                4292019,
+                4292476,
+                7497500
+              ],
+              "resolution_error": null
+            },
+            "took_effect": true,
+            "unreadable": [],
+            "variant": "section_markers_hidden"
+          },
+          "view_id": 9596211
+        }
+      ]
+    }
+  },
+  "schema": "vop.probe.lattice_overrun.v1",
+  "started_at": "2026-10-19T13:23:21",
+  "variants": [
+    "as_is",
+    "section_markers_hidden",
+    "annotation_crop_on",
+    "co_sized"
+  ],
+  "verdict": {
+    "annotation_crop_on": {
+      "content_lost": [],
+      "fits": [],
+      "other": [],
+      "overrun": [
+        4148625,
+        9468987,
+        9560929,
+        9594635,
+        9595813,
+        9596211
+      ],
+      "painted_delta_vs_as_is": {
+        "4148625": 0,
+        "9468987": 0,
+        "9560929": 0,
+        "9594635": 0,
+        "9595813": 0,
+        "9596211": 0
+      },
+      "restore_faults": {
+        "4148625": [
+          "view_state_not_restored"
+        ],
+        "9468987": [
+          "view_state_not_restored"
+        ],
+        "9560929": [
+          "view_state_not_restored"
+        ],
+        "9594635": [
+          "view_state_not_restored"
+        ],
+        "9595813": [
+          "view_state_not_restored"
+        ],
+        "9596211": [
+          "view_state_not_restored"
+        ]
+      },
+      "views": 6
+    },
+    "as_is": {
+      "content_lost": [],
+      "fits": [],
+      "other": [],
+      "overrun": [
+        4148625,
+        9468987,
+        9560929,
+        9594635,
+        9595813,
+        9596211
+      ],
+      "painted_delta_vs_as_is": {},
+      "restore_faults": {},
+      "views": 6
+    },
+    "co_sized": {
+      "content_lost": [],
+      "fits": [
+        4148625,
+        9468987,
+        9560929,
+        9594635,
+        9595813,
+        9596211
+      ],
+      "other": [],
+      "overrun": [],
+      "painted_delta_vs_as_is": {
+        "4148625": 0,
+        "9468987": 0,
+        "9560929": 0,
+        "9594635": 0,
+        "9595813": 0,
+        "9596211": 0
+      },
+      "restore_faults": {},
+      "views": 6
+    },
+    "section_markers_hidden": {
+      "content_lost": [
+        4148625,
+        9468987,
+        9560929,
+        9594635,
+        9595813,
+        9596211
+      ],
+      "fits": [
+        4148625,
+        9468987,
+        9560929,
+        9594635,
+        9595813,
+        9596211
+      ],
+      "other": [],
+      "overrun": [],
+      "painted_delta_vs_as_is": {
+        "4148625": -31,
+        "9468987": -29,
+        "9560929": -36,
+        "9594635": -37,
+        "9595813": -43,
+        "9596211": -30
+      },
+      "restore_faults": {},
+      "views": 6
+    }
+  },
+  "view_ids": [
+    4148625,
+    9468987,
+    9560929,
+    9594635,
+    9595813,
+    9596211
+  ]
+}
