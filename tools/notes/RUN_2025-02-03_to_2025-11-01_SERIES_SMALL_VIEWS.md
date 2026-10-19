@@ -314,7 +314,9 @@ change_passing_views_and_is_not_the_fix`).
   `as_is` size, and the failed before-read made `view_state_not_restored`
   on all six (nothing in Revit had changed). Probe `2026-10-19.2` writes
   VIEWER_ANNOTATION_CROP_ACTIVE and refuses a write it cannot read first;
-  that variant is still unmeasured. The same AttributeError means
+  its rerun (`20261019T1413`) ran the old capture code still loaded in
+  Dynamo and measured nothing new, so probe `.3` imports production afresh
+  and refuses a stale one. That variant is still unmeasured. The same AttributeError means
   `revit/annotation.py`'s `getattr(view, 'AnnotationCropActive', False)`
   has always read False on this host (its parameter fallback only runs on
   an exception): pre-existing, outside the capture, not changed here.

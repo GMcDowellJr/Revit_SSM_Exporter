@@ -36,9 +36,14 @@ IN[3]  {"repo_root": "<checkout>", "expected_config_hash": "9400eaef"}
 `tools/notes/data/probe_lattice_overrun_20261019T132321/`): `as_is`,
 `section_markers_hidden` and `co_sized` as expected below, to the pixel;
 `annotation_crop_on` did not apply (no `AnnotationCropActive` on Revit 2025's
-ViewPlan) and is unmeasured. To measure it, rerun that variant alone with
-probe `2026-10-19.2` (IN[2] `annotation_crop_on`); co-sizing does not wait on
-it.
+ViewPlan) and is unmeasured. The rerun with probe `2026-10-19.2` (run
+`20261019T1413`, record in `tools/notes/data/probe_lattice_overrun_20261019T141325/`)
+did not measure it either: it drove the vop_interwoven the 1323 run had left
+in Dynamo's `sys.modules` (`repo_root: "already importable"`; the variant
+record is the .1 code's, AttributeError and all). Probe `2026-10-19.3`
+purges the package, imports it from the checkout and refuses a build that
+lacks `annotation_crop_parameter`. To measure it: probe `.3`, IN[2]
+`annotation_crop_on`, IN[3] `repo_root` set. Co-sizing does not wait on it.
 
 Read `verdict` in `probe_lattice_overrun_<clock>.json`
 (tests/dynamo/PROBE_LATTICE_OVERRUN.md). The fix shipped assumes:
@@ -110,6 +115,13 @@ Check `capture_plan.json`: seven `recapture` jobs, one per archive, each one
 run with its ids; `unmatched_runs` empty. Then BatchCapture with that plan.
 (Alternative per archive: open it, thinrunner IN[5] True, IN[7] the list;
 runs of other archives are refused by title, which is expected.)
+
+**The build that runs is the one you think.** The thinrunner purges
+`vop_interwoven` from `sys.modules` on every run; the pyRevit button has not
+been checked for it. After the FIRST job, open one recaptured model sidecar:
+`registration_marks` must carry the key `co_sizing` (a record for these six
+plans). A sidecar without the key was written by a build before the fix --
+stop, restart Revit, and recapture again (a recapture replaces in place).
 
 ## 4. Verify
 
