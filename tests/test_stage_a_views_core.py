@@ -17,6 +17,7 @@ from vop_interwoven.csv_export import (
 )
 from vop_interwoven.streaming import StreamingExporter
 from tests import test_stage_a_skips_the_model_pass as loop
+from tests.layout_helpers import run_meta_file
 
 
 def _view(view_id=4242, name="L1 Plan"):
@@ -63,9 +64,9 @@ def test_stage_a_run_writes_views_core_and_one_snapshot_only(tmp_path):
     names = sorted(os.listdir(str(tmp_path)))
     assert not any(n.startswith(("views_vop_", "views_occlusion_", "views_perf_"))
                    for n in names), names
-    assert out["run_meta_path"] == str(tmp_path / "run_meta.json")
+    assert out["run_meta_path"] == str(run_meta_file(tmp_path))
 
-    snap = json.loads((tmp_path / "run_meta.json").read_text())
+    snap = json.loads(run_meta_file(tmp_path).read_text())
     assert snap["finalized"] is True
     assert snap["config"] == cfg.to_dict()
     assert snap["config_hash"] == compute_config_hash(cfg) == out["config_hash"]
@@ -133,7 +134,7 @@ def test_the_pipeline_gives_a_stage_a_view_elapsed_and_a_diagnostics_entry(monke
 def test_run_meta_is_written_unfinalized_at_the_start(tmp_path):
     """An interrupted run leaves run_meta saying so, not a clean-looking file."""
     _exporter(tmp_path)
-    snap = json.loads((tmp_path / "run_meta.json").read_text())
+    snap = json.loads(run_meta_file(tmp_path).read_text())
     assert snap["finalized"] is False and snap["views"] == []
 
 
@@ -142,7 +143,7 @@ def test_batches_share_one_run_id_and_merge_into_one_run_meta(tmp_path):
     a, _ = _exporter(tmp_path / "b1")
     b, _ = _exporter(tmp_path / "b2", run_id=a.run_id)
     assert b.run_id == a.run_id
-    metas = [json.loads((p / "run_meta.json").read_text())
+    metas = [json.loads(run_meta_file(p).read_text())
              for p in (tmp_path / "b1", tmp_path / "b2")]
     merged = merge_run_metas(metas)
     assert merged["run_id"] == a.run_id and merged["batches"] == 2
@@ -167,7 +168,7 @@ def test_a_tag_override_is_recorded_as_the_tag_not_as_the_date(tmp_path):
     cfg = Config(enable_color_id_buffer_stage_a=True)
     exp = StreamingExporter(str(tmp_path), cfg, doc=_Doc(), export_png=False,
                             export_csv=False, date_override="PR_221", view_ids=[1])
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     _dt.datetime.strptime(meta["date"], "%Y-%m-%d")     # a real date
     assert meta["run_tag"] == "PR_221"
     assert exp.run_id.endswith("_PR_221")
@@ -175,7 +176,7 @@ def test_a_tag_override_is_recorded_as_the_tag_not_as_the_date(tmp_path):
 
 def test_control_a_date_override_is_the_date_and_no_tag(tmp_path):
     _exporter(tmp_path)          # date_override="2026-09-29"
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     assert meta["date"] == "2026-09-29" and meta["run_tag"] is None
 
 
@@ -185,7 +186,7 @@ def test_run_meta_is_replaced_atomically_and_survives_a_failed_write(tmp_path, m
     readable and no temporary file behind."""
     from vop_interwoven import run_meta as rm
     _exporter(tmp_path)                                    # finalized:false on disk
-    before = (tmp_path / "run_meta.json").read_text()
+    before = run_meta_file(tmp_path).read_text()
 
     real_dump = json.dump
 
@@ -198,7 +199,7 @@ def test_run_meta_is_replaced_atomically_and_survives_a_failed_write(tmp_path, m
         rm.write_run_meta({"finalized": True}, str(tmp_path))
     monkeypatch.setattr(rm.json, "dump", real_dump)
 
-    assert (tmp_path / "run_meta.json").read_text() == before
+    assert run_meta_file(tmp_path).read_text() == before
     assert json.loads(before)["finalized"] is False
     assert not [p for p in os.listdir(str(tmp_path)) if p.endswith(".tmp")]
 
@@ -212,7 +213,7 @@ def test_merged_run_meta_is_written_per_batch_and_unfinalized_until_the_end(tmp_
     from vop_interwoven.run_meta import write_merged_run_meta
     a, _ = _exporter(tmp_path / "b1")
     b, _ = _exporter(tmp_path / "b2", run_id=a.run_id)
-    paths = [str(tmp_path / d / "run_meta.json") for d in ("b1", "b2")]
+    paths = [str(run_meta_file(tmp_path / d)) for d in ("b1", "b2")]
     for p in paths:     # each batch finished cleanly on its own
         meta = json.loads(open(p).read())
         meta["finalized"] = True
@@ -282,7 +283,7 @@ def test_a_failed_stage_a_view_reaches_views_core_through_the_real_loop(tmp_path
     assert rows["8"]["CaptureStatus"] == "failed"
     assert "boom" in rows["8"]["CaptureFailureReason"]
     assert rows["4242"]["CaptureStatus"] == "success"
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     assert sorted(v["view_id"] for v in meta["views"]) == [7, 8, 4242]
 
 
@@ -318,7 +319,7 @@ def test_a_view_that_raises_still_has_an_outcome_in_the_finalized_record(tmp_pat
                                                on_view_complete=_callback)
     out = exp.finalize()
 
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     assert meta["finalized"] is True
     by_id = {v["view_id"]: v for v in meta["views"]}
     assert sorted(by_id) == sorted(meta["views_requested"]) == [7, 8, 9, 4242]

@@ -44,6 +44,27 @@ from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
+
+
+def _cap(run):
+    """The run's capture folder (either layout); None when it has none."""
+    try:
+        return grid.model_sidecars(run)[1] if any(
+            (Path(run) / n).is_dir() for n in output_layout.CAPTURE_DIR.values()) else None
+    except grid.GridRefusal:
+        return None
+
+
+def _grid(run):
+    return Path(output_layout.grid_dir_for_capture(_cap(run)))
+
+
+def _registered_tiffs(run):
+    cap = _cap(run)
+    infix = output_layout.REGISTERED_INFIX[output_layout.layout_of_capture_dir(cap)]
+    return dict((p.name, p) for p in cap.glob("*_anno" + infix + ".tiff"))
+
 
 PATHLIKE = ("path", "sha256", "dir")
 # The compression tags the registration tool itself accepts -- derived from
@@ -61,16 +82,18 @@ def raw_writer(pixels, path, codecs=None):
 def scratch_run(run, dest):
     """``dest`` as a copy of ``run``'s captures and run records, with every
     sidecar's recorded TIFF paths re-pointed into the copy."""
-    src_cap = Path(run) / "color_id_buffer"
-    cap = dest / "color_id_buffer"
+    src_cap = _cap(run)
+    cap = dest / src_cap.name
     cap.mkdir(parents=True)
+    records = set(Path(p).name for p in output_layout.run_meta_candidates(run))
     for path in Path(run).iterdir():
-        if path.is_file() and (path.name == "run_meta.json"
+        if path.is_file() and (path.name in records
                                or path.name.startswith("views_core_")):
             shutil.copy(str(path), str(dest / path.name))
     for path in src_cap.iterdir():
         name = path.name
-        if not path.is_file() or ".registered." in name or ".decoded." in name:
+        if (not path.is_file() or ".registered." in name or ".reg." in name
+                or ".decoded." in name):
             continue
         if name.endswith(".json"):
             side = json.loads(path.read_text(encoding="utf-8"))
@@ -87,7 +110,7 @@ def register_all(run, writer):
     original = reg.write_lossless_tiff
     reg.write_lossless_tiff = writer
     try:
-        for anno in sorted((run / "color_id_buffer").glob("*" + reg.ANNO_SUFFIX + ".json")):
+        for anno in sorted(_cap(run).glob("*" + reg.ANNO_SUFFIX + ".json")):
             reg.register(anno)
     finally:
         reg.write_lossless_tiff = original
@@ -96,7 +119,7 @@ def register_all(run, writer):
 
 
 def rollup_rows(run):
-    path = run / "analysis_grid" / rollup.CSV_NAME
+    path = _grid(run) / rollup.output_names(_cap(run))[0]
     if not path.exists():
         return None
     with open(str(path), newline="", encoding="utf-8") as handle:
@@ -116,8 +139,8 @@ def gate(run, work):
     register_all(raw_run, raw_writer)
     register_all(packed_run, reg.write_lossless_tiff)
 
-    raw_tiffs = dict((p.name, p) for p in (raw_run / "color_id_buffer").glob("*.registered.tiff"))
-    tiffs = dict((p.name, p) for p in (packed_run / "color_id_buffer").glob("*.registered.tiff"))
+    raw_tiffs = _registered_tiffs(raw_run)
+    tiffs = _registered_tiffs(packed_run)
     names = sorted(set(raw_tiffs) | set(tiffs))
     tags, mismatches, sizes = {}, [], []
     for name in names:
@@ -133,12 +156,12 @@ def gate(run, work):
         sizes.append((raw_tiffs[name].stat().st_size, tiffs[name].stat().st_size))
 
     npz_diff = []
-    raw_npz = dict((p.name, p) for p in (raw_run / "analysis_grid").glob("*.grid.npz"))
-    for p in sorted((packed_run / "analysis_grid").glob("*.grid.npz")):
+    raw_npz = dict((p.name, p) for p in _grid(raw_run).glob("*.grid.npz"))
+    for p in sorted(_grid(packed_run).glob("*.grid.npz")):
         if p.name not in raw_npz or not npz_equal(raw_npz[p.name], p):
             npz_diff.append(p.name)
     npz_diff += sorted(set(raw_npz) - set(
-        p.name for p in (packed_run / "analysis_grid").glob("*.grid.npz")))
+        p.name for p in _grid(packed_run).glob("*.grid.npz")))
     raw_rows, rows = rollup_rows(raw_run), rollup_rows(packed_run)
     row_diff = (None if raw_rows is None or rows is None
                 else sum(1 for a, b in zip(raw_rows, rows) if a != b)
@@ -174,13 +197,13 @@ def passes(result):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("run", help="a run directory (holding color_id_buffer/)")
+    ap.add_argument("run", help="a run directory (holding color_id/ or color_id_buffer/)")
     ap.add_argument("--work", default=None,
                     help="scratch directory (default: a new temporary one, kept)")
     args = ap.parse_args(argv)
     run = Path(args.run)
-    if not (run / "color_id_buffer").is_dir():
-        ap.error("{0} holds no color_id_buffer/".format(run))
+    if _cap(run) is None:
+        ap.error("{0} holds no capture folder".format(run))
     work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="tiff_gate_"))
     work.mkdir(parents=True, exist_ok=True)
     result = gate(run, work)

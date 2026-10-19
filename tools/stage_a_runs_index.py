@@ -81,10 +81,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from vop_interwoven.run_meta import RUN_META_FILENAME  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA = "vop.stage_a.runs_index.v1"
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 
 CSV_NAME = "runs_index.csv"
 JSON_NAME = "runs_index.json"
@@ -112,11 +112,16 @@ ROLLUP_SUMMARY = tool_constant("stage_a_grid_rollup.py", "SUMMARY_NAME")
 KINDS_CSV = tool_constant("stage_a_kinds.py", "INVENTORY_CSV")
 KINDS_JSON = tool_constant("stage_a_kinds.py", "INVENTORY_JSON")
 
-CAPTURE_DIR = "color_id_buffer"
-GRID_DIR = "analysis_grid"
-RESERVED_DIRS = (CAPTURE_DIR, GRID_DIR)
-# (top, analysis_grid): where the roll-up and kinds outputs are looked for.
-LOCATIONS = (("top", ""), ("analysis_grid", GRID_DIR))
+# Both layouts' folder names (vop_interwoven/output_layout): v1
+# color_id_buffer/ + analysis_grid/, v2 color_id/ + grid/.
+CAPTURE_DIRS = (output_layout.CAPTURE_DIR[output_layout.V2],
+                output_layout.CAPTURE_DIR[output_layout.V1])
+GRID_DIRS = (output_layout.GRID_DIR[output_layout.V2],
+             output_layout.GRID_DIR[output_layout.V1])
+RESERVED_DIRS = CAPTURE_DIRS + GRID_DIRS
+# Where the roll-up and kinds outputs are looked for: the run's top level,
+# then its grid folder (the location is recorded as the folder's name).
+LOCATIONS = (("top", ""),) + tuple((name, name) for name in GRID_DIRS)
 
 # The dated per-run files, named by run_meta.output_date_str().
 DATED_FILES = (("views_core", "views_core_", ".csv"),
@@ -232,11 +237,13 @@ def discover(root, max_depth):
         visited += 1
         deepest = max(deepest, depth)
         rel = _rel(folder, root) or "."
-        if (folder / RUN_META_FILENAME).is_file():
+        if output_layout.run_meta_candidates(folder):
             run_folders += 1
-            meta, why = _load_json_object(folder / RUN_META_FILENAME)
+            meta_path, ambiguous = output_layout.find_run_meta(folder)
+            meta, why = ((None, ambiguous) if meta_path is None
+                         else _load_json_object(Path(meta_path)))
             if meta is None:
-                skipped.append({"path_rel": rel, "reason": "run_meta.json unreadable: " + why})
+                skipped.append({"path_rel": rel, "reason": "run_meta unreadable: " + why})
             elif not FOLDER_NAME.match(folder.name):
                 skipped.append({"path_rel": rel,
                                 "reason": "run folder name {0!r} is not "
@@ -284,7 +291,7 @@ def discover(root, max_depth):
 # --- per-run facts ------------------------------------------------------------------
 
 def _locate(run_dir, name):
-    """``(location, path)`` of the first of ``<run>/name``,
+    """``(location, path)`` of the first of ``<run>/name``, ``<run>/grid/name``,
     ``<run>/analysis_grid/name`` that is a file, else ``(None, None)``."""
     for location, sub in LOCATIONS:
         path = run_dir / sub / name if sub else run_dir / name
@@ -348,17 +355,28 @@ def _sha_match(csv_path, recorded):
     return actual, _bool_cell(actual == recorded), None
 
 
-def rollup_facts(run_dir, root):
+def output_names(run_dir, meta):
+    """``((rollup csv, rollup summary), (kinds csv, kinds json))`` in the
+    run's own layout: dated in a v2 run, the tools' undated names in v1."""
+    layout = output_layout.layout_of_run(run_dir) or output_layout.V1
+    if layout == output_layout.V1:
+        return (ROLLUP_CSV, ROLLUP_SUMMARY), (KINDS_CSV, KINDS_JSON)
+    d = output_layout.file_date(meta)
+    return output_layout.rollup_names(layout, d), output_layout.inventory_names(layout, d)
+
+
+def rollup_facts(run_dir, root, meta=None):
     out = dict((c, "") for c in COLUMNS if c.startswith("rollup_"))
     objs = dict((c, None) for c in JSON_COLUMNS if c.startswith("rollup_"))
-    location, summary_path = _locate(run_dir, ROLLUP_SUMMARY)
+    (rollup_csv, rollup_summary), _k = output_names(run_dir, meta or {})
+    location, summary_path = _locate(run_dir, rollup_summary)
     if summary_path is None:
-        loose_loc, loose = _locate(run_dir, ROLLUP_CSV)
+        loose_loc, loose = _locate(run_dir, rollup_csv)
         out["rollup_state"] = "absent"
         out["rollup_reason"] = "no {0} at the run top level or in {1}/".format(
-            ROLLUP_SUMMARY, GRID_DIR)
+            rollup_summary, "/ or ".join(GRID_DIRS))
         if loose is not None:
-            out["rollup_reason"] += "; {0} present without it".format(ROLLUP_CSV)
+            out["rollup_reason"] += "; {0} present without it".format(rollup_csv)
             out["rollup_location"] = loose_loc
             out["rollup_csv_path_rel"] = _rel(loose, root)
         return out, objs
@@ -368,7 +386,7 @@ def rollup_facts(run_dir, root):
     if summary is None:
         out["rollup_state"], out["rollup_reason"] = "unreadable", why
         return out, objs
-    csv_path, csv_err = _named_csv(summary, summary_path, ROLLUP_CSV)
+    csv_path, csv_err = _named_csv(summary, summary_path, rollup_csv)
     if csv_path is not None:
         out["rollup_csv_path_rel"] = _rel(csv_path, root)
     actual, match, hash_err = _sha_match(csv_path, summary.get("csv_sha256"))
@@ -407,16 +425,17 @@ def rollup_facts(run_dir, root):
     return out, objs
 
 
-def kinds_facts(run_dir, root):
+def kinds_facts(run_dir, root, meta=None):
     out = dict((c, "") for c in COLUMNS if c.startswith("kinds_"))
-    location, json_path = _locate(run_dir, KINDS_JSON)
+    _r, (kinds_csv, kinds_json) = output_names(run_dir, meta or {})
+    location, json_path = _locate(run_dir, kinds_json)
     if json_path is None:
         out["kinds_state"] = "absent"
         out["kinds_reason"] = "no {0} at the run top level or in {1}/".format(
-            KINDS_JSON, GRID_DIR)
-        loose_loc, loose = _locate(run_dir, KINDS_CSV)
+            kinds_json, "/ or ".join(GRID_DIRS))
+        loose_loc, loose = _locate(run_dir, kinds_csv)
         if loose is not None:
-            out["kinds_reason"] += "; {0} present without it".format(KINDS_CSV)
+            out["kinds_reason"] += "; {0} present without it".format(kinds_csv)
             out["kinds_location"] = loose_loc
             out["kinds_csv_path_rel"] = _rel(loose, root)
         return out
@@ -425,7 +444,7 @@ def kinds_facts(run_dir, root):
     if record is None:
         out["kinds_state"], out["kinds_reason"] = "unreadable", why
         return out
-    csv_path, csv_err = _named_csv(record, json_path, KINDS_CSV)
+    csv_path, csv_err = _named_csv(record, json_path, kinds_csv)
     if csv_path is not None:
         out["kinds_csv_path_rel"] = _rel(csv_path, root)
     actual, match, hash_err = _sha_match(csv_path, record.get("csv_sha256"))
@@ -567,10 +586,10 @@ def run_row(run_dir, meta, root):
     row["views_count"] = str(len(views)) if isinstance(views, list) else ""
     objs["capture_status_counts"] = _capture_status_counts(views)
 
-    rollup, rollup_objs = rollup_facts(run_dir, root)
+    rollup, rollup_objs = rollup_facts(run_dir, root, meta)
     row.update(rollup)
     objs.update(rollup_objs)
-    row.update(kinds_facts(run_dir, root))
+    row.update(kinds_facts(run_dir, root, meta))
     try:
         names = sorted(e.name for e in os.scandir(run_dir))
     except OSError as ex:
@@ -675,14 +694,14 @@ def write_index(root, out_dir, rows, json_rows, scan):
 
 
 def run_folder_holding(path):
-    """The nearest folder at or above ``path`` that holds ``run_meta.json``,
-    or None. Checked on the path itself, not against the indexed rows: a run
+    """The nearest folder at or above ``path`` that holds a run_meta file
+    (either layout's name), or None. Checked on the path itself, not against the indexed rows: a run
     folder that discovery skipped (unreadable run_meta, beyond --max-depth,
     under a reserved name) is still a run folder the index must not write
     into."""
     path = Path(path).resolve()
     for folder in [path] + list(path.parents):
-        if (folder / RUN_META_FILENAME).is_file():
+        if output_layout.run_meta_candidates(folder):
             return folder
     return None
 

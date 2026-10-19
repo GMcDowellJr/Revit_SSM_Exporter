@@ -24,9 +24,10 @@ inputs. The timing report reads only run_meta, views_core and the model
 sidecars -- nothing the other stages write -- so it runs last, and a run it
 cannot report (exit 2: no views_core, say) costs nothing else.
 
-``--out`` is where the cross-run products go (inventory, roll-up). With one
-run it defaults to that run's ``analysis_grid/``, as each tool's own default
-does; with more than one it is required.
+``--out`` gathers the inventory and roll-up of every run into one place.
+Without it each run gets its own, in its own grid folder (``grid/`` in a v2
+run, ``analysis_grid/`` in v1: vop_interwoven/output_layout), as each tool
+does by default.
 
 Exit: the worst stage exit code (0 every stage clean, 1 some view refused or
 not gridded, 2 a stage could not run).
@@ -44,6 +45,7 @@ from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 from tools import stage_a_timing_report as timing  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 
 STAGES = ("register", "grid", "derive", "inventory", "rollup", "timing")
 
@@ -63,13 +65,12 @@ def analyze(runs, out=None):
     """Run every stage in order; returns ``(worst exit code, per-stage
     results)``. Stops at the first stage that exits 2."""
     runs = [Path(r) for r in runs]
-    if len(runs) > 1 and out is None:
-        raise ValueError("--out is required with more than one run")
     results = []
     run_dirs = []
     for run in runs:
         _sidecars, folder = grid.model_sidecars(run)
-        run_dirs.append(folder.parent if folder.name == "color_id_buffer" else folder)
+        run_dirs.append(folder.parent if folder.name in output_layout.CAPTURE_DIR.values()
+                        else folder)
         for name, fn, argv in (("register", reg.main, [folder]),
                                ("grid", grid.main, [run]),
                                ("derive", kinds.main, ["derive", run])):
@@ -88,13 +89,11 @@ def analyze(runs, out=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("runs", nargs="+", metavar="run",
-                    help="a run directory or its color_id_buffer/")
+                    help="a run directory or its capture folder")
     ap.add_argument("--out", default=None,
-                    help="where the inventory and roll-up go (required with more "
-                         "than one run; default: the run's analysis_grid)")
+                    help="one combined inventory and roll-up of every run, here "
+                         "(default: each run's own, in its own grid folder)")
     args = ap.parse_args(argv)
-    if len(args.runs) > 1 and not args.out:
-        ap.error("--out is required with more than one run")
     code, results = analyze(args.runs, args.out)
     print("== summary")
     for r in results:

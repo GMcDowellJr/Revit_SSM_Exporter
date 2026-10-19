@@ -17,10 +17,11 @@ import pytest
 from vop_interwoven import batch_capture as bc
 from vop_interwoven.batch_capture import (
     BatchPlanError, archive_date, build_plan, index_runs, job_done, load_manifest,
-    load_plan, model_key, pending_jobs, run_batch, select_views, title_matches,
+    load_plan, pending_jobs, run_batch, select_views, title_matches,
 )
 from vop_interwoven.recapture import RecaptureRefused, recapture_plan
 from tools import plan_capture_batch as cli
+from tests.layout_helpers import run_meta_file
 
 MANIFEST_HEADER = ["include", "relative_path", "full_path", "project_folder", "filename"]
 
@@ -48,7 +49,7 @@ def _run_dir(root, title, run_id="20261008T093539", date="2025-06-21", finalized
             "views_requested": list(requested), "views": [], "exporter_version": "1.1.0+src.x"}
     if recaptures is not None:
         meta["recaptures"] = recaptures
-    (run_dir / "run_meta.json").write_text(json.dumps(meta))
+    run_meta_file(run_dir).write_text(json.dumps(meta))
     return str(run_dir)
 
 
@@ -96,22 +97,13 @@ def test_the_recapture_plan_accepts_a_detached_title_and_still_refuses_another()
         recapture_plan(meta, [1], "KSRF_2025-06-13_detached")
 
 
-def test_the_model_key_drops_the_date_and_unsafe_characters():
-    assert model_key({"stem": "KSRF_Hosp_Interior_AR_V28_2.5 GB_2025-06-21",
-                      "project_folder": "KSRF"}) == "KSRF/KSRF_Hosp_Interior_AR_V28_2.5 GB"
-    assert model_key({"stem": "Tower", "project_folder": "A\\B:C"}) == "A/B_C/Tower"
-    assert model_key({"stem": "Tower", "project_folder": ""}) == "Tower"
-
-
-# --- the run index -------------------------------------------------------------------------
-
 def test_the_index_lists_every_run_meta_and_names_an_unreadable_one(tmp_path):
     a = _run_dir(tmp_path / "KSRF" / "M", "A_2025-06-21")
     b = _run_dir(tmp_path / "KSRF" / "M", "A_2025-06-13", run_id="20261001T084840",
                  date="2025-06-13", finalized=False)
     bad = tmp_path / "KSRF" / "N" / "2025-01-01__x"
     bad.mkdir(parents=True)
-    (bad / "run_meta.json").write_text("{not json")
+    run_meta_file(bad).write_text("{not json")
     (tmp_path / "KSRF" / "M" / "2025-06-21__20261008T093539" / "nested").mkdir()
     runs = index_runs(str(tmp_path))
     assert [r["run_dir"] for r in runs] == sorted([a, b, str(bad)])
@@ -145,7 +137,8 @@ def test_the_plan_gives_recapture_jobs_by_recorded_title_and_capture_jobs_to_the
     assert rec["recapture"] == [{"run_dir": "E/KSRF/M/2025-06-21__r1", "run_id": "r1",
                                  "doc_title": "A_2025-06-21", "view_ids": [3939979, 7424270]}]
     cap = plan["jobs"][1]
-    assert cap["output_dir"] == os.path.join("E", "KSRF", "B")
+    # The selected folder itself, not a derived <project>/<model> (2026-10-19).
+    assert cap["output_dir"] == "E"
     assert cap["date_override"] == "2025-07-04" and cap["date_source"] == "archive_name"
     assert cap["view_types"] == list(bc.DEFAULT_VIEW_TYPES)
     # A_2025-06-13: captured already (finalized run, nothing to recapture).
@@ -236,12 +229,12 @@ def test_a_capture_job_under_its_own_output_dir_is_done_only_by_its_file_when_re
     job = {"kind": "capture", "stem": "A", "full_path": "C:\\ACC\\P2\\A.rvt",
            "output_dir": str(tmp_path / "P2" / "A")}
     run_dir = _run_dir(tmp_path / "P2" / "A", "A_detached")
-    meta = json.loads(Path(run_dir, "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(run_dir).read_text())
     meta["opened_from"] = {"full_path": "C:\\ACC\\P1\\A.rvt"}
-    Path(run_dir, "run_meta.json").write_text(json.dumps(meta))
+    run_meta_file(run_dir).write_text(json.dumps(meta))
     assert job_done(job) == (False, None)                 # another file's run, misplaced
     meta["opened_from"] = {"full_path": "c:/acc/p2/a.rvt"}
-    Path(run_dir, "run_meta.json").write_text(json.dumps(meta))
+    run_meta_file(run_dir).write_text(json.dumps(meta))
     assert job_done(job)[0] is True
 
 
@@ -407,9 +400,9 @@ def _harness(tmp_path, fail_on=None, no_doc_for=None):
         events.append(("recapture", job["stem"]))
         dirs = []
         for target in job["recapture"]:
-            meta = json.loads(Path(target["run_dir"], "run_meta.json").read_text())
+            meta = json.loads(run_meta_file(target["run_dir"]).read_text())
             meta.setdefault("recaptures", []).append(_rec(target["view_ids"]))
-            Path(target["run_dir"], "run_meta.json").write_text(json.dumps(meta))
+            run_meta_file(target["run_dir"]).write_text(json.dumps(meta))
             dirs.append(target["run_dir"])
         return {"run_dirs": dirs, "refused": [], "views_processed": 1}
     return events, open_doc, close_doc, capture, recapture
@@ -444,11 +437,11 @@ def test_the_loop_runs_pending_jobs_closes_the_previous_document_and_leaves_a_lo
     assert on_disk["jobs"][0]["opened"]["worksets"] == "all"
     assert "view_summaries" not in on_disk["jobs"][1]["result"]
     # Each run the jobs wrote says how its document was opened.
-    old_meta = json.loads(Path(old, "run_meta.json").read_text())
+    old_meta = json.loads(run_meta_file(old).read_text())
     assert old_meta["opened_from"]["manifest_key"] == "KSRF/A_2025-06-21.rvt"
     assert old_meta["opened_from"]["detach"] == "DetachAndPreserveWorksets"
     (new_dir,) = on_disk["jobs"][1]["run_dirs"]
-    assert json.loads(Path(new_dir, "run_meta.json").read_text())["opened_from"]["title"] == (
+    assert json.loads(run_meta_file(new_dir).read_text())["opened_from"]["title"] == (
         "B_2025-07-04_detached")
     assert logged[0].startswith("[1/2] KSRF/A_2025-06-21.rvt (recapture)")
     # Running again: both jobs are done, nothing opens, a second log says so.

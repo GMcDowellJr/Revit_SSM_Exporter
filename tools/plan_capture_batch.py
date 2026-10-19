@@ -15,7 +15,8 @@ included file gets
   (tools/find_recapture_views.py) whose recorded doc_title is the file's
   stem -- the run's run_meta.json is read for that;
 * else, in mode capture/both, a CAPTURE job (a NEW run under
-  ``<output-root>/<project_folder>/<stem without date>/``, as-of the date the
+  ``<output-root>/`` itself -- the selected folder, not a derived
+  subfolder (2026-10-19) -- as-of the date the
   file name carries), unless a finalized run under the output root was
   already captured from it.
 

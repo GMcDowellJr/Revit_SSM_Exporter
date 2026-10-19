@@ -54,7 +54,7 @@ def _int(v):
 def test_the_1_0_0_columns_are_unchanged_and_first():
     assert rollup.COLUMNS[:len(COLUMNS_1_0_0)] == COLUMNS_1_0_0
     assert len(set(rollup.COLUMNS)) == len(rollup.COLUMNS)
-    assert rollup.TOOL_VERSION == "1.2.0"
+    assert rollup.TOOL_VERSION == "1.3.0"     # 1.3.0: output layout only
     # 1.2.0 appended one row status; the 1.1.x ones keep their order.
     assert rollup.ROW_STATUSES[:-1] == (
         "gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable",

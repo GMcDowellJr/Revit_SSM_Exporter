@@ -61,14 +61,20 @@ def relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_summ
     batch_view_summaries entries are mutated in place (and are the same
     dict objects the caller already extended merged["view_summaries"]
     with), so this must run before anything downstream reads those paths.
-    No-op if this batch produced no color_id_buffer/ directory (Stage A
-    disabled, or nothing exported).
+    No-op if this batch produced no capture folder (Stage A disabled, or
+    nothing exported). The folder keeps its name (output_layout: color_id
+    for a v2 run, color_id_buffer for v1).
     """
-    batch_stage_a_dir = os.path.join(batch_output_dir, "color_id_buffer")
-    if not os.path.isdir(batch_stage_a_dir):
+    from vop_interwoven.output_layout import CAPTURE_DIR
+    found = [name for name in (CAPTURE_DIR["v2"], CAPTURE_DIR["v1"])
+             if os.path.isdir(os.path.join(batch_output_dir, name))]
+    if not found:
         return
-
-    final_stage_a_dir = os.path.join(output_dir, "color_id_buffer")
+    if len(found) > 1:
+        raise RuntimeError("batch folder {0} holds both capture folders {1}; a run "
+                           "writes one layout".format(batch_output_dir, found))
+    batch_stage_a_dir = os.path.join(batch_output_dir, found[0])
+    final_stage_a_dir = os.path.join(output_dir, found[0])
     os.makedirs(final_stage_a_dir, exist_ok=True)
     for fname in os.listdir(batch_stage_a_dir):
         shutil.move(
@@ -113,6 +119,10 @@ def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=N
     shared_run_id = run_identity_["run_id"]
     run_dir = run_directory(output_dir, run_identity_)
     check_run_directory(run_dir, shared_run_id)
+    if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+        # Before any view: a run too deep for its files is refused whole.
+        from vop_interwoven.output_layout import check_run_budget
+        check_run_budget(run_dir)
     print("[VOP] Run {} -> {}".format(shared_run_id, run_dir))
     batches = chunk_list(view_ids, batch_size)
     result = None

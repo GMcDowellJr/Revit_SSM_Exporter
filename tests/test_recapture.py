@@ -34,6 +34,7 @@ from vop_interwoven.streaming import StreamingExporter, run_vop_pipeline_streami
 from tests import test_run_directory as rd
 from tests import test_stage_a_registered_capture as cap
 from tests import test_stage_a_views_core as vc
+from tests.layout_helpers import run_meta_file
 
 META = {
     "schema": "vop.run_meta.v1", "finalized": True, "run_id": "20261008T093539",
@@ -253,7 +254,7 @@ def _original_run(tmp_path):
 
 
 def _recapture_exporter(tmp_path, run_id, cfg, view_ids=(7,), **over):
-    record = recapture_record(json.loads((tmp_path / "run_meta.json").read_text()),
+    record = recapture_record(json.loads(run_meta_file(tmp_path).read_text()),
                               list(view_ids))
     kwargs = dict(doc=vc._Doc(), export_png=False, export_csv=True,
                   date_override="2026-09-29", view_ids=list(view_ids), run_id=run_id,
@@ -270,7 +271,7 @@ def _core(tmp_path):
 def test_an_exporter_recapture_merges_run_meta_and_views_core_in_place(tmp_path):
     run_id, cfg = _original_run(tmp_path)
     core = _core(tmp_path)
-    meta_before = json.loads((tmp_path / "run_meta.json").read_text())
+    meta_before = json.loads(run_meta_file(tmp_path).read_text())
     core_before = core.read_text(encoding="utf-8").splitlines()
 
     exp, record = _recapture_exporter(tmp_path, run_id, cfg)
@@ -280,7 +281,7 @@ def test_an_exporter_recapture_merges_run_meta_and_views_core_in_place(tmp_path)
 
     assert out["views_failed"] == 0 and exp.recapture_rows_merged == (1, 0)
     assert not list(tmp_path.glob("*.tmp"))
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     assert meta["finalized"] is True and meta["run_id"] == run_id
     assert meta["views_requested"] == meta_before["views_requested"] == [4242, 7]
     assert meta["exporter_version"] == meta_before["exporter_version"]
@@ -306,7 +307,7 @@ def test_a_recapture_that_reports_nothing_backfills_its_own_ids_only(tmp_path):
     exp, _record = _recapture_exporter(tmp_path, run_id, cfg)
     out = exp.finalize()
     assert out["views_failed"] == 1
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     by_id = {v["view_id"]: v for v in meta["views"]}
     assert by_id[7]["capture_failure_reason"].startswith("no_outcome_reported")
     assert "recapture" in by_id[7] and "recapture" not in by_id[4242]
@@ -319,13 +320,13 @@ def test_a_refused_recapture_leaves_the_views_row_and_entry_as_they_were(tmp_pat
     run_id, cfg = _original_run(tmp_path)
     core = _core(tmp_path)
     before = core.read_text(encoding="utf-8")
-    meta_before = json.loads((tmp_path / "run_meta.json").read_text())
+    meta_before = json.loads(run_meta_file(tmp_path).read_text())
     exp, _record = _recapture_exporter(tmp_path, run_id, cfg)
     exp.on_view_complete(dict(_summary(7, False, "recapture_refused"), view=vc._view(7, "Sec")))
     exp.finalize()
     assert core.read_text(encoding="utf-8") == before
     assert exp.recapture_rows_merged == (0, 0)
-    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    meta = json.loads(run_meta_file(tmp_path).read_text())
     assert meta["views"] == meta_before["views"]
     assert meta["recaptures"][0]["refused_view_ids"] == [7]
 
@@ -342,7 +343,7 @@ def test_an_exporter_recapture_is_refused_outside_its_run(tmp_path):
                                                      color_id_buffer_registered_capture=False))
     other = tmp_path / "empty"
     other.mkdir()
-    with pytest.raises(RecaptureRefused, match="holds no run_meta.json"):
+    with pytest.raises(RecaptureRefused, match="no run_meta file"):
         StreamingExporter(str(other), cfg, doc=vc._Doc(), export_png=False,
                           export_csv=True, date_override="2026-09-29", view_ids=[7],
                           run_id=run_id, recapture={"captured_at": "x"})
@@ -358,7 +359,7 @@ def test_an_exporter_recapture_is_refused_outside_its_run(tmp_path):
 def _write_meta(run_dir, **over):
     os.makedirs(run_dir, exist_ok=True)
     meta = _meta(**over)
-    with open(os.path.join(run_dir, "run_meta.json"), "w") as handle:
+    with open(str(run_meta_file(run_dir)), "w") as handle:
         json.dump(meta, handle)
     return meta
 
@@ -410,7 +411,7 @@ def test_run_recapture_refuses_a_run_dir_without_run_meta(tmp_path):
                         {"runs": [{"run_dir": str(tmp_path), "run_id": "r", "recapture": [1]}]},
                         Config(enable_color_id_buffer_stage_a=True),
                         runner=lambda **kw: pytest.fail("must not run"))
-    assert out["runs"] == [] and "holds no run_meta.json" in out["refused"][0]["reason"]
+    assert out["runs"] == [] and "no run_meta file" in out["refused"][0]["reason"]
 
 
 # --- the real entry point, capture faked ------------------------------------------------
@@ -453,11 +454,12 @@ def test_a_recapture_through_the_real_entry_point_rewrites_only_the_listed_views
     after = _tree_hashes(run_dir)
     assert sorted(after) == sorted(before), "no file appears or disappears"
     changed = sorted(k for k in before if before[k] != after[k])
-    assert changed == ["color_id_buffer/V_4242.json", "color_id_buffer/V_4242.tiff",
-                       "run_meta.json", "views_core_2026-09-29.csv",
+    # A v2 run (output_layout): color_id/ and run_meta_<d>.json.
+    assert changed == ["color_id/V_4242.json", "color_id/V_4242.tiff",
+                       "run_meta_2026-09-29.json", "views_core_2026-09-29.csv",
                        "views_diagnostics_2026-09-29.json"], changed
-    assert "RECAPTURED" in (run_dir / "color_id_buffer" / "V_4242.tiff").read_text()
-    assert "RECAPTURED" not in (run_dir / "color_id_buffer" / "V_7.tiff").read_text()
+    assert "RECAPTURED" in (run_dir / "color_id" / "V_4242.tiff").read_text()
+    assert "RECAPTURED" not in (run_dir / "color_id" / "V_7.tiff").read_text()
     meta = rd._meta(run_dir)
     assert meta["run_id"] == first["run_id"] and meta["finalized"] is True
     assert meta["views_requested"] == [4242, 7]
@@ -580,7 +582,7 @@ def test_a_views_core_merge_that_fails_leaves_run_meta_untouched(tmp_path):
     fails cannot leave a run_meta recording outcomes the CSV does not."""
     run_id, cfg = _original_run(tmp_path)
     core = _core(tmp_path)
-    meta_before = (tmp_path / "run_meta.json").read_bytes()
+    meta_before = run_meta_file(tmp_path).read_bytes()
     exp, _record = _recapture_exporter(tmp_path, run_id, cfg)
     exp.on_view_complete(dict(_summary(7), view=vc._view(7, "Sec")))
     # The run's CSV becomes unreadable as a file before finalize.
@@ -589,7 +591,7 @@ def test_a_views_core_merge_that_fails_leaves_run_meta_untouched(tmp_path):
     core.mkdir()
     with pytest.raises(OSError):
         exp.finalize()
-    assert (tmp_path / "run_meta.json").read_bytes() == meta_before
+    assert run_meta_file(tmp_path).read_bytes() == meta_before
     assert "recaptures" not in json.loads(meta_before)
     # Control: with the CSV back, the same recapture finalizes and both change.
     core.rmdir()
@@ -597,5 +599,5 @@ def test_a_views_core_merge_that_fails_leaves_run_meta_untouched(tmp_path):
     exp2, _record = _recapture_exporter(tmp_path, run_id, cfg)
     exp2.on_view_complete(dict(_summary(7), view=vc._view(7, "Sec")))
     exp2.finalize()
-    assert "recaptures" in json.loads((tmp_path / "run_meta.json").read_text())
+    assert "recaptures" in json.loads(run_meta_file(tmp_path).read_text())
     assert vc._rows(str(core))[1]["CaptureStatus"] == "success"

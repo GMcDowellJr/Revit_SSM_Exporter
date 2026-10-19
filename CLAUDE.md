@@ -241,12 +241,32 @@ turns an archive sidecar into the current shape.
 - The decoder takes a registered annotation capture's feet-per-pixel from its
   own tick fit; with no usable fit it reports none rather than guessing.
 
+**Run file layout** (2026-10-19, `vop_interwoven/output_layout.py`, the one
+place the names live). A new run is **v2**: `run_meta_<d>.json`, `color_id/`,
+`grid/`, `<stem>_anno.reg.*`, `grid_rollup_<d>.*`, `kinds_inventory_<d>.*`,
+where `<d>` is the run's file date (`file_date()`: the thinrunner's tag, else
+the as-of date -- what `views_core_<d>.csv` is named by). Every earlier run is
+**v1** (`run_meta.json`, `color_id_buffer/`, `analysis_grid/`,
+`.registered.*`, undated roll-up and inventory) and stays v1: a recapture and
+every tool write into a run in its own layout, and every reader accepts both.
+A view's file stem is `<view name>_<view id>` with the name CUT to what fits
+under the 260-character Windows path limit (long paths cannot be assumed),
+given the run's capture folder, a batch's temporary folder and the longest
+suffix any tool appends (`STEM_SUFFIXES`; a test fails when a tool appends a
+longer one); a view already in the run keeps its stem. A run whose folder
+leaves no room even for the view id is refused before any export
+(`check_run_budget`, `PathBudgetExceeded`). The run's layout travels on the
+config as private attributes (`_stage_a_layout`, `_stage_a_run_dir`), outside
+`Config.to_dict()` and the config hash. The batch's capture jobs write into the
+selected output folder itself, not a derived `<project>/<model>` subfolder.
+
 **Run outputs.** The `output_dir` a caller passes is a ROOT: each run writes
 into `<root>/<as_of_date>__<run_id>/` (`run_meta.run_directory()`, recorded
 as `run_meta.run_dir`), and a run directory that already holds another run, or
 holds no `run_meta.json`, is refused before any view is captured
 (`check_run_directory()`). `run_id` is always the execution clock
-(`YYYYMMDDTHHMMSS`, plus `_<tag>`); a date override sets only the as-of date
+(`YYYYMMDDTHHMM` since 2026-10-19, `YYYYMMDDTHHMMSS` before, plus `_<tag>`);
+a date override sets only the as-of date
 (`run_meta.date`) -- `run_identity()` is the one minting function.
 `vop_view_cache.json` stays in the root. `run_meta.json` is written once per run, `finalized: false`
 at the start and `finalized: true` with an outcome for every requested view

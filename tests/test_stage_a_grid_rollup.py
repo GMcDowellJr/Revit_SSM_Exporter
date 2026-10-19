@@ -485,21 +485,27 @@ def test_two_runs_roll_up_into_one_out_dir(tmp_path):
     assert not (a / "analysis_grid" / rollup.CSV_NAME).exists()
 
 
-def test_two_runs_without_out_exit_2_and_write_nothing(tmp_path):
+def test_two_runs_without_out_are_rolled_up_each_into_its_own_folder(tmp_path):
+    """Greg, 2026-10-19: several runs and no --out give each run the roll-up it
+    would have had alone, in its own folder; the same CSV as a single run."""
     a = _run(tmp_path, "run_a", "RUN_A")
     b = _run(tmp_path, "run_b", "RUN_B")
     _capture(a, 1)
     _capture(b, 1)
+    _capture(b, 2, gridded=False)
     proc = subprocess.run([sys.executable, str(TOOL), str(a), str(b)],
                           capture_output=True, text=True, cwd=str(REPO))
-    assert proc.returncode == 2, proc.stderr
-    assert "--out is required" in proc.stderr
-    for run in (a, b):
-        assert not (run / "analysis_grid" / rollup.CSV_NAME).exists()
+    assert proc.returncode == 1, proc.stdout + proc.stderr      # b has a not_gridded row
+    by_a, rows_a, sum_a = _read(a / "analysis_grid")
+    by_b, rows_b, sum_b = _read(b / "analysis_grid")
+    assert [r["run_id"] for r in rows_a] == ["RUN_A"]
+    assert sorted(r["view_stem"] for r in rows_b) == ["V_1", "V_2"]
+    assert [r["run_id"] for r in sum_a["runs"]] == ["RUN_A"]
+    alone = (a / "analysis_grid" / rollup.CSV_NAME).read_bytes()
     control = subprocess.run([sys.executable, str(TOOL), str(a)],
                              capture_output=True, text=True, cwd=str(REPO))
     assert control.returncode == 0, control.stdout + control.stderr
-    assert (a / "analysis_grid" / rollup.SUMMARY_NAME).exists()
+    assert (a / "analysis_grid" / rollup.CSV_NAME).read_bytes() == alone
 
 
 def test_a_run_that_requests_nothing_is_refused_and_exits_2(tmp_path):

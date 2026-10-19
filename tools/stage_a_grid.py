@@ -57,6 +57,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
 from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa: E402
@@ -1184,7 +1185,8 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         tiff = dsc._resolve_tiff_path(model_sidecar_path, sidecar)
         record["model_tiff_sha256"] = sha256_file(tiff)
         rgb = dsc._load_rgb_array(tiff)
-        reg_path = model_sidecar_path.with_name(stem + "_anno.registered.json")
+        reg_path = Path(output_layout.registered_paths(
+            model_sidecar_path.with_name(stem + "_anno.json"))[1])
         registered = _load_json(reg_path) if reg_path.exists() else None
         lattice = None
         if registered is not None:
@@ -1310,9 +1312,18 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
 
 
 def model_sidecars(folder):
+    """``(paths, capture folder)`` for a run directory or its capture folder
+    (``color_id/`` or ``color_id_buffer/``: vop_interwoven/output_layout). A
+    run holding both is refused: a run writes one layout."""
     folder = Path(folder)
-    if (folder / "color_id_buffer").is_dir():
-        folder = folder / "color_id_buffer"
+    found = [folder / name for name in (output_layout.CAPTURE_DIR[output_layout.V2],
+                                        output_layout.CAPTURE_DIR[output_layout.V1])
+             if (folder / name).is_dir()]
+    if len(found) > 1:
+        raise GridRefusal("{0} holds both capture folders ({1}); a run writes one "
+                          "layout".format(folder, ", ".join(p.name for p in found)))
+    if found:
+        folder = found[0]
     return sorted(p for p in folder.glob("*.json")
                   if _MODEL_SIDECAR_NAME.search(p.name)), folder
 
@@ -1328,7 +1339,7 @@ def main(argv=None):
     if not paths:
         print("no model sidecars under {0}".format(folder))
         return 2
-    out = Path(args.out) if args.out else folder.parent / "analysis_grid"
+    out = Path(args.out) if args.out else Path(output_layout.grid_dir_for_capture(folder))
     worst = 0
     sizes = []
     for path in paths:

@@ -64,12 +64,18 @@ with a lattice -- which is when the grid records
 ``registered_annotation.status == "unusable"``; or the record cannot be
 read). A gridded row that is not ``registered`` is "model-only".
 
-Outputs, in ``--out`` (default ``<run>/analysis_grid/`` for a single run;
-required for more than one): ``grid_rollup.csv``, then
-``grid_rollup.summary.json`` carrying the CSV's sha256 -- the summary is
-written last (CLAUDE.md, defect class 4). An empty CSV cell means "not
+Outputs: by default each run's own roll-up in its own grid folder
+(``grid/`` in a v2 run, ``analysis_grid/`` in a v1 run), as if each run were
+rolled up alone -- ``grid_rollup_<d>.csv`` then ``grid_rollup_<d>.summary.json``
+in a v2 run (``<d>`` the run's file date, as its views_core file;
+vop_interwoven/output_layout), ``grid_rollup.csv`` / ``grid_rollup.summary.json``
+in a v1 run. ``--out DIR`` instead writes ONE roll-up of every run given (the
+undated names for more than one run). The summary carries the CSV's sha256
+and is written last (CLAUDE.md, defect class 4). An empty CSV cell means "not
 applicable for this row status", never zero.
 
+1.3.0: the v2 layout (dated output names, ``grid/``), and several runs with no
+``--out`` are rolled up one by one into their own folders; columns unchanged.
 1.2.0 APPENDS the row status ``below_capture_floor``; nothing else moves.
 1.1.0 (A8) APPENDS columns; every 1.0.0 column keeps its place and meaning.
 From the grid record: ``ec_rows``, ``ec_keys`` and crop A's coverage. From
@@ -90,7 +96,8 @@ summary sits beside its denominator.
 
 Exit 0 when no run is refused and every row is ``gridded`` with registration
 ``registered``; 1 for any other row or a refused run; 2 when every run is
-refused, when the count invariant does not hold, or on bad arguments.
+refused, when the count invariant does not hold, or on bad arguments. Rolled
+up per run (no ``--out``), the worst of the runs' codes.
 """
 from __future__ import annotations
 
@@ -107,9 +114,10 @@ from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 from vop_interwoven import capture_floor  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA = "vop.stage_a.grid_rollup.v1"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 
 CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
@@ -199,10 +207,20 @@ def _cell(value):
 def run_layout(run_arg):
     """``(sidecars, capture_folder, run_dir, grid_dir)`` for one run argument,
     using the grid's own selector and the grid's own default output folder
-    (``stage_a_grid.main``: ``<capture folder>.parent / "analysis_grid"``)."""
+    (``output_layout.grid_dir_for_capture``: ``grid/`` beside ``color_id/``,
+    ``analysis_grid/`` beside ``color_id_buffer/``)."""
     sidecars, folder = grid.model_sidecars(run_arg)
     folder = Path(folder)
-    return sidecars, folder, folder.parent, folder.parent / "analysis_grid"
+    return sidecars, folder, folder.parent, Path(output_layout.grid_dir_for_capture(folder))
+
+
+def output_names(capture_folder):
+    """``(csv, summary)`` for one run's roll-up: ``grid_rollup_<d>.*`` in a v2
+    run (``<d>`` its file date, as its views_core file), the undated names
+    in a v1 run (vop_interwoven/output_layout)."""
+    meta = dsc.find_run_meta(Path(capture_folder) / "run_meta.json") or {}
+    return output_layout.rollup_names(output_layout.layout_of_capture_dir(capture_folder),
+                                      output_layout.file_date(meta))
 
 
 def registration_record_path(model_sidecar_path):
@@ -964,9 +982,11 @@ def run_rows(sidecars, grid_dir, run_id, views_core, ident, with_keys=True):
     return rows
 
 
-def rollup(layouts, out_dir):
-    """Write the CSV, then the summary; return the summary."""
+def rollup(layouts, out_dir, names=None):
+    """Write the CSV, then the summary; return the summary. ``names`` is the
+    ``(csv, summary)`` pair; default the v1 names."""
     out_dir = Path(out_dir)
+    csv_name, summary_name = names or (CSV_NAME, SUMMARY_NAME)
     rows, runs = [], []
     for sidecars, folder, run_dir, grid_dir in layouts:
         # The decoder's own search: beside the capture folder, then one up.
@@ -990,14 +1010,14 @@ def rollup(layouts, out_dir):
             rows.extend(run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id),
                                  ident))
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / CSV_NAME
+    csv_path = out_dir / csv_name
     with open(csv_path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
         writer.writeheader()
         for r in rows:
             writer.writerow(dict((k, _cell(r[k])) for k in COLUMNS))
     summary = summarise(runs, rows, csv_path)
-    with open(out_dir / SUMMARY_NAME, "w", encoding="utf-8") as handle:
+    with open(out_dir / summary_name, "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True, default=str)
     return summary, rows
 
@@ -1007,22 +1027,8 @@ def _inside(path, folder):
     return path == folder or folder in path.parents
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("runs", nargs="+", metavar="run",
-                    help="a run directory or its color_id_buffer/")
-    ap.add_argument("--out", default=None,
-                    help="output directory (default, one run only: <run>/analysis_grid)")
-    args = ap.parse_args(argv)
-    if len(args.runs) > 1 and not args.out:
-        ap.error("--out is required with more than one run")
-    layouts = [run_layout(run) for run in args.runs]
-    out = Path(args.out) if args.out else layouts[0][3]
-    for _s, folder, _r, _g in layouts:
-        if _inside(out, folder):
-            ap.error("--out {0} is inside the capture folder {1}; the roll-up never "
-                     "writes there".format(out, folder))
-    summary, rows = rollup(layouts, out)
+def _report(summary, rows, out, names):
+    """Print one roll-up's outcome; return its exit code."""
     n = summary["denominator"]
     print("{0} rows ({1} requested + {2} orphan sidecars): ".format(
         n, summary["requested_count"], summary["count_invariant"]["orphan_sidecar_count"])
@@ -1037,7 +1043,7 @@ def main(argv=None):
                 r["view_stem"] or "view {0}".format(r["view_id"]), r["reason"]))
     for r in summary["refused_runs"]["runs"]:
         print("REFUSED run {0}: {1}".format(r["run_dir"], r["reason"]))
-    print("wrote {0} and {1}".format(out / CSV_NAME, out / SUMMARY_NAME))
+    print("wrote {0} and {1}".format(out / names[0], out / names[1]))
     diff = summary["count_invariant"]["difference"]
     if diff:
         print("COUNT INVARIANT BROKEN: {0} rows, but {1} requested + {2} orphan sidecars "
@@ -1046,12 +1052,43 @@ def main(argv=None):
                                            diff))
         return 2
     refused = summary["refused_runs"]["count"]
-    if refused == len(layouts):
+    if refused == len(summary["runs"]):
         print("every run was refused; nothing was rolled up")
         return 2
     every = all(r["row_status"] == "gridded" and r["registration_state"] == "registered"
                 for r in rows)
     return 0 if every and not refused else 1
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("runs", nargs="+", metavar="run",
+                    help="a run directory or its capture folder")
+    ap.add_argument("--out", default=None,
+                    help="one combined roll-up of every run, in this directory "
+                         "(default: each run's own roll-up in its own grid folder)")
+    args = ap.parse_args(argv)
+    layouts = [run_layout(run) for run in args.runs]
+    if args.out:
+        out = Path(args.out)
+        for _s, folder, _r, _g in layouts:
+            if _inside(out, folder):
+                ap.error("--out {0} is inside the capture folder {1}; the roll-up never "
+                         "writes there".format(out, folder))
+        names = (output_names(layouts[0][1]) if len(layouts) == 1
+                 else (CSV_NAME, SUMMARY_NAME))
+        summary, rows = rollup(layouts, out, names)
+        return _report(summary, rows, out, names)
+    # Each run on its own, into its own grid folder, as if run alone.
+    codes = []
+    for layout in layouts:
+        names = output_names(layout[1])
+        summary, rows = rollup([layout], layout[3], names)
+        codes.append(_report(summary, rows, Path(layout[3]), names))
+    if len(codes) > 1:
+        print("{0} runs: exit codes {1}".format(len(codes), codes))
+    # Per run, as if each were run alone: the worst of their codes.
+    return max(codes)
 
 
 if __name__ == "__main__":

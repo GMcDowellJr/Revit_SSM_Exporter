@@ -68,15 +68,17 @@ def test_a_stage_that_cannot_run_stops_what_follows(tmp_path):
     assert not (empty / "analysis_grid").exists()
 
 
-def test_several_runs_need_an_out_and_share_one_rollup(tmp_path):
+def test_several_runs_without_out_each_get_their_own_and_with_out_share_one(tmp_path):
+    """Greg, 2026-10-19: without --out each run is analysed as if alone."""
     a, b = _run(tmp_path, "run_a", "RUN_A"), _run(tmp_path, "run_b", "RUN_B")
     _capture(a, 1, register=False, gridded=False)
     _capture(b, 1, register=False, gridded=False)
-    try:
-        analyze.analyze([a, b])
-        raise AssertionError("expected a refusal without --out")
-    except ValueError as ex:
-        assert "--out" in str(ex)
+    code, _results = analyze.analyze([a, b])
+    assert code == 0
+    for run, run_id in ((a, "RUN_A"), (b, "RUN_B")):
+        _by, rows, _s = _read(run / "analysis_grid")
+        assert [r["run_id"] for r in rows] == [run_id]
+        assert (run / "analysis_grid" / kinds.INVENTORY_JSON).exists()
     out = tmp_path / "combined"
     assert analyze.main([str(a), str(b), "--out", str(out)]) == 0
     _by, rows, summary = _read(out)
