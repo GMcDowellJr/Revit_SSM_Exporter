@@ -32,7 +32,10 @@ changes against the shipped two-pass capture, and the measurement behind each
 
 Sequence: snapshot -> group -> marks -> MODEL pass (OST_Lines left visible, so
 the marks draw) -> white membership suppression -> ANNOTATION pass (external
-suppression, authored crop kept or crop A applied) -> rollback -> read-back -> the registration record
+suppression, authored crop kept or crop A applied) -> [a second, CO-SIZED attempt
+of marks..annotation pass, each attempt in a nested group rolled back, when the
+annotation export overran the ceiling: resolution_contract.co_sized_request] ->
+rollback -> read-back -> the registration record
 into BOTH sidecars, under ``registration_marks`` (the annotation sidecar's own
 ``registration`` block is production's and is never overwritten). The record is
 written LAST, after the read-back, so the
@@ -450,7 +453,7 @@ def mark_fpp_ft(view, raster, cfg):
     capped view. Unresolvable -> the requested dpi, with the reason as the
     basis.
     """
-    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, resolve_crop_a
+    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, co_sized_fit_px, resolve_crop_a
     from .resolution_contract import frame_export_geometry
     try:
         crop_uv, _record = resolve_crop_a(view, raster)
@@ -460,7 +463,8 @@ def mark_fpp_ft(view, raster, cfg):
             fit_direction=str(getattr(cfg, "color_id_buffer_fit_direction", "horizontal")
                               or "horizontal"),
             max_axis_px=(getattr(cfg, "color_id_buffer_cap_axis_px", None)
-                         or MAX_STAGE_A_AXIS_PX))
+                         or MAX_STAGE_A_AXIS_PX),
+            fit_px_limit=co_sized_fit_px(cfg))
         return float(geom["achieved_fpp_ft"]), "model_lattice"
     except (AttributeError, TypeError, ValueError) as ex:
         return nominal_fpp_ft(view, cfg), "requested_dpi ({0}: {1})".format(
@@ -473,8 +477,10 @@ def mark_fpp_ft(view, raster, cfg):
 # What total holds beyond their sum -- the membership collection, detail-line
 # hide/show, link-category discovery, the view-state and mark read-backs --
 # is reported as ``unaccounted``, not hidden.
-TIMING_PARTITION = ("authored_override_scan", "split_remove", "lines_unhide", "mark_layout",
-                    "marks_create", "model_pass", "suppression", "annotation_pass", "rollback",
+TIMING_PARTITION = ("authored_override_scan", "split_remove", "lines_unhide",
+                    "co_sizing_first_attempt", "mark_layout",
+                    "marks_create", "model_pass", "suppression", "annotation_pass",
+                    "attempt_rollback", "rollback",
                     "restore_element_overrides", "view_membership_readback")
 
 
@@ -704,6 +710,14 @@ def apply_anno_extent_variant(doc, view, variant, anno_members, Transaction,
     return record
 
 
+def _frame_summary(frame):
+    """The sizes of one pass's export, from its frame record."""
+    frame = frame or {}
+    return dict((k, frame.get(k)) for k in (
+        "pixel_size", "actual_w", "actual_h", "dim_check", "cap_applied",
+        "co_sized_fit_px", "dim_check_attempts"))
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -745,6 +759,10 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # PROBE-ONLY: the annotation-extent variant this capture ran under
         # (anno_extent_variant); absent from every production capture.
         "anno_extent_variant": record.get("anno_extent_variant"),
+        # The co-sized second attempt (co_sized_request): why, the request,
+        # the coarsening and the first attempt's frames; None when the
+        # annotation export fit at the model's request.
+        "co_sizing": record.get("co_sizing"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
                           if shared_colour is not None else
@@ -788,6 +806,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         export_annotation_color_id_buffer_view, export_color_id_buffer_view,
     )
     from .revit.annotation import split_stage_a_pass_membership
+    from .resolution_contract import MAX_STAGE_A_AXIS_PX, co_sized_request
     from . import stage_a_registration as registration
 
     view_id = _element_id_int(getattr(view, "Id", None))
@@ -908,332 +927,409 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             fault=_fault)
         record["timings_ms"]["lines_unhide"] = round((time.time() - _t) * 1000.0, 3)
 
-        # ---- 1: registration marks -----------------------------------------
-        _t = time.time()
-        reference, source = mark_reference_rectangle(view, raster, diag=diag,
-                                                     view_id=view_id)
-        mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, cfg)
-        # ---- 1a: the crop LOOP (2026-10-12) ---------------------------------
-        # The reference above is View.CropBox, the loop's bounding box. The
-        # ticks go inside the LOOP (stage_a_registration's CROP LOOP note):
-        # an ordinary crop's loop IS the box and nothing changes; a rotated or
-        # non-rectangular one puts the ticks on the largest axis-aligned
-        # rectangle inside it. A loop that will not read is a fault, and the
-        # ticks stay on the box, as shipped.
-        loop_uv = None
-        crop_shape = {"state": "not_read", "reason": "no crop region"}
-        in_recapture = getattr(cfg, "_recapture_record", None) is not None
-        if has_crop_region and reference is not None and source != "authored_crop":
-            # A crop-INACTIVE view: the reference is crop A, which both passes
-            # activate as the crop box, so the box IS what the export renders.
-            # The view's stored loop is not (Codex, PR #236): it is not read.
-            crop_shape = {"state": "not_read",
-                          "reason": "the reference is {0}, not the authored crop; the "
-                                    "stored loop is not what the export renders".format(source)}
-        elif has_crop_region and reference is not None:
-            basis_ = getattr(raster, "view_basis", None)
-            crop_shape = (crop_shape_state(view, basis_) if basis_ is not None else
-                          {"state": "unavailable", "reason": "no view basis to project the loop"})
-            unverified = None
-            if crop_shape["state"] != "value":
-                unverified = ("the crop region's loop could not be read, so the ticks are "
-                              "placed on the crop box and may lie outside what the view "
-                              "renders: {0}".format(crop_shape.get("reason")))
-            elif crop_shape["loop_count"] != 1:
-                crop_shape["reference"] = "crop_box"
-                unverified = ("the crop region has {0} loops; the ticks are placed on the "
-                              "crop box".format(crop_shape["loop_count"]))
-            if unverified is not None:
-                _fault("crop_shape_unverified", unverified)
-                if in_recapture:
-                    # A recapture cannot show its ticks inside what the view
-                    # renders: it must not replace the old capture (Codex,
-                    # PR #236). Nothing has been exported yet.
-                    raise RecaptureRefused("recapture refused: the crop loop could not be "
-                                           "verified ({0})".format(unverified))
-            else:
-                from .color_id_buffer import CROP_READ_BACK_TOLERANCE_PX
-                loop_uv = crop_shape["loops_uv"][0]
-                ref_loop, how = registration.mark_reference_from_loop(
-                    loop_uv, reference, CROP_READ_BACK_TOLERANCE_PX * float(mark_fpp))
-                crop_shape.update(how)
-                if ref_loop is None:
-                    _fault("registration_marks_no_room_in_crop_loop",
-                           "no axis-aligned rectangle fits inside the crop loop ({0} "
-                           "vertices); the ticks are placed on the crop box".format(
-                               crop_shape["vertex_count"]))
-                elif how["reference"] == "crop_loop_inscribed":
-                    reference, source = ref_loop, "crop_loop_inscribed"
-        record["crop_shape"] = crop_shape
-        record["mark_reference_source"] = source
-        layout = (registration.registration_mark_segments(reference, mark_fpp)
-                  if reference is not None else {"state": "unavailable",
-                                                 "reason": source})
-        # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or
-        # dimension does not show in the annotation capture.
-        avoid, record["mark_avoidance"] = annotation_avoid_rects(
-            view, _anno, getattr(raster, "view_basis", None), diag=diag,
-            view_id=view_id)
-        # A diagnostic only (group A of RUN_..._SMALL_VIEWS.md): crop A
-        # united with the annotation bboxes, against the cap. Not the
-        # export's extent (see the function): recorded to compare with it.
-        from .color_id_buffer import MAX_STAGE_A_AXIS_PX
-        record["annotation_extent_prediction"] = registration.annotation_extent_prediction(
-            reference, avoid, mark_fpp,
-            getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX)
-        if isinstance(layout.get("below_floor"), dict):
-            # THE CAPTURE FLOOR. The reference rectangle cannot take the
-            # twelve ticks, so nothing this capture exported could register:
-            # legends 4622 and 142022 failed this way in all 44 runs of
-            # 2025-02-03..11-01 and were counted as a measure lost. Refused
-            # here, before any export, with the measurement; the outcome is
-            # ``unmeasurable`` (csv_export.stage_a_capture_status), which the
-            # finder and the roll-up tell apart from a failed capture.
-            record["below_capture_floor"] = dict(layout["below_floor"],
-                                                 reference_source=source,
-                                                 mark_fpp_basis=record["mark_fpp_basis"])
-            raise CaptureBelowFloor(
-                "below_capture_floor: {0} (floor {1:.0f} px, reference {2}, "
-                "{3:.6g} ft/px)".format(layout.get("reason"),
-                                        layout["below_floor"]["floor_px"], source, mark_fpp))
-        layout = registration.relocate_marks_clear_of(layout, avoid)
-        # A tick outside the loop will not render (3939979: 12 of 12, white
-        # corners); said BEFORE the export rather than found by the fitter.
-        if loop_uv is not None:
-            record["ticks_outside_crop_loop"] = registration.ticks_outside_loop(layout, loop_uv)
-            if record["ticks_outside_crop_loop"]:
-                _fault("registration_marks_outside_crop_loop",
-                       "{0} of {1} ticks lie outside the crop region's loop and will not "
-                       "render: {2}".format(len(record["ticks_outside_crop_loop"]),
-                                            len(layout.get("segments") or []),
-                                            ", ".join(record["ticks_outside_crop_loop"])))
-                if in_recapture:
-                    # A recapture must not replace a capture with one that
-                    # fails the same way: stop before anything is exported,
-                    # and the view's files stay as they were.
-                    raise RecaptureRefused(
-                        "recapture refused: {0} tick(s) would still lie outside the crop "
-                        "loop".format(len(record["ticks_outside_crop_loop"])))
-        # P2: reference rectangle, sizing, segments and avoidance together.
-        record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
-        _t = time.time()
-        tx = Transaction(doc, "VOP Stage A registration marks")
-        tx.Start()
-        try:
-            marks = registration.create_registration_marks(
-                doc, view, getattr(raster, "view_basis", None), layout,
-                diag=diag, view_id=view_id)
-            if not has_crop_region:
-                # No crop: the export renders the drawn extent, so two WHITE
-                # lines at opposite corners of crop A set it to crop A in
-                # both captures (stage_a_registration's FRAME BOUNDS note).
-                bound_length, tolerance_basis = frame_bound_length_ft(doc, mark_fpp)
-                bound_layout = (registration.frame_bound_segments(reference, bound_length)
-                                if reference is not None else
-                                {"state": "unavailable", "reason": source})
-                bounds = registration.create_registration_marks(
-                    doc, view, getattr(raster, "view_basis", None), bound_layout,
-                    diag=diag, view_id=view_id, colour=registration.WHITE)
-                bounds["short_curve_tolerance"] = tolerance_basis
-                record["frame_bounds"] = bounds
-                bound_ids.extend(b.get("id") for b in bounds.get("created") or []
-                                 if b.get("id") is not None)
-            if tx.Commit() != TransactionStatus.Committed:
-                raise RuntimeError("marks Transaction.Commit did not commit")
-        except Exception:
-            tx.RollBack()
-            raise
-        record["timings_ms"]["marks_create"] = round((time.time() - _t) * 1000.0, 3)
-        record["marks"] = marks
-        if not has_crop_region:
-            fb = record.get("frame_bounds") or {}
-            if fb.get("created_count") != 2 or fb.get("line_style_not_applied"):
-                _fault("frame_bounds_incomplete",
-                       "the view has no crop region and {0} of 2 frame-bound lines "
-                       "were drawn ({1}); the export's extent is not crop A".format(
-                           fb.get("created_count"), fb.get("reason")))
-            # A bound whose WHITE override did not take draws in its native
-            # colour: ink in the model capture that no palette owns (Codex,
-            # PR #227).
-            unpainted = [b for b in fb.get("created") or [] if not b.get("painted")]
-            if unpainted:
-                _fault("frame_bounds_not_white",
-                       "{0} frame-bound line(s) could not be painted white and may "
-                       "draw as unassigned ink: {1}".format(
-                           len(unpainted),
-                           [(b.get("id"), b.get("paint_error")) for b in unpainted]))
-        if marks.get("created_count") != marks.get("expected_count") or not marks.get(
-                "expected_count"):
-            _fault("registration_marks_incomplete",
-                   "{0} of {1} marks drawn: {2}".format(
-                       marks.get("created_count"), marks.get("expected_count"),
-                       marks.get("reason")))
-        if marks.get("lines_category_hidden_in_view") is not False:
-            _fault("registration_marks_may_not_draw",
-                   "the view hides OST_Lines, or its state could not be read "
-                   "({0})".format(marks.get("lines_category_hidden_in_view")))
-        # A tick that did not TAKE the chosen style (read back per tick) is
-        # not covered by the chosen style's visibility below (Codex, PR #226).
-        if marks.get("line_style_not_applied"):
-            _fault("registration_mark_style_not_applied",
-                   "{0} tick(s) do not carry the chosen line style ({1}): {2}".format(
-                       len(marks["line_style_not_applied"]),
-                       (marks.get("line_style") or {}).get("name"),
-                       marks["line_style_not_applied"][:12]))
-        # The parent is not enough: a view can hide the ticks' own line-style
-        # subcategory with OST_Lines visible (probe Q6: <Thin Lines> hidden by
-        # the template, 31 views without a tick and no fault).
-        style = marks.get("line_style") or {}
-        if marks.get("expected_count") and style.get("subcategory_hidden_in_view") is not False:
-            _fault("registration_marks_may_not_draw",
-                   "the ticks' line style ({0}, path {1}) has its subcategory hidden "
-                   "in the view, or its state could not be read ({2}): {3}".format(
-                       style.get("name"), style.get("path"),
-                       style.get("subcategory_hidden_in_view"),
-                       style.get("subcategory_hidden_error") or style.get("reason")))
-
-        # ---- 1b: the view's OTHER detail lines, hidden for the model pass --
-        # OST_Lines stays visible there so the marks draw; without this every
-        # other detail line -- annotation -- would draw into the model image
-        # unpainted. Hidden only for the model pass, shown again before the
-        # annotation pass, which is where they belong; the group's rollback
-        # is the backstop, and the read-back below checks it.
-        if detail_lines["ids"]:
-            tx = Transaction(doc, "VOP Stage A hide detail lines for the model pass")
-            tx.Start()
+        # ---- 1-4: THE ATTEMPT, in its own nested group -------------------
+        # Marks, model pass, white suppression, annotation pass. Rolled back
+        # when it ends, so a second attempt starts from the view as steps 0a
+        # and 0b left it; the outer group's rollback below is still the
+        # restore, and the read-backs after it cover both attempts.
+        #
+        # A SECOND ATTEMPT, CO-SIZED (group A of RUN_2025-02-03_to_2025-11-01
+        # _SERIES_SMALL_VIEWS.md): when the annotation export's derived axis
+        # came back over the ceiling at the model's request -- section lines
+        # past the crop, on the six Wall Types BP plans -- it was halved and
+        # refused as annotation_lattice_mismatch. The second attempt sizes
+        # BOTH passes (and the ticks) at the request at which the annotation
+        # fits (resolution_contract.co_sized_request), so they share one
+        # lattice again. A view whose annotation export fits runs once, at
+        # the size it always had.
+        attempt_cfg = cfg
+        attempt_mark_ids = record.setdefault("_attempt_mark_ids", [])
+        record["timings_ms"]["co_sizing_first_attempt"] = 0.0
+        record["timings_ms"]["attempt_rollback"] = 0.0
+        for attempt in (1, 2):
+            faults_before = len(record["faults"])
+            _t_attempt = time.time()
+            attempt_group = TransactionGroup(doc, "VOP Stage A registered capture attempt "
+                                                  "{0}".format(attempt))
+            if attempt_group.Start() != TransactionStatus.Started:
+                raise RuntimeError("the attempt's TransactionGroup did not start")
             try:
-                hide = registration.hide_in_view(doc, view, detail_lines["ids"])
-                if tx.Commit() != TransactionStatus.Committed:
-                    raise RuntimeError("detail-line Transaction.Commit did not commit")
-            except Exception:
-                tx.RollBack()
-                raise
-            detail_lines["hidden"] = list(hide["hidden"])
-            record["detail_lines"] = {
-                "count": len(detail_lines["ids"]),
-                "hidden_for_model_pass": len(hide["hidden"]),
-                "already_hidden": len(hide["already_hidden"]),
-                "unreadable": hide["unreadable"][:50],
-                "hide_error": hide["error"],
+                # ---- 1: registration marks -----------------------------------------
+                _t = time.time()
+                reference, source = mark_reference_rectangle(view, raster, diag=diag,
+                                                             view_id=view_id)
+                mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, attempt_cfg)
+                # ---- 1a: the crop LOOP (2026-10-12) ---------------------------------
+                # The reference above is View.CropBox, the loop's bounding box. The
+                # ticks go inside the LOOP (stage_a_registration's CROP LOOP note):
+                # an ordinary crop's loop IS the box and nothing changes; a rotated or
+                # non-rectangular one puts the ticks on the largest axis-aligned
+                # rectangle inside it. A loop that will not read is a fault, and the
+                # ticks stay on the box, as shipped.
+                loop_uv = None
+                crop_shape = {"state": "not_read", "reason": "no crop region"}
+                in_recapture = getattr(attempt_cfg, "_recapture_record", None) is not None
+                if has_crop_region and reference is not None and source != "authored_crop":
+                    # A crop-INACTIVE view: the reference is crop A, which both passes
+                    # activate as the crop box, so the box IS what the export renders.
+                    # The view's stored loop is not (Codex, PR #236): it is not read.
+                    crop_shape = {"state": "not_read",
+                                  "reason": "the reference is {0}, not the authored crop; the "
+                                            "stored loop is not what the export renders".format(source)}
+                elif has_crop_region and reference is not None:
+                    basis_ = getattr(raster, "view_basis", None)
+                    crop_shape = (crop_shape_state(view, basis_) if basis_ is not None else
+                                  {"state": "unavailable", "reason": "no view basis to project the loop"})
+                    unverified = None
+                    if crop_shape["state"] != "value":
+                        unverified = ("the crop region's loop could not be read, so the ticks are "
+                                      "placed on the crop box and may lie outside what the view "
+                                      "renders: {0}".format(crop_shape.get("reason")))
+                    elif crop_shape["loop_count"] != 1:
+                        crop_shape["reference"] = "crop_box"
+                        unverified = ("the crop region has {0} loops; the ticks are placed on the "
+                                      "crop box".format(crop_shape["loop_count"]))
+                    if unverified is not None:
+                        _fault("crop_shape_unverified", unverified)
+                        if in_recapture:
+                            # A recapture cannot show its ticks inside what the view
+                            # renders: it must not replace the old capture (Codex,
+                            # PR #236). Nothing has been exported yet.
+                            raise RecaptureRefused("recapture refused: the crop loop could not be "
+                                                   "verified ({0})".format(unverified))
+                    else:
+                        from .color_id_buffer import CROP_READ_BACK_TOLERANCE_PX
+                        loop_uv = crop_shape["loops_uv"][0]
+                        ref_loop, how = registration.mark_reference_from_loop(
+                            loop_uv, reference, CROP_READ_BACK_TOLERANCE_PX * float(mark_fpp))
+                        crop_shape.update(how)
+                        if ref_loop is None:
+                            _fault("registration_marks_no_room_in_crop_loop",
+                                   "no axis-aligned rectangle fits inside the crop loop ({0} "
+                                   "vertices); the ticks are placed on the crop box".format(
+                                       crop_shape["vertex_count"]))
+                        elif how["reference"] == "crop_loop_inscribed":
+                            reference, source = ref_loop, "crop_loop_inscribed"
+                record["crop_shape"] = crop_shape
+                record["mark_reference_source"] = source
+                layout = (registration.registration_mark_segments(reference, mark_fpp)
+                          if reference is not None else {"state": "unavailable",
+                                                         "reason": source})
+                # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or
+                # dimension does not show in the annotation capture.
+                avoid, record["mark_avoidance"] = annotation_avoid_rects(
+                    view, _anno, getattr(raster, "view_basis", None), diag=diag,
+                    view_id=view_id)
+                # A diagnostic only (group A of RUN_..._SMALL_VIEWS.md): crop A
+                # united with the annotation bboxes, against the cap. Not the
+                # export's extent (see the function): recorded to compare with it.
+                record["annotation_extent_prediction"] = registration.annotation_extent_prediction(
+                    reference, avoid, mark_fpp,
+                    getattr(attempt_cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX)
+                if isinstance(layout.get("below_floor"), dict):
+                    # THE CAPTURE FLOOR. The reference rectangle cannot take the
+                    # twelve ticks, so nothing this capture exported could register:
+                    # legends 4622 and 142022 failed this way in all 44 runs of
+                    # 2025-02-03..11-01 and were counted as a measure lost. Refused
+                    # here, before any export, with the measurement; the outcome is
+                    # ``unmeasurable`` (csv_export.stage_a_capture_status), which the
+                    # finder and the roll-up tell apart from a failed capture.
+                    record["below_capture_floor"] = dict(layout["below_floor"],
+                                                         reference_source=source,
+                                                         mark_fpp_basis=record["mark_fpp_basis"])
+                    raise CaptureBelowFloor(
+                        "below_capture_floor: {0} (floor {1:.0f} px, reference {2}, "
+                        "{3:.6g} ft/px)".format(layout.get("reason"),
+                                                layout["below_floor"]["floor_px"], source, mark_fpp))
+                layout = registration.relocate_marks_clear_of(layout, avoid)
+                # A tick outside the loop will not render (3939979: 12 of 12, white
+                # corners); said BEFORE the export rather than found by the fitter.
+                if loop_uv is not None:
+                    record["ticks_outside_crop_loop"] = registration.ticks_outside_loop(layout, loop_uv)
+                    if record["ticks_outside_crop_loop"]:
+                        _fault("registration_marks_outside_crop_loop",
+                               "{0} of {1} ticks lie outside the crop region's loop and will not "
+                               "render: {2}".format(len(record["ticks_outside_crop_loop"]),
+                                                    len(layout.get("segments") or []),
+                                                    ", ".join(record["ticks_outside_crop_loop"])))
+                        if in_recapture:
+                            # A recapture must not replace a capture with one that
+                            # fails the same way: stop before anything is exported,
+                            # and the view's files stay as they were.
+                            raise RecaptureRefused(
+                                "recapture refused: {0} tick(s) would still lie outside the crop "
+                                "loop".format(len(record["ticks_outside_crop_loop"])))
+                # P2: reference rectangle, sizing, segments and avoidance together.
+                record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
+                _t = time.time()
+                tx = Transaction(doc, "VOP Stage A registration marks")
+                tx.Start()
+                try:
+                    marks = registration.create_registration_marks(
+                        doc, view, getattr(raster, "view_basis", None), layout,
+                        diag=diag, view_id=view_id)
+                    if not has_crop_region:
+                        # No crop: the export renders the drawn extent, so two WHITE
+                        # lines at opposite corners of crop A set it to crop A in
+                        # both captures (stage_a_registration's FRAME BOUNDS note).
+                        bound_length, tolerance_basis = frame_bound_length_ft(doc, mark_fpp)
+                        bound_layout = (registration.frame_bound_segments(reference, bound_length)
+                                        if reference is not None else
+                                        {"state": "unavailable", "reason": source})
+                        bounds = registration.create_registration_marks(
+                            doc, view, getattr(raster, "view_basis", None), bound_layout,
+                            diag=diag, view_id=view_id, colour=registration.WHITE)
+                        bounds["short_curve_tolerance"] = tolerance_basis
+                        record["frame_bounds"] = bounds
+                        bound_ids.extend(b.get("id") for b in bounds.get("created") or []
+                                         if b.get("id") is not None)
+                    if tx.Commit() != TransactionStatus.Committed:
+                        raise RuntimeError("marks Transaction.Commit did not commit")
+                except Exception:
+                    tx.RollBack()
+                    raise
+                record["timings_ms"]["marks_create"] = round((time.time() - _t) * 1000.0, 3)
+                record["marks"] = marks
+                if not has_crop_region:
+                    fb = record.get("frame_bounds") or {}
+                    if fb.get("created_count") != 2 or fb.get("line_style_not_applied"):
+                        _fault("frame_bounds_incomplete",
+                               "the view has no crop region and {0} of 2 frame-bound lines "
+                               "were drawn ({1}); the export's extent is not crop A".format(
+                                   fb.get("created_count"), fb.get("reason")))
+                    # A bound whose WHITE override did not take draws in its native
+                    # colour: ink in the model capture that no palette owns (Codex,
+                    # PR #227).
+                    unpainted = [b for b in fb.get("created") or [] if not b.get("painted")]
+                    if unpainted:
+                        _fault("frame_bounds_not_white",
+                               "{0} frame-bound line(s) could not be painted white and may "
+                               "draw as unassigned ink: {1}".format(
+                                   len(unpainted),
+                                   [(b.get("id"), b.get("paint_error")) for b in unpainted]))
+                if marks.get("created_count") != marks.get("expected_count") or not marks.get(
+                        "expected_count"):
+                    _fault("registration_marks_incomplete",
+                           "{0} of {1} marks drawn: {2}".format(
+                               marks.get("created_count"), marks.get("expected_count"),
+                               marks.get("reason")))
+                if marks.get("lines_category_hidden_in_view") is not False:
+                    _fault("registration_marks_may_not_draw",
+                           "the view hides OST_Lines, or its state could not be read "
+                           "({0})".format(marks.get("lines_category_hidden_in_view")))
+                # A tick that did not TAKE the chosen style (read back per tick) is
+                # not covered by the chosen style's visibility below (Codex, PR #226).
+                if marks.get("line_style_not_applied"):
+                    _fault("registration_mark_style_not_applied",
+                           "{0} tick(s) do not carry the chosen line style ({1}): {2}".format(
+                               len(marks["line_style_not_applied"]),
+                               (marks.get("line_style") or {}).get("name"),
+                               marks["line_style_not_applied"][:12]))
+                # The parent is not enough: a view can hide the ticks' own line-style
+                # subcategory with OST_Lines visible (probe Q6: <Thin Lines> hidden by
+                # the template, 31 views without a tick and no fault).
+                style = marks.get("line_style") or {}
+                if marks.get("expected_count") and style.get("subcategory_hidden_in_view") is not False:
+                    _fault("registration_marks_may_not_draw",
+                           "the ticks' line style ({0}, path {1}) has its subcategory hidden "
+                           "in the view, or its state could not be read ({2}): {3}".format(
+                               style.get("name"), style.get("path"),
+                               style.get("subcategory_hidden_in_view"),
+                               style.get("subcategory_hidden_error") or style.get("reason")))
+
+                # ---- 1b: the view's OTHER detail lines, hidden for the model pass --
+                # OST_Lines stays visible there so the marks draw; without this every
+                # other detail line -- annotation -- would draw into the model image
+                # unpainted. Hidden only for the model pass, shown again before the
+                # annotation pass, which is where they belong; the group's rollback
+                # is the backstop, and the read-back below checks it.
+                if detail_lines["ids"]:
+                    tx = Transaction(doc, "VOP Stage A hide detail lines for the model pass")
+                    tx.Start()
+                    try:
+                        hide = registration.hide_in_view(doc, view, detail_lines["ids"])
+                        if tx.Commit() != TransactionStatus.Committed:
+                            raise RuntimeError("detail-line Transaction.Commit did not commit")
+                    except Exception:
+                        tx.RollBack()
+                        raise
+                    detail_lines["hidden"] = list(hide["hidden"])
+                    record["detail_lines"] = {
+                        "count": len(detail_lines["ids"]),
+                        "hidden_for_model_pass": len(hide["hidden"]),
+                        "already_hidden": len(hide["already_hidden"]),
+                        "unreadable": hide["unreadable"][:50],
+                        "hide_error": hide["error"],
+                    }
+                    if hide["error"] or hide["unreadable"]:
+                        _fault("detail_lines_may_draw_in_model_capture",
+                               "not every detail line could be hidden for the model pass "
+                               "({0}; {1} unreadable)".format(
+                                   hide["error"], len(hide["unreadable"])))
+                else:
+                    record["detail_lines"] = {"count": 0}
+
+                # ---- 2: MODEL pass, OST_Lines visible so the marks draw ------------
+                model_cfg = copy.copy(attempt_cfg)
+                model_cfg.color_id_buffer_model_lines_visible = True
+                # C7: sized from crop A alone; frame B is not computed or recorded.
+                model_cfg.color_id_buffer_model_frame = "crop_a"
+                geom = {}
+                _t = time.time()
+                model_out = export_color_id_buffer_view(
+                    doc, view, elements, model_cfg, diag=diag, raster=raster,
+                    elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True)
+                record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
+                _pass_timings("model", model_out)
+                if detail_lines["hidden"]:
+                    tx = Transaction(doc, "VOP Stage A show detail lines for the annotation pass")
+                    tx.Start()
+                    try:
+                        show_error = registration.show_in_view(view, detail_lines["hidden"])
+                        if tx.Commit() != TransactionStatus.Committed:
+                            raise RuntimeError("detail-line Transaction.Commit did not commit")
+                    except Exception:
+                        tx.RollBack()
+                        raise
+                    if show_error is not None:
+                        _fault("detail_lines_missing_from_annotation_capture",
+                               "the detail lines hidden for the model pass could not be "
+                               "shown again before the annotation pass: {0}".format(show_error))
+                if not (model_out or {}).get("success"):
+                    raise RuntimeError("the model pass reported failure: {0}".format(
+                        (model_out or {}).get("failure_reason")))
+
+                # ---- 3: white membership suppression ------------------------------
+                capability = registration.white_override_capability(doc)
+                if capability.get("state") != "value":
+                    raise RuntimeError("the white override cannot be built on this host: "
+                                       "{0}".format(capability.get("reason")))
+                link_categories, link_report = registration.discover_link_categories(
+                    doc, view, diag=diag, view_id=view_id)
+                record["link_categories"] = link_report
+                tx = Transaction(doc, "VOP Stage A membership white suppression")
+                tx.Start()
+                try:
+                    _t = time.time()
+                    suppression = registration.white_membership_suppression(
+                        doc, view, view_id, model_members, link_categories=link_categories,
+                        diag=diag)
+                    if tx.Commit() != TransactionStatus.Committed:
+                        raise RuntimeError("suppression Transaction.Commit did not commit")
+                    record["timings_ms"]["suppression"] = round((time.time() - _t) * 1000.0, 3)
+                except Exception:
+                    tx.RollBack()
+                    raise
+                record["suppression_summary"] = {
+                    "element_override_count": suppression.get("element_override_count"),
+                    "link_category_filters": suppression.get("link_category_filters"),
+                    "unreached_count": len(suppression.get("unreached") or []),
+                    "unreached": list(suppression.get("unreached") or [])[:200],
+                    "timings_ms": suppression.get("timings_ms"),
+                }
+                if suppression.get("unreached"):
+                    _fault("model_suppression_incomplete",
+                           "{0} model member(s) or link categories were not suppressed; "
+                           "their ink may appear in the annotation capture".format(
+                               len(suppression["unreached"])))
+
+                # ---- 3b: PROBE-ONLY -- what the annotation pass sees of the view ---
+                if extent_variant is not None:
+                    record["anno_extent_variant"] = apply_anno_extent_variant(
+                        doc, view, extent_variant, _anno, Transaction, TransactionStatus,
+                        avoid=avoid, reference=reference)
+                    if record["anno_extent_variant"].get("took_effect") is False:
+                        _fault("anno_extent_variant_not_applied",
+                               "the probe variant {0} did not read back as applied: {1}".format(
+                                   extent_variant, record["anno_extent_variant"]))
+
+                # ---- 4: ANNOTATION pass, external suppression, crop untouched -----
+                anno_cfg = copy.copy(attempt_cfg)
+                anno_cfg.color_id_buffer_anno_model_suppression = "external"
+                anno_cfg.color_id_buffer_anno_crop_mode = "authored_else_crop_a"
+                # Anti-aliasing OFF, as the model pass already runs (Greg,
+                # 2026-09-30): a colour-ID capture should not be blended, and the
+                # registration tool's tick-blend handling is the FALLBACK for a host
+                # that cannot turn it off, not the plan. pipeline_0930_0739's
+                # annotation sidecars read applied_smooth_edges "not_attempted".
+                anno_cfg.color_id_buffer_anno_smooth_edges_off = True
+                _mark_ids = [m.get("id") for m in (record.get("marks") or {}).get("created") or []
+                             if m.get("id") is not None]
+                _t = time.time()
+                try:
+                    # The ticks are the capture's own lines, drawn with its own line
+                    # style: not an AUTHORED override (1249: "12 of N" on every view
+                    # was exactly the 12 ticks).
+                    anno_out = export_annotation_color_id_buffer_view(
+                        doc, view, anno_cfg, geom, diag=diag, raster=raster,
+                        authored_check_exclude_ids=_mark_ids + bound_ids,
+                        # The frame bounds are WHITE here too: never ink, never
+                        # in the palette or color_assignment_map.
+                        blank_ids=bound_ids,
+                        # The reserved tick colour (Greg, 2026-10-02): the ticks are
+                        # MARK_COLOUR here as in the model pass, and neither palette
+                        # hands out a look-alike.
+                        reserve_tick_colour=True, mark_ids=_mark_ids)
+                except Exception as ex:
+                    _fault("annotation_pass_raised", "the annotation pass raised", ex)
+                    anno_out = {"view_id": view_id, "success": False,
+                                "failure_reason": "annotation_pass_raised",
+                                "error": "{0}: {1}".format(type(ex).__name__, ex),
+                                "stage": "color_id_buffer_stage_a_annotation",
+                                "tiff_path": None, "sidecar_path": None}
+                record["timings_ms"]["annotation_pass"] = round((time.time() - _t) * 1000.0, 3)
+                _pass_timings("annotation", anno_out)
+            finally:
+                attempt_mark_ids.extend(
+                    m.get("id") for m in (record.get("marks") or {}).get("created") or []
+                    if m.get("id") is not None)
+                _t = time.time()
+                attempt_status = attempt_group.RollBack()
+                record["timings_ms"]["attempt_rollback"] += round(
+                    (time.time() - _t) * 1000.0, 3)
+            if attempt_status != TransactionStatus.RolledBack:
+                raise RuntimeError("the attempt's TransactionGroup did not roll back "
+                                   "({0})".format(attempt_status))
+            if attempt == 2 or not getattr(cfg, "color_id_buffer_co_size", True):
+                # The probe-only switch above measures a variant ALONE
+                # (tests/dynamo/probe_stage_a_lattice_overrun.py); absent
+                # from Config, True in every production run.
+                break
+            co = co_sized_request(
+                geom.get("requested_px"), geom.get("model_accepted_px"),
+                ((anno_out or {}).get("frame") or {}).get("dim_check_attempts"),
+                fit_direction=str(getattr(cfg, "color_id_buffer_fit_direction", "horizontal")
+                                  or "horizontal"),
+                max_axis_px=MAX_STAGE_A_AXIS_PX,
+                min_axis_px=geom.get("min_axis_px") or 64)
+            if co["state"] != "applies":
+                if co["state"] == "not_applicable" and anno_out and not anno_out.get("success"):
+                    record["co_sizing"] = dict(co, attempts=1)
+                break
+            # The first attempt's record, kept: its faults are the overrun's,
+            # not the capture's, and its files are overwritten by the second.
+            first_faults = record["faults"][faults_before:]
+            del record["faults"][faults_before:]
+            record["co_sizing"] = dict(co, attempts=2, first_attempt={
+                "model_frame": _frame_summary((model_out or {}).get("frame")),
+                "annotation_frame": _frame_summary((anno_out or {}).get("frame")),
+                "annotation_failure_reason": (anno_out or {}).get("failure_reason"),
+                "capture_faults": first_faults,
+                "mark_ids": list(attempt_mark_ids),
+            })
+            record["timings_ms"]["co_sizing_first_attempt"] = round(
+                (time.time() - _t_attempt) * 1000.0, 3)
+            attempt_cfg = copy.copy(cfg)
+            attempt_cfg._stage_a_co_sized_fit_px = co["fit_px"]
+            del bound_ids[:]
+            detail_lines["hidden"] = []
+            model_out = anno_out = None
+        if record.get("co_sizing", {}).get("attempts") == 2:
+            record["co_sizing"]["second_attempt"] = {
+                "model_frame": _frame_summary((model_out or {}).get("frame")),
+                "annotation_frame": _frame_summary((anno_out or {}).get("frame")),
+                "annotation_failure_reason": (anno_out or {}).get("failure_reason"),
             }
-            if hide["error"] or hide["unreadable"]:
-                _fault("detail_lines_may_draw_in_model_capture",
-                       "not every detail line could be hidden for the model pass "
-                       "({0}; {1} unreadable)".format(
-                           hide["error"], len(hide["unreadable"])))
-        else:
-            record["detail_lines"] = {"count": 0}
-
-        # ---- 2: MODEL pass, OST_Lines visible so the marks draw ------------
-        model_cfg = copy.copy(cfg)
-        model_cfg.color_id_buffer_model_lines_visible = True
-        # C7: sized from crop A alone; frame B is not computed or recorded.
-        model_cfg.color_id_buffer_model_frame = "crop_a"
-        geom = {}
-        _t = time.time()
-        model_out = export_color_id_buffer_view(
-            doc, view, elements, model_cfg, diag=diag, raster=raster,
-            elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True)
-        record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
-        _pass_timings("model", model_out)
-        if detail_lines["hidden"]:
-            tx = Transaction(doc, "VOP Stage A show detail lines for the annotation pass")
-            tx.Start()
-            try:
-                show_error = registration.show_in_view(view, detail_lines["hidden"])
-                if tx.Commit() != TransactionStatus.Committed:
-                    raise RuntimeError("detail-line Transaction.Commit did not commit")
-            except Exception:
-                tx.RollBack()
-                raise
-            if show_error is not None:
-                _fault("detail_lines_missing_from_annotation_capture",
-                       "the detail lines hidden for the model pass could not be "
-                       "shown again before the annotation pass: {0}".format(show_error))
-        if not (model_out or {}).get("success"):
-            raise RuntimeError("the model pass reported failure: {0}".format(
-                (model_out or {}).get("failure_reason")))
-
-        # ---- 3: white membership suppression ------------------------------
-        capability = registration.white_override_capability(doc)
-        if capability.get("state") != "value":
-            raise RuntimeError("the white override cannot be built on this host: "
-                               "{0}".format(capability.get("reason")))
-        link_categories, link_report = registration.discover_link_categories(
-            doc, view, diag=diag, view_id=view_id)
-        record["link_categories"] = link_report
-        tx = Transaction(doc, "VOP Stage A membership white suppression")
-        tx.Start()
-        try:
-            _t = time.time()
-            suppression = registration.white_membership_suppression(
-                doc, view, view_id, model_members, link_categories=link_categories,
-                diag=diag)
-            if tx.Commit() != TransactionStatus.Committed:
-                raise RuntimeError("suppression Transaction.Commit did not commit")
-            record["timings_ms"]["suppression"] = round((time.time() - _t) * 1000.0, 3)
-        except Exception:
-            tx.RollBack()
-            raise
-        record["suppression_summary"] = {
-            "element_override_count": suppression.get("element_override_count"),
-            "link_category_filters": suppression.get("link_category_filters"),
-            "unreached_count": len(suppression.get("unreached") or []),
-            "unreached": list(suppression.get("unreached") or [])[:200],
-            "timings_ms": suppression.get("timings_ms"),
-        }
-        if suppression.get("unreached"):
-            _fault("model_suppression_incomplete",
-                   "{0} model member(s) or link categories were not suppressed; "
-                   "their ink may appear in the annotation capture".format(
-                       len(suppression["unreached"])))
-
-        # ---- 3b: PROBE-ONLY -- what the annotation pass sees of the view ---
-        if extent_variant is not None:
-            record["anno_extent_variant"] = apply_anno_extent_variant(
-                doc, view, extent_variant, _anno, Transaction, TransactionStatus,
-                avoid=avoid, reference=reference)
-            if record["anno_extent_variant"].get("took_effect") is False:
-                _fault("anno_extent_variant_not_applied",
-                       "the probe variant {0} did not read back as applied: {1}".format(
-                           extent_variant, record["anno_extent_variant"]))
-
-        # ---- 4: ANNOTATION pass, external suppression, crop untouched -----
-        anno_cfg = copy.copy(cfg)
-        anno_cfg.color_id_buffer_anno_model_suppression = "external"
-        anno_cfg.color_id_buffer_anno_crop_mode = "authored_else_crop_a"
-        # Anti-aliasing OFF, as the model pass already runs (Greg,
-        # 2026-09-30): a colour-ID capture should not be blended, and the
-        # registration tool's tick-blend handling is the FALLBACK for a host
-        # that cannot turn it off, not the plan. pipeline_0930_0739's
-        # annotation sidecars read applied_smooth_edges "not_attempted".
-        anno_cfg.color_id_buffer_anno_smooth_edges_off = True
-        _mark_ids = [m.get("id") for m in (record.get("marks") or {}).get("created") or []
-                     if m.get("id") is not None]
-        _t = time.time()
-        try:
-            # The ticks are the capture's own lines, drawn with its own line
-            # style: not an AUTHORED override (1249: "12 of N" on every view
-            # was exactly the 12 ticks).
-            anno_out = export_annotation_color_id_buffer_view(
-                doc, view, anno_cfg, geom, diag=diag, raster=raster,
-                authored_check_exclude_ids=_mark_ids + bound_ids,
-                # The frame bounds are WHITE here too: never ink, never
-                # in the palette or color_assignment_map.
-                blank_ids=bound_ids,
-                # The reserved tick colour (Greg, 2026-10-02): the ticks are
-                # MARK_COLOUR here as in the model pass, and neither palette
-                # hands out a look-alike.
-                reserve_tick_colour=True, mark_ids=_mark_ids)
-        except Exception as ex:
-            _fault("annotation_pass_raised", "the annotation pass raised", ex)
-            anno_out = {"view_id": view_id, "success": False,
-                        "failure_reason": "annotation_pass_raised",
-                        "error": "{0}: {1}".format(type(ex).__name__, ex),
-                        "stage": "color_id_buffer_stage_a_annotation",
-                        "tiff_path": None, "sidecar_path": None}
-        record["timings_ms"]["annotation_pass"] = round((time.time() - _t) * 1000.0, 3)
-        _pass_timings("annotation", anno_out)
     except RecaptureRefused as ex:
         recapture_refused = str(ex)
         _fault("recapture_refused", "the recapture would reproduce the failure; "
@@ -1270,8 +1366,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             _fault("view_state_not_restored",
                    "after the rollback these did not read back as before: "
                    "{0}".format(bad))
-        mark_ids = [m.get("id") for m in (record.get("marks") or {}).get("created") or []
-                    if m.get("id") is not None] + list(bound_ids)
+        # Every attempt's ticks: a first attempt's are rolled back with it,
+        # and a read-back that looked only at the last would not see one left.
+        mark_ids = sorted(set(
+            [m.get("id") for m in (record.get("marks") or {}).get("created") or []
+             if m.get("id") is not None] + list(record.pop("_attempt_mark_ids", None) or [])
+        )) + list(bound_ids)
         still = registration.marks_still_in_project(doc, mark_ids)
         restore["marks_still_in_project"] = sorted(
             k for k, v in still.items() if v is not False)

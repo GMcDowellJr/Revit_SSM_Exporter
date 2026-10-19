@@ -51,7 +51,7 @@ def _marker():
                        bbox=switches._BBox((40, 15 - MARKER_OVERRUN_FT, 0), (41, 50, 0)))
 
 
-def install_overrun_exporter(monkeypatch, views, overrun_ft=MARKER_OVERRUN_FT):
+def install_overrun_exporter(monkeypatch, views, overrun_ft=MARKER_OVERRUN_FT, extra_h_px=0):
     """ExportImage renders FitToPage of the DRAWN extent: the model pass at
     crop A's aspect; the annotation pass taller while the marker is visible
     (not hidden in the view, annotation crop off), and at crop A plus the
@@ -75,16 +75,21 @@ def install_overrun_exporter(monkeypatch, views, overrun_ft=MARKER_OVERRUN_FT):
         else:
             w_ft, h_ft = CROP_W, CROP_H
         h = int(math.floor(px * h_ft / w_ft))
+        if anno and marker_drawn and not crop_on:
+            # Drawn content that does not scale with PixelSize (a fixed text
+            # height): what would defeat a proportional re-size.
+            h += int(extra_h_px)
         switches._write_tiff_header(opts.FilePath + ".tiff", px, h)
         seen.append({"pass": "annotation" if anno else "model", "px": px, "h": h,
                      "annotation_crop_active": crop_on,
-                     "marker_hidden": MARKER_ID in view.hidden_elements})
+                     "marker_hidden": MARKER_ID in view.hidden_elements,
+                     "marks_in_doc": len([i for i in self._by_id if i > world.MARK_ID_BASE])})
     monkeypatch.setattr(switches._SizedDoc, "ExportImage", _export)
     return seen
 
 
 def run_capture(tmp_path, monkeypatch, variant=None, extra_cfg=None, marker=True,
-                overrun_ft=MARKER_OVERRUN_FT):
+                overrun_ft=MARKER_OVERRUN_FT, extra_h_px=0):
     views = []
 
     def _setup(view):
@@ -95,9 +100,11 @@ def run_capture(tmp_path, monkeypatch, variant=None, extra_cfg=None, marker=True
         cfg.color_id_buffer_export_dpi = DPI
         if variant is not None:
             cfg.color_id_buffer_anno_extent_variant = variant
+            # Measured alone, as the probe runs it (run_variant).
+            cfg.color_id_buffer_co_size = False
         for k, v in (extra_cfg or {}).items():
             setattr(cfg, k, v)
-    seen = install_overrun_exporter(monkeypatch, views, overrun_ft)
+    seen = install_overrun_exporter(monkeypatch, views, overrun_ft, extra_h_px)
     out, view, doc, exports, diag = rc_tests._run(
         tmp_path, extra_elements=[_marker()] if marker else [], view_setup=_setup,
         cfg_setup=_cfg)
@@ -203,3 +210,7 @@ def test_probe_variant_selection_refuses_what_this_build_lacks():
         probe.select_variants("as-is")
     with pytest.raises(ValueError, match="unknown key"):
         probe.parse_options({"repo": "x"})
+
+
+def test_the_probe_offers_co_sized_on_a_build_that_has_it():
+    assert probe._available_variants() == list(probe.VARIANTS)

@@ -226,7 +226,7 @@ def _ensure_repo(repo_root):
         if os.path.isdir(os.path.join(root, "vop_interwoven")):
             if root not in sys.path:
                 sys.path.insert(0, root)
-            import vop_interwoven  # noqa: F401
+            __import__("vop_interwoven")
             return root
     raise RuntimeError("vop_interwoven not found; set IN[3] repo_root. Tried: {0}".format(
         [c for c in candidates if c]))

@@ -2893,6 +2893,17 @@ def normalize_applied_smooth_edges(value):
     return value
 
 
+def co_sized_fit_px(cfg):
+    """The co-sized fitted-axis bound the registered capture set on its own
+    copy of the config for a second attempt (resolution_contract.
+    co_sized_request), or None. A private attribute: outside Config.to_dict()
+    and the config hash, and None in every other capture. Read by the model
+    pass's sizing and by the ticks' (stage_a_registered_capture.mark_fpp_ft),
+    so the two stay one lattice."""
+    value = getattr(cfg, "_stage_a_co_sized_fit_px", None)
+    return None if value is None else int(value)
+
+
 def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
     """Set ImageExportOptions.PixelSize, backing off if Revit rejects the value.
 
@@ -3884,6 +3895,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             geom = frame_export_geometry(
                 frame_uv, crop_uv, scale, export_dpi,
                 fit_direction=fit_direction, max_axis_px=cap_axis_px,
+                fit_px_limit=co_sized_fit_px(cfg),
             )
         except ValueError as ex:
             # A degenerate frame cannot be sized. Refusing beats substituting a
@@ -5310,6 +5322,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "crop_uv": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
         "crop_write": crop_write,
     }
+    if geom is not None and geom.get("fit_px_limited"):
+        # The registered capture's second attempt, co-sized so the annotation
+        # export fits the ceiling too (registration_marks.co_sizing says why).
+        frame_record["co_sized_fit_px"] = geom["fit_px_limit"]
     if sizing_frame != "crop_a":
         # Frame B's paper extent (the frame-B fallback only; C7).
         frame_record.update({"paper_fit_in": paper_fit_in,
