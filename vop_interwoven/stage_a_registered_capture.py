@@ -257,10 +257,12 @@ def crop_shape_state(view, basis):
             "shape_set": _read(lambda: bool(manager.ShapeSet))}
 
 
-def view_state(view, primary=None):
+def view_state(view, primary=None, annotation_crop=False):
     """What the capture writes and the rollback must put back, read. With a
     ``primary`` (a dependent view's), its template too: the passes detach
-    a dependent view's template there.
+    a dependent view's template there. ``annotation_crop`` adds
+    AnnotationCropActive, read only when the probe-only variant
+    ``annotation_crop_on`` writes it (anno_extent_variant).
 
     A view with no crop region (a drafting view or a legend) has no crop for
     the capture to write, so none is read: an unreadable crop there would
@@ -282,6 +284,8 @@ def view_state(view, primary=None):
             # Q7: the capture un-splits a split crop; the rollback must put it back.
             "split_crop": _read(lambda: split_crop_state(view)),
         })
+        if annotation_crop:
+            state["annotation_crop_active"] = _read(lambda: bool(view.AnnotationCropActive))
     if primary is not None:
         state["primary_view_template_id"] = _read(
             lambda: _element_id_int(primary.ViewTemplateId))
@@ -606,6 +610,100 @@ def unhide_lines_for_ticks(doc, view, Transaction, TransactionStatus, diag=None,
     return record
 
 
+# PROBE-ONLY (tests/dynamo/probe_stage_a_lattice_overrun.py): what the
+# annotation pass sees of the view, changed inside the group after the model
+# pass and before the annotation pass, so the model pass is the shipped one
+# and the rollback is the restore. Read with getattr off the cfg as
+# ``color_id_buffer_anno_extent_variant``; absent from Config, so no
+# production run reaches it. None and "as_is" change nothing.
+#
+#   section_markers_hidden  the annotation members in category Views
+#       (OST_Viewers: section, elevation and callout viewers) hidden in the
+#       view -- the elements RUN_..._SMALL_VIEWS.md §1.2 found past the crop
+#       in the 09-13..10-25 archives.
+#   annotation_crop_on      View.AnnotationCropActive set True (crop-active
+#       views only), with the four annotation-crop offsets recorded.
+ANNO_EXTENT_VARIANTS = ("as_is", "section_markers_hidden", "annotation_crop_on")
+SECTION_MARKER_BIC_NAME = "OST_Viewers"
+
+
+def anno_extent_variant(cfg):
+    """The probe-only variant this capture runs, or None; an unknown value is
+    raised, not defaulted (a typo would measure the shipped capture under a
+    variant's name)."""
+    variant = getattr(cfg, "color_id_buffer_anno_extent_variant", None)
+    if variant is None:
+        return None
+    if variant not in ANNO_EXTENT_VARIANTS:
+        raise ValueError("color_id_buffer_anno_extent_variant must be one of {0}, got "
+                         "{1!r}".format(ANNO_EXTENT_VARIANTS, variant))
+    return variant
+
+
+def section_marker_ids(anno_members, avoid=None, reference=None):
+    """``(ids, record)``: the annotation members in category Views
+    (OST_Viewers), with how many of their view bboxes (``avoid``, as
+    annotation_avoid_rects gives them) reach past ``reference``."""
+    from .revit.annotation import _element_category_id_int, stage_a_view_reference_category_ids
+    names = {}
+    _ids, error = stage_a_view_reference_category_ids(names_out=names)
+    viewer_cats = set(c for c, n in names.items() if n == SECTION_MARKER_BIC_NAME)
+    ids = sorted(i for i in (_element_id_int(getattr(e, "Id", None)) for e in anno_members or []
+                             if _element_category_id_int(e) in viewer_cats) if i is not None)
+    rects = dict(avoid or [])
+    past = []
+    if reference is not None:
+        for i in ids:
+            r = rects.get(i)
+            if r is not None and (r[0] < reference[0] or r[1] < reference[1]
+                                  or r[2] > reference[2] or r[3] > reference[3]):
+                past.append(i)
+    return ids, {"category": SECTION_MARKER_BIC_NAME, "category_ids": sorted(viewer_cats),
+                 "resolution_error": error, "count": len(ids), "ids": ids[:200],
+                 "past_reference": len(past), "past_reference_ids": past[:200]}
+
+
+def apply_anno_extent_variant(doc, view, variant, anno_members, Transaction,
+                              TransactionStatus, avoid=None, reference=None):
+    """Apply ``variant`` (ANNO_EXTENT_VARIANTS) to the view for the annotation
+    pass, in its own Transaction; call inside the capture's group. Returns
+    the record (what was attempted and what read back); a write that did not
+    take is ``took_effect: False``, not an exception."""
+    record = {"variant": variant}
+    if variant in (None, "as_is"):
+        record["applied"] = "nothing"
+        return record
+    tx = Transaction(doc, "VOP Stage A probe: annotation extent variant")
+    tx.Start()
+    try:
+        if variant == "section_markers_hidden":
+            ids, record["section_markers"] = section_marker_ids(anno_members, avoid, reference)
+            from .stage_a_registration import hide_in_view
+            hide = hide_in_view(doc, view, ids)
+            record["hidden"] = len(hide["hidden"])
+            record["already_hidden"] = len(hide["already_hidden"])
+            record["unreadable"] = hide["unreadable"][:50]
+            record["hide_error"] = hide["error"]
+            record["took_effect"] = bool(not hide["error"] and not hide["unreadable"])
+        else:
+            record["crop_box_active"] = _read(lambda: bool(view.CropBoxActive))
+            record["before"] = _read(lambda: bool(view.AnnotationCropActive))
+            manager = view.GetCropRegionShapeManager()
+            record["offsets_ft"] = dict(
+                (side, _read(lambda s=side: float(getattr(manager, s + "AnnotationCropOffset"))))
+                for side in ("Left", "Right", "Top", "Bottom"))
+            view.AnnotationCropActive = True
+        if tx.Commit() != TransactionStatus.Committed:
+            raise RuntimeError("variant Transaction.Commit did not commit")
+    except Exception:
+        tx.RollBack()
+        raise
+    if variant == "annotation_crop_on":
+        record["read_back"] = _read(lambda: bool(view.AnnotationCropActive))
+        record["took_effect"] = record["read_back"].get("value") is True
+    return record
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -644,6 +742,9 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         "reference_source": record.get("mark_reference_source"),
         # Diagnostic: the annotation export's expected extent against the cap.
         "annotation_extent_prediction": record.get("annotation_extent_prediction"),
+        # PROBE-ONLY: the annotation-extent variant this capture ran under
+        # (anno_extent_variant); absent from every production capture.
+        "anno_extent_variant": record.get("anno_extent_variant"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
                           if shared_colour is not None else
@@ -730,7 +831,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     primary, record["primary_view"] = primary_view(doc, view, diag=diag, view_id=view_id)
     if primary is not None:
         record["primary_view"] = _element_id_int(getattr(primary, "Id", None))
-    before = view_state(view, primary)
+    # PROBE-ONLY, None in every production run (ANNO_EXTENT_VARIANTS).
+    extent_variant = anno_extent_variant(cfg)
+    before = view_state(view, primary,
+                        annotation_crop=extent_variant == "annotation_crop_on")
     group = TransactionGroup(doc, "VOP Stage A registered capture")
     started = False
     t_total = time.time()
@@ -1084,6 +1188,16 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                    "their ink may appear in the annotation capture".format(
                        len(suppression["unreached"])))
 
+        # ---- 3b: PROBE-ONLY -- what the annotation pass sees of the view ---
+        if extent_variant is not None:
+            record["anno_extent_variant"] = apply_anno_extent_variant(
+                doc, view, extent_variant, _anno, Transaction, TransactionStatus,
+                avoid=avoid, reference=reference)
+            if record["anno_extent_variant"].get("took_effect") is False:
+                _fault("anno_extent_variant_not_applied",
+                       "the probe variant {0} did not read back as applied: {1}".format(
+                           extent_variant, record["anno_extent_variant"]))
+
         # ---- 4: ANNOTATION pass, external suppression, crop untouched -----
         anno_cfg = copy.copy(cfg)
         anno_cfg.color_id_buffer_anno_model_suppression = "external"
@@ -1148,7 +1262,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                           "roll back; the view may keep marks, "
                                           "white overrides and filters")
         # ---- 6: READ BACK what the rollback left --------------------------
-        restore["view_state"] = view_state_verdict(before, view_state(view, primary))
+        restore["view_state"] = view_state_verdict(before, view_state(
+            view, primary, annotation_crop=extent_variant == "annotation_crop_on"))
         bad = sorted(k for k, v in restore["view_state"].items()
                      if v["status"] != "restored")
         if bad:
