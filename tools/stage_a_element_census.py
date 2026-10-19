@@ -78,8 +78,8 @@ sets differ), when it has no as-of date, or when any gridded view's element
 x cell accounting cannot be read: a grid made before ``ec_keys`` is the
 named refusal ``grid_predates_ec_keys``, never a zero.
 
-Outputs in ``--out`` (default ``<run>/analysis_grid/`` for one run; required
-for more): ``<as_of_date>__<run_id>.elements.csv`` per run,
+Outputs in ``--out`` (default, one run only: its grid folder, ``grid/`` in a
+v2 run and ``analysis_grid/`` in a v1 run; required for more): ``<as_of_date>__<run_id>.elements.csv`` per run,
 ``element_census_runs.csv``, ``element_census_series.csv``, then
 ``element_census.summary.json`` carrying every CSV's sha256, written last
 (CLAUDE.md, defect class 4). An empty CSV cell is "not applicable", never 0.
@@ -802,9 +802,9 @@ def census(run_args, out_dir, progress=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("runs", nargs="+", metavar="run",
-                    help="a run directory or its color_id_buffer/")
+                    help="a run directory or its capture folder (color_id/ or color_id_buffer/)")
     ap.add_argument("--out", default=None,
-                    help="output directory (default, one run only: <run>/analysis_grid)")
+                    help="output directory (default, one run only: its grid/ or analysis_grid/)")
     args = ap.parse_args(argv)
     if len(args.runs) > 1 and not args.out:
         ap.error("--out is required with more than one run")
