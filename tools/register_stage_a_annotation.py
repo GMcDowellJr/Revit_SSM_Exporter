@@ -69,6 +69,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import registration_marks as rm  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
@@ -147,9 +148,10 @@ def write_lossless_tiff(pixels, path, codecs=LOSSLESS_TIFF_CODECS):
 
 
 def output_paths(anno_sidecar_path):
-    p = Path(anno_sidecar_path)
-    return (p.with_name(p.stem + ".registered.tiff"),
-            p.with_name(p.stem + ".registered.json"))
+    """``(tiff, json)``: ``<stem>.reg.*`` in a v2 run's ``color_id/``,
+    ``<stem>.registered.*`` elsewhere (vop_interwoven/output_layout)."""
+    tiff, record = output_layout.registered_paths(anno_sidecar_path)
+    return Path(tiff), Path(record)
 
 
 def model_sidecar_for(anno_sidecar_path, anno_sidecar):

@@ -204,6 +204,7 @@ from vop_interwoven.color_id_buffer import (
     MAX_STAGE_A_PIXEL_SIZE,
     normalize_applied_smooth_edges,
 )
+from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 
 # The ONE copy of ExportImage's aspect-clamp frame arithmetic. Leaf module,
@@ -1220,14 +1221,20 @@ def find_run_meta(sidecar_path: Path):
     without run_meta it silently fell back to DEFAULT_COLOR_ID_EXPORT_DPI --
     right only when the run used the default (found on pipeline_0928_0953's
     re-encoded Elevation sidecar). Looked for beside the sidecar and one level
-    up (the run folder holds color_id_buffer/)."""
+    up (the run folder holds the capture folder), under either layout's name
+    (``run_meta.json``, ``run_meta_<d>.json``: vop_interwoven/output_layout).
+    A folder holding two run_meta files names no record: None."""
     for folder in (sidecar_path.parent, sidecar_path.parent.parent):
-        candidate = folder / "run_meta.json"
-        if candidate.exists():
-            try:
-                return json.loads(candidate.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                return None
+        candidates = output_layout.run_meta_candidates(folder)
+        if not candidates:
+            continue
+        path, _why = output_layout.find_run_meta(folder)
+        if path is None:
+            return None
+        try:
+            return json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
     return None
 
 
@@ -1261,7 +1268,8 @@ def collect(paths: list[str]) -> list[Path]:
         p = Path(arg)
         if p.is_dir():
             out += sorted(x for x in p.rglob("*.json")
-                          if not x.name.endswith((".decoded.json", ".registered.json")))
+                          if not x.name.endswith((".decoded.json", ".registered.json",
+                                                  ".reg.json")))
         else:
             out.append(p)
     return out

@@ -46,6 +46,11 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from vop_interwoven import output_layout  # noqa: E402
 
 
 # The production MODEL sidecar's own name: "<view name>_<view id>.json".
@@ -60,7 +65,11 @@ def _model_sidecars(run_dir):
     by two files is not guessed between: it maps to None, and the row says
     so."""
     out = {}
-    for path in sorted(glob.glob(os.path.join(run_dir, "color_id_buffer", "*.json"))):
+    names = [n for n in (output_layout.CAPTURE_DIR[output_layout.V2],
+                         output_layout.CAPTURE_DIR[output_layout.V1])
+             if os.path.isdir(os.path.join(run_dir, n))]
+    folder = names[0] if names else output_layout.CAPTURE_DIR[output_layout.V1]
+    for path in sorted(glob.glob(os.path.join(run_dir, folder, "*.json"))):
         match = _MODEL_SIDECAR_NAME.search(os.path.basename(path))
         if match is None:
             continue
@@ -86,8 +95,19 @@ CSV_COLUMNS = ("run_id", "view_id", "view_name", "elapsed_ms", "capture_total_ms
                "outside_capture_ms", "unaccounted_ms", "reason")
 
 
+def _run_meta_path(run_dir):
+    """The run's one record, either layout's name. FileNotFoundError when
+    there is none, ValueError when there are two (never guessed between)."""
+    path, why = output_layout.find_run_meta(run_dir)
+    if path is None:
+        if not output_layout.run_meta_candidates(run_dir):
+            raise FileNotFoundError(why)
+        raise ValueError(why)
+    return path
+
+
 def _run_meta(run_dir):
-    path = os.path.join(run_dir, "run_meta.json")
+    path = _run_meta_path(run_dir)
     with open(path) as handle:
         return json.load(handle)
 
@@ -155,8 +175,8 @@ def write_report(run_dir, rows):
 
 
 def _run_identity(run_dir):
-    """``(run_id, {view_id: capture_status})`` from run_meta.json, or raises."""
-    path = os.path.join(run_dir, "run_meta.json")
+    """``(run_id, {view_id: capture_status})`` from run_meta, or raises."""
+    path = _run_meta_path(run_dir)
     meta = _run_meta(run_dir)
     run_id = meta.get("run_id")
     if not run_id:

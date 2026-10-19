@@ -17,7 +17,9 @@ the primary record.
 ``inventory``: every kind across the runs' grid outputs, with its view count,
 keys, px and ink px, and the class the map gives it (``unmapped`` where no
 rule matches -- listed, never guessed). Writes ``kinds_inventory.csv`` and
-then ``kinds_inventory.json`` naming the CSV's and the class map's hashes.
+then ``kinds_inventory.json`` naming the CSV's and the class map's hashes --
+``kinds_inventory_<d>.*`` in a v2 run (vop_interwoven/output_layout). With
+several runs and no ``--out``, each run gets its own, in its own grid folder.
 
 ``derive``: per gridded view, ``<view>.kinds.npz`` -- for each annotation
 class, legacy bucket and model class, dense per-cell counts -- and then
@@ -26,8 +28,8 @@ hashes (written last, CLAUDE.md defect class 4). It is a SEPARATE file: the
 grid npz stays independent of the map version. The record also carries the
 geometry path's channel shape (A4), labelled legacy.
 
-A ``<run>`` is a run directory, its color_id_buffer/, or an analysis_grid/
-directory.
+A ``<run>`` is a run directory, its capture folder (``color_id/`` or
+``color_id_buffer/``), or a grid directory (``grid/`` or ``analysis_grid/``).
 """
 from __future__ import annotations
 
@@ -41,7 +43,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA_KINDS = "vop.stage_a.kinds.v1"
 SCHEMA_INVENTORY = "vop.stage_a.kinds_inventory.v1"
@@ -144,14 +148,24 @@ def families_for(layer):
 # --- the grid's outputs -----------------------------------------------------------
 
 def grid_dir_of(run_arg):
-    """An analysis_grid directory for a run argument (the grid's own default,
-    ``<capture folder>.parent / "analysis_grid"``), or the argument itself
-    when it already holds grid records."""
+    """A grid directory for a run argument (the grid's own default,
+    ``output_layout.grid_dir_for_capture``: ``grid/`` or ``analysis_grid/``),
+    or the argument itself when it already holds grid records."""
     p = Path(run_arg)
     if p.is_dir() and any(p.glob("*.grid.json")):
         return p
     _sidecars, folder = grid.model_sidecars(p)
-    return Path(folder).parent / "analysis_grid"
+    return Path(output_layout.grid_dir_for_capture(folder))
+
+
+def inventory_names(grid_dir):
+    """``(csv, json)`` for one run's inventory: ``kinds_inventory_<d>.*`` in a
+    v2 run's ``grid/`` (``<d>`` its file date), the undated names elsewhere."""
+    grid_dir = Path(grid_dir)
+    layout = (output_layout.V2 if grid_dir.name == output_layout.GRID_DIR[output_layout.V2]
+              else output_layout.V1)
+    meta = dsc.find_run_meta(grid_dir / "x") or {}
+    return output_layout.inventory_names(layout, output_layout.file_date(meta))
 
 
 def grid_records(grid_dir):
@@ -255,11 +269,13 @@ def inventory(grid_dirs, cmap):
     return rows, views
 
 
-def write_inventory(rows, views, cmap_info, out_dir):
-    """Write the CSV, then the record naming its hash; return the record."""
+def write_inventory(rows, views, cmap_info, out_dir, names=None):
+    """Write the CSV, then the record naming its hash; return the record.
+    ``names`` is ``(csv, json)``; default the undated names."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / INVENTORY_CSV
+    csv_name, json_name = names or (INVENTORY_CSV, INVENTORY_JSON)
+    csv_path = out_dir / csv_name
     with open(csv_path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=INVENTORY_COLUMNS)
         writer.writeheader()
@@ -291,7 +307,7 @@ def write_inventory(rows, views, cmap_info, out_dir):
             for lay in ("model", "annotation")),
         "csv": csv_path.name, "csv_sha256": sha256_file(csv_path),
     }
-    with open(out_dir / INVENTORY_JSON, "w", encoding="utf-8") as handle:
+    with open(out_dir / json_name, "w", encoding="utf-8") as handle:
         json.dump(record, handle, indent=2, sort_keys=True, default=str)
     return record
 
@@ -633,13 +649,36 @@ def derive_view(grid_json, cmap_info, out_dir=None):
 
 # --- the command line ------------------------------------------------------------------
 
+def _inventory_job(grid_dirs, out, names, cmap_info):
+    rows, views = inventory(grid_dirs, cmap_info[0])
+    record = write_inventory(rows, views, cmap_info, out, names)
+    print("{0} kinds from {1} of {2} grid records (class map v{3}, sha256 {4})".format(
+        record["kinds"], record["grid_records"]["used"],
+        record["grid_records"]["denominator"], cmap_info[0].get("version"),
+        cmap_info[1][:12]))
+    print("{0:<10} {1:<6} {2:<32} {3:<20} {4:>5} {5:>12} {6:>10}  {7}".format(
+        "layer", "source", "category", "element_class", "views", "px", "ink_px",
+        "class"))
+    for r in rows:
+        cls = r["model_class"] if r["layer"] == "model" else "{0} / {1}".format(
+            r["annotation_class"], r["legacy_bucket"])
+        print("{0:<10} {1:<6} {2:<32} {3:<20} {4:>5} {5:>12} {6:>10}  {7}".format(
+            r["layer"], str(r["source"]), str(r["category"])[:32],
+            str(r["element_class"])[:20], r["views"], r["px"], r["ink_px"], cls))
+    for v in record["grid_records"]["not_used"]:
+        print("NOT USED {0}: {1}".format(v["view_stem"], v["reason"]))
+    print("wrote {0} and {1}".format(out / names[0], out / names[1]))
+    return 1 if record["grid_records"]["not_used"] else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="command", required=True)
     inv = sub.add_parser("inventory", help="every kind across the runs' grid outputs")
     inv.add_argument("runs", nargs="+", metavar="run")
     inv.add_argument("--out", default=None,
-                     help="output directory (default, one run only: its analysis_grid)")
+                     help="one inventory of every run, in this directory (default: "
+                          "each run's own, in its own grid folder)")
     inv.add_argument("--class-map", default=None)
     der = sub.add_parser("derive", help="per-view class arrays and the legacy channel shape")
     der.add_argument("runs", nargs="+", metavar="run")
@@ -656,28 +695,18 @@ def main(argv=None):
         print("no grid records in: {0}".format(", ".join(missing)))
         return 2
     if args.command == "inventory":
-        if len(grid_dirs) > 1 and not args.out:
-            ap.error("--out is required with more than one run")
-        rows, views = inventory(grid_dirs, cmap_info[0])
-        out = Path(args.out) if args.out else grid_dirs[0]
-        record = write_inventory(rows, views, cmap_info, out)
-        print("{0} kinds from {1} of {2} grid records (class map v{3}, sha256 {4})".format(
-            record["kinds"], record["grid_records"]["used"],
-            record["grid_records"]["denominator"], cmap_info[0].get("version"),
-            cmap_info[1][:12]))
-        print("{0:<10} {1:<6} {2:<32} {3:<20} {4:>5} {5:>12} {6:>10}  {7}".format(
-            "layer", "source", "category", "element_class", "views", "px", "ink_px",
-            "class"))
-        for r in rows:
-            cls = r["model_class"] if r["layer"] == "model" else "{0} / {1}".format(
-                r["annotation_class"], r["legacy_bucket"])
-            print("{0:<10} {1:<6} {2:<32} {3:<20} {4:>5} {5:>12} {6:>10}  {7}".format(
-                r["layer"], str(r["source"]), str(r["category"])[:32],
-                str(r["element_class"])[:20], r["views"], r["px"], r["ink_px"], cls))
-        for v in record["grid_records"]["not_used"]:
-            print("NOT USED {0}: {1}".format(v["view_stem"], v["reason"]))
-        print("wrote {0} and {1}".format(out / INVENTORY_CSV, out / INVENTORY_JSON))
-        return 1 if record["grid_records"]["not_used"] else 0
+        if args.out:
+            # One inventory of every run given, in --out.
+            jobs = [(grid_dirs, Path(args.out),
+                     inventory_names(grid_dirs[0]) if len(grid_dirs) == 1
+                     else (INVENTORY_CSV, INVENTORY_JSON))]
+        else:
+            # Each run's own, in its own grid folder, as if run alone.
+            jobs = [([g], g, inventory_names(g)) for g in grid_dirs]
+        code = 0
+        for dirs, out, names in jobs:
+            code = max(code, _inventory_job(dirs, out, names, cmap_info))
+        return code
     worst = 0
     for gdir in grid_dirs:
         for path in grid_records(gdir):

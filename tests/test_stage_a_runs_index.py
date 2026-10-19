@@ -64,29 +64,37 @@ VIEW_RESULTS = [{"view_id": 101, "view_name": "A"},
 _DOC = object()
 
 
-def producer_meta(run_id, as_of, doc, finalized=True, run_tag=None, run_dir=None):
-    """run_meta.json's record exactly as the exporter builds it: the real
+def producer_meta(run_id, as_of, doc, finalized=True, run_tag=None, run_dir=None,
+                  layout="v1"):
+    """run_meta's record exactly as the exporter builds it: the real
     build_run_meta (three-valued doc / git / Revit fields) and, for a
-    finished run, finalize_run_meta."""
+    finished run, finalize_run_meta. A v1 run's record is the producer's
+    without the ``output_layout`` key, as every run before it."""
     meta = run_meta.build_run_meta(Config(), doc, run_id, as_of, [101, 102, 103],
                                    "abcd1234", run_tag=run_tag, run_dir=run_dir)
+    if layout == "v1":
+        meta.pop("output_layout")
     return run_meta.finalize_run_meta(meta, VIEW_RESULTS) if finalized else meta
 
 
 def make_run(root, model_key, as_of, run_id, *, finalized=True, meta_date=None,
              outputs="top", views_core_rows=2, run_meta_text=None, doc=_DOC,
-             run_tag=None):
-    """One run folder, named as the exporter names it, with a run_meta.json
+             run_tag=None, layout="v1"):
+    """One run folder, named as the exporter names it, with its run_meta
     written by the real producer (``producer_meta``). ``outputs`` is
-    ``"top"``, ``"analysis_grid"`` or None (no roll-up, no kinds)."""
+    ``"top"``, ``"grid"`` (the run's grid folder, either layout) or None
+    (no roll-up, no kinds). ``layout`` v2 writes color_id/ and the dated
+    names (vop_interwoven/output_layout)."""
+    from vop_interwoven import output_layout as ol
     run = Path(run_meta.run_directory(str(root / model_key),
                                       {"as_of_date": as_of, "run_id": run_id}))
-    (run / "color_id_buffer").mkdir(parents=True)
-    (run / "color_id_buffer" / "V_1.json").write_text("{}")
+    (run / ol.CAPTURE_DIR[layout]).mkdir(parents=True)
+    (run / ol.CAPTURE_DIR[layout] / "V_1.json").write_text("{}")
     if doc is _DOC:
         doc = fake_doc("Doc " + model_key,
                        "C:\\models\\" + model_key.replace("/", "\\") + ".rvt")
-    meta = producer_meta(run_id, meta_date or as_of, doc, finalized, run_tag, str(run))
+    meta = producer_meta(run_id, meta_date or as_of, doc, finalized, run_tag, str(run),
+                         layout)
     if run_meta_text is None:
         run_meta.write_run_meta(meta, str(run))
     else:
@@ -100,9 +108,12 @@ def make_run(root, model_key, as_of, run_id, *, finalized=True, meta_date=None,
     (run / "views_diagnostics_{0}.json".format(d)).write_text("{}")
     (run / "vop_view_element_map_{0}.json".format(d)).write_text("{}")
     if outputs and run_meta_text is None:
-        out = run if outputs == "top" else run / "analysis_grid"
-        rollup.rollup([rollup.run_layout(run)], out)
-        kinds.write_inventory([], [], kinds.load_class_map(), out)
+        grid_dir = run / ol.GRID_DIR[layout]
+        out = run if outputs == "top" else grid_dir
+        rollup.rollup([rollup.run_layout(run)], out,
+                      rollup.output_names(run / ol.CAPTURE_DIR[layout]))
+        kinds.write_inventory([], [], kinds.load_class_map(), out,
+                              kinds.inventory_names(grid_dir))
     return run
 
 
@@ -117,7 +128,7 @@ def build_tree(tmp_path):
     runs = {
         "A": make_run(root, "KSRF/Model_A", "2025-04-05", "20261006T084152"),
         "B": make_run(root, "KSRF/Model_B", "2025-04-05", "20261006T090000",
-                      outputs="analysis_grid"),
+                      outputs="grid"),
         "C": make_run(root, "KSRF/Model_C", "2025-04-05", "20261006T091000",
                       finalized=False),
         "D": make_run(root, "Other/Model_D", "2025-04-06", "20261006T092000", outputs=None),
@@ -181,7 +192,7 @@ def test_gate1_eight_rows_i_skipped_g_not_a_row(tree):
     assert not any("DECOY" in r["run_id"] for r in rows)
     skipped = dict((s["path_rel"], s["reason"]) for s in record["scan"]["skipped"])
     i_rel = runs["I"].relative_to(root).as_posix()
-    assert skipped[i_rel].startswith("run_meta.json unreadable: JSONDecodeError")
+    assert skipped[i_rel].startswith("run_meta unreadable: JSONDecodeError")
     for reserved in ("analysis_grid", "color_id_buffer"):
         assert "reserved folder name" in skipped["KSRF/Model_G/" + reserved]
     assert record["scan"]["run_folders_found"] == 9      # 8 rows + I
@@ -397,7 +408,10 @@ def test_file_names_match_the_producers():
     assert idx.ROLLUP_SUMMARY == rollup.SUMMARY_NAME
     assert idx.KINDS_CSV == kinds.INVENTORY_CSV
     assert idx.KINDS_JSON == kinds.INVENTORY_JSON
-    assert idx.RUN_META_FILENAME == run_meta.RUN_META_FILENAME
+    from vop_interwoven import output_layout as ol
+    assert run_meta.RUN_META_FILENAME == ol.RUN_META_V1
+    assert ol.rollup_names(ol.V1, "x") == (rollup.CSV_NAME, rollup.SUMMARY_NAME)
+    assert ol.inventory_names(ol.V1, "x") == (kinds.INVENTORY_CSV, kinds.INVENTORY_JSON)
 
 
 # --- review findings (PR #231) ---------------------------------------------------
@@ -590,3 +604,27 @@ def test_unknown_dates_are_not_counted_as_the_same_date(tmp_path):
     rows = _by_run(_index(root)[1])
     assert rows["U1"]["n_runs_same_model_as_of"] == rows["U2"]["n_runs_same_model_as_of"] == ""
     assert rows["K1"]["n_runs_same_model_as_of"] == "2"                  # control
+
+
+# --- the v2 layout (2026-10-19) ------------------------------------------------------
+
+def test_a_v2_run_is_indexed_with_its_dated_outputs_in_grid(tmp_path):
+    """run_meta_<d>.json, color_id/, grid/grid_rollup_<d>.csv and
+    grid/kinds_inventory_<d>.csv, beside a v1 run as a control."""
+    root = tmp_path / "r"
+    v2 = make_run(root, "P/M2", "2025-07-02", "20261019T1200", outputs="grid", layout="v2")
+    v1 = make_run(root, "P/M1", "2025-07-02", "20261008T115116", outputs="grid")
+    assert (v2 / "run_meta_2025-07-02.json").is_file()
+    assert (v2 / "grid" / "grid_rollup_2025-07-02.csv").is_file()
+    code, rows, record = _index(root)
+    by = dict((r["run_dir_name"], r) for r in rows)
+    r2, r1 = by[v2.name], by[v1.name]
+    assert (r2["rollup_state"], r2["rollup_location"], r2["kinds_state"]) == (
+        "value", "grid", "value")
+    assert r2["rollup_csv_path_rel"].endswith("grid/grid_rollup_2025-07-02.csv")
+    assert r2["kinds_csv_path_rel"].endswith("grid/kinds_inventory_2025-07-02.csv")
+    assert r2["rollup_csv_sha256_match"] == "true"
+    assert (r1["rollup_location"], r1["rollup_csv_path_rel"].rsplit("/", 1)[-1]) == (
+        "analysis_grid", "grid_rollup.csv")
+    skipped = [s["path_rel"] for s in record["scan"]["skipped"]]
+    assert not any("run_meta" in s for s in skipped)
