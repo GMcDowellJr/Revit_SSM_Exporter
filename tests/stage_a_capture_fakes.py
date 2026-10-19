@@ -279,6 +279,7 @@ class FakeCategoryType(object):
 class FakeBuiltInParameter(object):
     VIEW_PHASE = "VIEW_PHASE"
     VIEW_PHASE_FILTER = "VIEW_PHASE_FILTER"
+    VIEWER_ANNOTATION_CROP_ACTIVE = "VIEWER_ANNOTATION_CROP_ACTIVE"
 
 
 class FakeBuiltInCategory(object):

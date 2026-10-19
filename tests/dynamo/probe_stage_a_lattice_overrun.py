@@ -38,7 +38,11 @@ model pass is the shipped one and the group's rollback is the restore:
                           (OST_Viewers) hidden in the view. Does the
                           annotation export come back at the model's size
                           without them? Then they ARE the overrun.
-  annotation_crop_on      View.AnnotationCropActive True. Does the annotation
+  annotation_crop_on      the annotation crop on, through the view's
+                          VIEWER_ANNOTATION_CROP_ACTIVE parameter (2026-10-19.2;
+                          .1 assigned View.AnnotationCropActive, which Revit
+                          2025's ViewPlan does not have: the variant changed
+                          nothing and read back as applied). Does the annotation
                           crop bound the export's extent, and at what size
                           (its offsets are recorded)?
   co_sized                (once the fix is in) the shipped capture: when the
@@ -75,7 +79,7 @@ import sys
 import time
 
 PROBE_NAME = "stage_a_lattice_overrun"
-PROBE_VERSION = "2026-10-19.1"
+PROBE_VERSION = "2026-10-19.2"
 SCHEMA = "vop.probe.lattice_overrun.v1"
 
 DEFAULT_VIEW_IDS = (4148625, 9468987, 9560929, 9594635, 9595813, 9596211)

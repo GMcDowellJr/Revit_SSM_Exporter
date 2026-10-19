@@ -263,8 +263,8 @@ def crop_shape_state(view, basis):
 def view_state(view, primary=None, annotation_crop=False):
     """What the capture writes and the rollback must put back, read. With a
     ``primary`` (a dependent view's), its template too: the passes detach
-    a dependent view's template there. ``annotation_crop`` adds
-    AnnotationCropActive, read only when the probe-only variant
+    a dependent view's template there. ``annotation_crop`` adds the
+    annotation crop (VIEWER_ANNOTATION_CROP_ACTIVE), read only when the probe-only variant
     ``annotation_crop_on`` writes it (anno_extent_variant).
 
     A view with no crop region (a drafting view or a legend) has no crop for
@@ -288,7 +288,7 @@ def view_state(view, primary=None, annotation_crop=False):
             "split_crop": _read(lambda: split_crop_state(view)),
         })
         if annotation_crop:
-            state["annotation_crop_active"] = _read(lambda: bool(view.AnnotationCropActive))
+            state["annotation_crop_active"] = _read(lambda: annotation_crop_active(view))
     if primary is not None:
         state["primary_view_template_id"] = _read(
             lambda: _element_id_int(primary.ViewTemplateId))
@@ -627,10 +627,32 @@ def unhide_lines_for_ticks(doc, view, Transaction, TransactionStatus, diag=None,
 #       (OST_Viewers: section, elevation and callout viewers) hidden in the
 #       view -- the elements RUN_..._SMALL_VIEWS.md §1.2 found past the crop
 #       in the 09-13..10-25 archives.
-#   annotation_crop_on      View.AnnotationCropActive set True (crop-active
-#       views only), with the four annotation-crop offsets recorded.
+#   annotation_crop_on      the view's annotation crop turned on through its
+#       VIEWER_ANNOTATION_CROP_ACTIVE parameter, with the four annotation-crop
+#       offsets recorded. NOT View.AnnotationCropActive: probe run
+#       20261019T1340 read "'ViewPlan' object has no attribute
+#       'AnnotationCropActive'" on Revit 2025, and the assignment then created
+#       a Python attribute on the wrapper -- read back True, changed nothing
+#       in Revit (six exports at the as_is size). A write is believed only
+#       through the parameter it went to, and only when that parameter could
+#       be read before it.
 ANNO_EXTENT_VARIANTS = ("as_is", "section_markers_hidden", "annotation_crop_on")
 SECTION_MARKER_BIC_NAME = "OST_Viewers"
+
+
+def annotation_crop_parameter(view):
+    """The view's VIEWER_ANNOTATION_CROP_ACTIVE parameter; raises when the
+    host or the view has none, so a ``_read`` of it is ``unavailable``."""
+    from Autodesk.Revit.DB import BuiltInParameter
+    param = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE)
+    if param is None:
+        raise LookupError("the view has no VIEWER_ANNOTATION_CROP_ACTIVE parameter")
+    return param
+
+
+def annotation_crop_active(view):
+    """Whether the view's annotation crop is on, read through its parameter."""
+    return int(annotation_crop_parameter(view).AsInteger()) == 1
 
 
 def anno_extent_variant(cfg):
@@ -693,20 +715,24 @@ def apply_anno_extent_variant(doc, view, variant, anno_members, Transaction,
             record["took_effect"] = bool(not hide["error"] and not hide["unreadable"])
         else:
             record["crop_box_active"] = _read(lambda: bool(view.CropBoxActive))
-            record["before"] = _read(lambda: bool(view.AnnotationCropActive))
+            record["before"] = _read(lambda: annotation_crop_active(view))
             manager = view.GetCropRegionShapeManager()
             record["offsets_ft"] = dict(
                 (side, _read(lambda s=side: float(getattr(manager, s + "AnnotationCropOffset"))))
                 for side in ("Left", "Right", "Top", "Bottom"))
-            view.AnnotationCropActive = True
+            if record["before"]["state"] == "value":
+                record["set_returned"] = _read(lambda: bool(annotation_crop_parameter(view).Set(1)))
         if tx.Commit() != TransactionStatus.Committed:
             raise RuntimeError("variant Transaction.Commit did not commit")
     except Exception:
         tx.RollBack()
         raise
     if variant == "annotation_crop_on":
-        record["read_back"] = _read(lambda: bool(view.AnnotationCropActive))
-        record["took_effect"] = record["read_back"].get("value") is True
+        # A fresh read of the parameter, never of what was assigned; and no
+        # write is believed whose target could not be read beforehand.
+        record["read_back"] = _read(lambda: annotation_crop_active(view))
+        record["took_effect"] = (record["before"]["state"] == "value"
+                                 and record["read_back"].get("value") is True)
     return record
 
 

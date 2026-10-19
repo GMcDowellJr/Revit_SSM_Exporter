@@ -16,7 +16,7 @@ doc's ExportImage) and what the FILES say.
 Config, so nothing else in the suite sets it: every position is asserted
 here, with a control pinning that unset is the shipped capture.
 Mutations wired to these tests: applying the variant before the model pass
-(the model export would see it); dropping the AnnotationCropActive read-back
+(the model export would see it); dropping the annotation-crop read-back
 key from view_state (the restore of the write goes unverified); dropping the
 variant record from the payload (the FILE test goes red).
 """
@@ -65,7 +65,7 @@ def install_overrun_exporter(monkeypatch, views, overrun_ft=MARKER_OVERRUN_FT, e
         view = views[0]
         px = int(opts.PixelSize)
         anno = os.path.basename(opts.FilePath) == "t_anno"
-        crop_on = bool(getattr(view, "AnnotationCropActive", False))
+        crop_on = bool(getattr(view, "_anno_crop", 0))
         marker_drawn = MARKER_ID not in view.hidden_elements and MARKER_ID in self._by_id
         if anno and crop_on:
             w_ft = CROP_W + 2 * ANNO_CROP_OFFSET_FT
@@ -88,12 +88,33 @@ def install_overrun_exporter(monkeypatch, views, overrun_ft=MARKER_OVERRUN_FT, e
     return seen
 
 
+class _AnnoCropParam(object):
+    """VIEWER_ANNOTATION_CROP_ACTIVE. Its value lives on the VIEW, so the
+    group's rollback (which restores the view's attributes) restores it, as
+    Revit's does. The fake view has NO AnnotationCropActive attribute: on
+    Revit 2025 the ViewPlan wrapper has none either (probe run
+    20261019T1340), and assigning one changed nothing in Revit."""
+
+    def __init__(self, view):
+        self._view = view
+
+    def AsInteger(self):
+        return int(self._view._anno_crop)
+
+    def Set(self, value):
+        object.__setattr__(self._view, "_anno_crop", int(value))
+        return True
+
+
 def run_capture(tmp_path, monkeypatch, variant=None, extra_cfg=None, marker=True,
-                overrun_ft=MARKER_OVERRUN_FT, extra_h_px=0):
+                overrun_ft=MARKER_OVERRUN_FT, extra_h_px=0, anno_crop_param=True):
     views = []
 
     def _setup(view):
-        object.__setattr__(view, "AnnotationCropActive", False)
+        object.__setattr__(view, "_anno_crop", 0)
+        if anno_crop_param:
+            view.params["VIEWER_ANNOTATION_CROP_ACTIVE"] = _AnnoCropParam(view)
+        assert not hasattr(view, "AnnotationCropActive")
         views.append(view)
 
     def _cfg(cfg):
@@ -161,7 +182,26 @@ def test_annotation_crop_on_for_the_annotation_pass_only_and_read_back(tmp_path,
     # The write is in the read-back, and the rollback undid it.
     vs = out["registration"]["restore"]["view_state"]
     assert vs["annotation_crop_active"] == {"status": "restored"}
-    assert view.AnnotationCropActive is False
+    assert view._anno_crop == 0
+    assert not hasattr(view, "AnnotationCropActive")       # nothing written beside Revit
+    assert out["registration"]["faults"] == []
+
+
+def test_annotation_crop_on_that_cannot_be_read_is_not_applied_and_says_so(
+        tmp_path, monkeypatch):
+    """Run 20261019T1340: the read of the crop state failed, the write went to
+    a Python attribute and read back True -- took_effect true over a variant
+    that changed nothing. With no parameter to write through, the variant now
+    refuses: nothing written, took_effect false, a fault in the FILE."""
+    out, view, doc, seen = run_capture(tmp_path, monkeypatch, "annotation_crop_on",
+                                       anno_crop_param=False)
+    assert all(s["annotation_crop_active"] is False for s in seen)
+    rec = _file(out["annotation_sidecar_path"])["registration_marks"]["anno_extent_variant"]
+    assert rec["before"]["state"] == "unavailable" and "set_returned" not in rec
+    assert rec["took_effect"] is False
+    faults = [f["fault"] for f in _file(out["sidecar_path"])["registration_marks"]["faults"]]
+    assert "anno_extent_variant_not_applied" in faults
+    assert not hasattr(view, "AnnotationCropActive")
 
 
 def test_control_unset_is_the_shipped_capture(tmp_path, monkeypatch):

@@ -5,10 +5,17 @@
 "(N) LEVEL x - Wall Types BP" plans that fail `annotation_lattice_mismatch` on
 every archive 09-13..10-25. **Run it on the 2025-10-25 archive.**
 
-**UNVERIFIED in Revit.** Driven end to end on the fake DB only
-(`tests/test_stage_a_lattice_overrun_probe.py`). Its first run is the test of
-the probe itself: check every variant's `variant_record.took_effect` and that
-`restore_faults` is empty before reading anything else.
+**Run once in Revit** (probe `2026-10-19.1`, 2025-10-25 archive, run
+`20261019T1323`; the record is in
+`tools/notes/data/probe_lattice_overrun_20261019T132321/`). `as_is`,
+`section_markers_hidden` and `co_sized` held; `annotation_crop_on` did NOT
+run: Revit 2025's ViewPlan has no `AnnotationCropActive`, the assignment
+made a Python attribute that read back True, and nothing in Revit changed
+(the six exports at the `as_is` size, `view_state_not_restored` on all six
+because the before-read failed). `2026-10-19.2` writes the
+VIEWER_ANNOTATION_CROP_ACTIVE parameter and believes a write only when that
+parameter read before it. Check every variant's `variant_record.took_effect`
+and that `restore_faults` is empty before reading anything else.
 
 ## What it runs
 
@@ -23,7 +30,7 @@ rollback is the restore and is read back as on every capture.
 |---|---|---|
 | `as_is` | the view as authored | the failure, measured: first-attempt annotation extent vs the model's |
 | `section_markers_hidden` | annotation members of category Views (OST_Viewers) hidden | are the markers the overrun? |
-| `annotation_crop_on` | `AnnotationCropActive = True` (offsets recorded) | does the annotation crop bound the export, and at what size? |
+| `annotation_crop_on` | `VIEWER_ANNOTATION_CROP_ACTIVE` set to 1 (offsets recorded) | does the annotation crop bound the export, and at what size? |
 | `co_sized` | (after the fix) the shipped capture | do both passes land on one lattice under the ceiling? |
 
 The first three run with the shipped co-sizing OFF (`color_id_buffer_co_size =
