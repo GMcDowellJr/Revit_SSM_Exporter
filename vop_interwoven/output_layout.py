@@ -203,11 +203,21 @@ def view_file_stem(view_name, view_id, capture_dir, layout=None):
     """``<name>_<view id>`` for a view's files in ``capture_dir`` (the run's
     FINAL capture folder): the stem the run already has for the view, else
     the view name capped to the room the folder leaves. Raises
-    PathBudgetExceeded when not even the id fits."""
+    PathBudgetExceeded when not even the id fits, and when the stem the run
+    already has would not fit with the longest suffix: an older run's name
+    was never capped, and cutting it would leave a second set of files, so
+    the view is refused rather than captured under either name."""
+    room = name_room(capture_dir, view_id, layout)
     kept = existing_stem(capture_dir, view_id)
     if kept is not None:
+        over = len(kept) - len("_{0}".format(view_id)) - room
+        if over > 0:
+            raise PathBudgetExceeded(
+                "view {0}'s files in {1} are named {2!r}; with the longest suffix a "
+                "tool appends that passes the {3}-character path limit by {4}, so the "
+                "view is not captured again under it".format(
+                    view_id, capture_dir, kept, PATH_LIMIT + 1, over))
         return kept
-    room = name_room(capture_dir, view_id, layout)
     if room < 0:
         raise PathBudgetExceeded(
             "the capture folder {0} ({1} characters) leaves no room for view {2}'s "

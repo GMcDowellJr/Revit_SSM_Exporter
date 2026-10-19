@@ -64,6 +64,25 @@ def test_a_view_already_in_the_run_keeps_its_file_name(tmp_path):
     assert ol.view_file_stem("NEW NAME", 42, str(cap)) == "NEW NAME_42"
 
 
+def test_a_kept_name_that_would_pass_the_limit_is_refused_not_reused(tmp_path):
+    """Review, PR #239: a v1 run's names were never capped. A kept stem whose
+    longest derived file (``_anno.registered.json``) would pass the limit is
+    refused; the same stem in a shallow folder is kept (control)."""
+    deep = Path(_deep_run(tmp_path, depth=150)) / ol.CAPTURE_DIR[ol.V1]
+    deep.mkdir(parents=True)
+    stem = ol.safe_view_name(LONG) + "_3969026"
+    (deep / (stem + ".json")).write_text("{}")
+    longest = len(os.path.join(os.path.abspath(str(deep)), stem)) + max(
+        len(s) for s in ol.STEM_SUFFIXES[ol.V1])
+    assert longest > ol.PATH_LIMIT                       # the fixture discriminates
+    with pytest.raises(ol.PathBudgetExceeded, match="not captured again"):
+        ol.view_file_stem(LONG, 3969026, str(deep), ol.V1)
+    shallow = Path(tmp_path) / "s" / ol.CAPTURE_DIR[ol.V1]
+    shallow.mkdir(parents=True)
+    (shallow / (stem + ".json")).write_text("{}")
+    assert ol.view_file_stem("RENAMED", 3969026, str(shallow), ol.V1) == stem
+
+
 def test_a_folder_too_deep_for_even_the_id_is_refused(tmp_path):
     run = _deep_run(tmp_path, depth=230)
     with pytest.raises(ol.PathBudgetExceeded, match="no room"):
