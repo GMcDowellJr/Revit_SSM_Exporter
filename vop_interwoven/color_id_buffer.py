@@ -10,7 +10,9 @@ state before returning to the next view.
 import copy
 import json
 import os
+import shutil
 import struct
+import tempfile
 import time
 
 from .resolution_contract import (
@@ -2948,13 +2950,24 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
 
     Returns the PixelSize Revit actually accepted (see
     ``_set_pixel_size_with_backoff``), which may be lower than requested.
+
+    The export is STAGED in a fresh short temporary directory, then moved.
+    ExportImage names its file ``<FilePath> - <view type> - <view name>.tif``,
+    and when that path reaches the Windows path limit it writes nothing and
+    raises nothing. Exporting beside ``output_path`` made the capture depend on
+    how deep the run directory sits: the 2025-07-02 rerun under a batch
+    output root 159 characters deep lost exactly the 24 views whose export
+    path came to 256-281 characters (every view at 255 or fewer captured),
+    views the original run, 106 characters deep, had captured. The staged
+    path's length depends only on the system temp directory and the view's
+    name. ``out_dir`` is kept for the callers; nothing is written there but
+    the moved TIFF.
     """
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
         ImageFileType,
     )
     import System.Collections.Generic as SCG
-    before = set(os.listdir(out_dir)) if os.path.isdir(out_dir) else set()
     ids = SCG.List[ElementId]()
     ids.Add(view.Id)
     opts = ImageExportOptions()
@@ -2969,7 +2982,6 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
     # derived axis.
     opts.FitDirection = _fit_direction(fit_direction)
     actual_pixel_size = _set_pixel_size_with_backoff(opts, pixel_size, diag=diag, view_id=view_id)
-    opts.FilePath = os.path.join(out_dir, "_vop_color_id_tmp")
 
     tiff_type = getattr(ImageFileType, "TIFF", getattr(ImageFileType, "TIF", None))
     if tiff_type is None:
@@ -2977,18 +2989,39 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
     opts.HLRandWFViewsFileType = tiff_type
     opts.ShadowViewsFileType = tiff_type
 
-    doc.ExportImage(opts)
-    after = set(os.listdir(out_dir))
-    candidates = [f for f in (after - before) if f.lower().endswith((".tif", ".tiff"))]
-    if not candidates:
-        raise RuntimeError(
-            "ExportImage did not produce a TIFF in '{0}'; Stage A refuses to mislabel "
-            "a non-TIFF raster as .tiff".format(out_dir)
-        )
-    created = os.path.join(out_dir, candidates[0])
-    if os.path.exists(output_path):
-        os.remove(output_path)
-    os.rename(created, output_path)
+    stage_dir = tempfile.mkdtemp(prefix="vop_")
+    try:
+        # A short name; "_anno" kept for the annotation pass so the pass is
+        # still readable from the export request (and in Revit's own name).
+        anno = os.path.basename(str(output_path)).lower().endswith("_anno.tiff")
+        opts.FilePath = os.path.join(stage_dir, "t_anno" if anno else "t")
+        doc.ExportImage(opts)
+        candidates = sorted(f for f in os.listdir(stage_dir)
+                            if f.lower().endswith((".tif", ".tiff")))
+        if not candidates:
+            # Revit's own name, "<FilePath> - <view type> - <view name>.tif",
+            # is unknown when nothing was written; this is its lower bound.
+            name = getattr(view, "Name", "") or ""
+            raise RuntimeError(
+                "ExportImage did not produce a TIFF in '{0}' (staged; the export path "
+                "is at least {1} characters with the view name, the Windows limit "
+                "is 260); Stage A refuses to mislabel a non-TIFF raster as .tiff".format(
+                    stage_dir, len(opts.FilePath) + len(" -  - ") + len(name) + len(".tif")))
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        shutil.move(os.path.join(stage_dir, candidates[0]), output_path)
+    finally:
+        try:
+            shutil.rmtree(stage_dir)
+        except OSError as ex:
+            # The TIFF is already moved (or the export failed and is being
+            # reported); an undeleted empty temp directory is recorded, not
+            # raised over that outcome.
+            if diag is not None:
+                diag.warn(phase="export", callsite="color_id_buffer._export_one_tiff",
+                          message="staging directory not removed: {0}".format(stage_dir),
+                          view_id=view_id, extra={"exc": "{0}: {1}".format(
+                              type(ex).__name__, ex)})
     return actual_pixel_size
 
 

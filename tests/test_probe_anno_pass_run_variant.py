@@ -472,7 +472,10 @@ def test_v8_runs_its_own_model_capture_BEFORE_the_white_suppression(tmp_path, mo
     report, view, exports, doc = _run(tmp_path, monkeypatch, probe.V8)
     assert len(exports) == 2, exports
     model_export, anno_export = exports
-    assert os.sep + "model" + os.sep in model_export["path"]
+    # The first export is the variant's own model pass: its TIFF lands in
+    # <variant>/model. (ExportImage is staged in a temp directory since the
+    # path-length fix, so opts.FilePath no longer names the destination.)
+    assert os.sep + "model" + os.sep in report["own_model_pass"]["tiff_path"]
     # No WHITE override existed when the model pass exported.
     assert (255, 255, 255) not in model_export["overrides"].values()
     # At the annotation export: fiducials reserved, every other model member white.
