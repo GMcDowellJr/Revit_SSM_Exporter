@@ -1,7 +1,7 @@
-# Hops_Interior_AR series 2025-02-03..2025-11-01 — the 207 "not gridded" rows: small views and the lattice mismatch
+# Hosp_Interior_AR series 2025-02-03..2025-11-01 — the 207 "not gridded" rows: small views and the lattice mismatch
 
-KSRF / Hops_Interior_AR, 44 runs under
-`C:\Users\gmcdowell\Documents\VOP\Exports\KSRF\Hops_Interior_AR\<date>__<run_id>`,
+KSRF / Hosp_Interior_AR, 44 runs under
+`C:\Users\gmcdowell\Documents\VOP\Exports\KSRF\Hosp_Interior_AR\<date>__<run_id>`,
 registered Stage A capture; `tools/find_recapture_views.py --include-failed`
 (1.2.0) lists 207 failed-capture view rows across them. Agent task of
 2026-10-15. HEAD is `main` after PR #236 merged (release v2.0.0, `c75b750`);

@@ -3,7 +3,7 @@ for the twelve registration ticks is REFUSED before anything is exported
 and recorded ``unmeasurable``, which the status chain (csv_export ->
 run_meta -> views_core) carries as such rather than as a failed capture.
 
-Legends 4622 and 142022 of the Hops_Interior_AR series failed this way in
+Legends 4622 and 142022 of the Hosp_Interior_AR series failed this way in
 all 44 runs (2025-02-03..11-01) as ``registration_failed`` with
 ``registration_marks_incomplete;registration_marks_may_not_draw``, and the
 series showed them as a measure lost. The registered capture is driven END

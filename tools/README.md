@@ -455,7 +455,7 @@ python tools/stage_a_runs_index.py --root <Exports> [--out <dir>] [--max-depth 4
 
 **`--root` is the export root** (`…\VOP\Exports`), not a project or model
 folder. `model_key` is the path from the root to each run folder's parent, so
-pointed at a model folder (`…\Exports\KSRF\Hops_Interior_AR`) every run sits
+pointed at a model folder (`…\Exports\KSRF\Hosp_Interior_AR`) every run sits
 directly under the root and its `model_key` is empty. Such rows are still
 indexed, and each is listed under `scan.warnings` ("run folder parent is
 root; model_key undefined") and printed as a `WARNING` line. `model_key` is
