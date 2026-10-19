@@ -16,6 +16,7 @@ Assertions read the files the tool WROTE (CLAUDE.md, defect class 4).
 """
 import csv
 import json
+from pathlib import Path
 
 from tools import register_stage_a_annotation as reg
 from tools import stage_a_element_census as census
@@ -43,12 +44,22 @@ def _link_entry(inst, elem, category="Walls"):
 
 
 def _view(run, n, eid=EID, host=None, link=None, date=None, status="success",
-          register=True):
+          register=True, link_pixels=False):
     """View ``n`` in ``run`` with model element ``eid`` (the shared element,
     re-numbered), its near_face_w_map, registered and gridded after the
-    edit (both record the model sidecar's hash)."""
+    edit (both record the model sidecar's hash). ``link_pixels`` paints a
+    linked category's colour into the model TIFF, as the capture does."""
     model_path, anno_path = _capture(run, n, register=False, gridded=False)
     side = json.loads(model_path.read_text())
+    if link_pixels:
+        import numpy as np
+        from PIL import Image
+        link_rgb = (6, 246, 42)
+        side["link_category_color_map"] = {"Walls": list(link_rgb)}
+        tiff = Path(side["tiff_path"])
+        img = np.asarray(Image.open(str(tiff)).convert("RGB")).copy()
+        img[40:60, 400:440] = link_rgb
+        Image.fromarray(img).save(str(tiff), format="TIFF")
     if eid != EID:
         side["color_assignment_map"] = {str(eid): side["color_assignment_map"][str(EID)]}
     side["near_face_w_map"] = {"host": {str(eid): host if host is not None else _host_entry()},
@@ -393,3 +404,121 @@ def test_the_bbox_centre_is_read_through_the_shared_reader_in_either_shape(tmp_p
                                   encoding="utf-8")))
     assert header[-3:] == ["bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft"]   # appended
     assert header.index("bbox_dz_ft") == census.ELEMENT_COLUMNS.index("bbox_dz_ft") == 21
+
+
+# --- 8. 1.3.0: review findings (PR #238) ------------------------------------------------
+
+def test_the_runs_csv_names_each_runs_document(tmp_path):
+    """Element ids are per model: a series that mixes models shows it."""
+    a = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(a, 1)
+    meta = json.loads((a / "run_meta.json").read_text())
+    meta["doc_title"] = {"state": "value", "value": "Tower_V1_2025-01-01"}
+    (a / "run_meta.json").write_text(json.dumps(meta))
+    out = tmp_path / "out"
+    census.main([str(a), "--out", str(out)])
+    _s, runs, _series = _out(out)
+    assert runs["RUN_A"]["doc_title"] == "Tower_V1_2025-01-01"
+
+
+def test_a_later_run_that_records_the_source_replaces_unrecorded(tmp_path):
+    a = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(a, 1, host=_host_entry(source={"state": "unavailable", "reason": "old"}))
+    b = _dated_run(tmp_path, "2025-02-01", "RUN_B")
+    _view(b, 1, host=_host_entry(source="DWG"))
+    out = tmp_path / "out"
+    census.main([str(a), str(b), "--out", str(out)])
+    _s, _runs, series = _out(out)
+    assert series["host:{0}".format(EID)]["source"] == "DWG"
+
+
+def test_an_empty_link_map_beside_link_pixels_is_unrecorded_identity(tmp_path):
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1, link_pixels=True)                                   # link {} + pixels
+    _view(run, 2, link_pixels=True, link={"11:500": _link_entry(11, 500)})   # control
+    out = tmp_path / "out"
+    census.main([str(run), "--out", str(out)])
+    _s, runs, _series = _out(out)
+    assert int(runs["RUN_A"]["link_category_cells_ink"]) > 0
+    assert runs["RUN_A"]["link_identity_unrecorded_views"] == "1"
+
+
+def test_two_runs_with_one_run_id_are_refused(tmp_path):
+    a = _dated_run(tmp_path, "2025-01-01", "SAME")
+    _view(a, 1)
+    b = _run(tmp_path, name="2025-02-01__other", run_id="SAME")
+    _view(b, 1, date="2025-02-01")
+    out = tmp_path / "out"
+    assert census.main([str(a), str(b), "--out", str(out)]) == 2
+    assert not (out / census.SUMMARY_NAME).exists()
+
+
+def test_the_census_does_not_read_the_rollups_per_key_detail(tmp_path, monkeypatch):
+    """One tuple per key per view, and a second npz read, held for the whole
+    run: the census reads the accounting itself."""
+    from tools import stage_a_grid_rollup as rollup_mod
+
+    def _boom(_grid_json):
+        raise AssertionError("row_keys read by the census")
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1)
+    monkeypatch.setattr(rollup_mod, "row_keys", _boom)
+    out = tmp_path / "out"
+    assert census.main([str(run), "--out", str(out)]) == 0
+    with __import__("pytest").raises(AssertionError, match="row_keys read"):
+        rollup_mod.main([str(run)])                                  # control: wired
+
+
+def test_every_unmeasured_run_between_sightings_is_counted(tmp_path):
+    a = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(a, 1)
+    b = _dated_run(tmp_path, "2025-02-01", "RUN_B")
+    _view(b, 1, status="annotation_failed")
+    c = _dated_run(tmp_path, "2025-03-01", "RUN_C")
+    _view(c, 1, status="annotation_failed")
+    d = _dated_run(tmp_path, "2025-04-01", "RUN_D")
+    _view(d, 1)
+    out = tmp_path / "out"
+    census.main([str(x) for x in (a, b, c, d)] + ["--out", str(out)])
+    _s, _runs, series = _out(out)
+    s7 = series["host:{0}".format(EID)]
+    assert (s7["runs_seen"], s7["runs_unmeasured_between"]) == ("2", "2")
+
+
+def test_a_run_id_with_a_path_separator_names_one_file(tmp_path):
+    run = _run(tmp_path, name="2025-01-01__tagged", run_id="20250101T0000_a/b")
+    _view(run, 1, date="2025-01-01")
+    out = tmp_path / "out"
+    census.main([str(run), "--out", str(out)])
+    assert (out / "2025-01-01__20250101T0000_a_b.elements.csv").is_file()
+    assert sorted(p.name for p in out.iterdir() if p.is_dir()) == []
+
+
+def test_annotation_cells_are_blank_when_no_view_counted_annotation(tmp_path):
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1, register=False)
+    out = tmp_path / "out"
+    census.main([str(run), "--out", str(out)])
+    _s, runs, _series = _out(out)
+    assert (runs["RUN_A"]["anno_cells_views"], runs["RUN_A"]["anno_cells_occupancy"]) == (
+        "0", "")
+
+
+def test_a_failed_rerun_leaves_no_summary_of_the_previous_one(tmp_path, monkeypatch):
+    """The summary is the write-last completion mark."""
+    run = _dated_run(tmp_path, "2025-01-01", "RUN_A")
+    _view(run, 1)
+    out = tmp_path / "out"
+    census.main([str(run), "--out", str(out)])
+    assert (out / census.SUMMARY_NAME).exists()                      # control
+    real = census._write_csv
+
+    def _fail_runs_csv(path, columns, rows):
+        if Path(path).name == census.RUNS_CSV:
+            raise OSError("disk full")
+        return real(path, columns, rows)
+    monkeypatch.setattr(census, "_write_csv", _fail_runs_csv)
+    import pytest
+    with pytest.raises(OSError):
+        census.main([str(run), "--out", str(out)])
+    assert not (out / census.SUMMARY_NAME).exists()

@@ -99,6 +99,13 @@ element-in-view records). ``anno_cells_occupancy`` sums the measured views
 that counted an annotation layer, and the appended ``anno_cells_views``
 says how many did; 1.0.0 left it blank when any one view was model-only.
 
+1.3.0 (review, PR #238): appends ``doc_title`` to the runs CSV; refuses two
+runs with one run_id; ``runs_unmeasured_between`` counts every run between
+sightings where a view that drew the element was unmeasured; a later run's
+recorded source replaces ``unrecorded``; ``anno_cells_occupancy`` is blank when
+no view counted annotation; an empty link map beside link pixels is
+``link_identity_unrecorded``; the roll-up's per-key detail is not read.
+
 1.2.0 appends ``bbox_cx_ft`` / ``bbox_cy_ft`` / ``bbox_cz_ft`` to the
 element CSV: the bbox_3d centre, so an element gone in one run and one
 created in the next can be matched on category, place and size (the 44-run
@@ -130,7 +137,7 @@ from tools import stage_a_kinds as kinds  # noqa: E402
 from tools import stage_a_sidecar_shapes as shapes  # noqa: E402
 
 SCHEMA = "vop.stage_a.element_census.v1"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 
 ELEMENTS_SUFFIX = ".elements.csv"
 RUNS_CSV = "element_census_runs.csv"
@@ -169,7 +176,10 @@ RUN_COLUMNS = (
     + [t for t in TRANSITIONS] + ["{0}_LINK".format(t) for t in TRANSITIONS]
     # 1.1.0: appended. anno_cells_occupancy sums the measured views that
     # counted an annotation layer; this many did (the rest are model-only).
-    + ["anno_cells_views"])
+    + ["anno_cells_views"]
+    # 1.3.0: appended. The run's document title, so a series that mixes
+    # models (element ids are per model) shows it.
+    + ["doc_title"])
 SERIES_COLUMNS = [
     "element_key", "source", "category", "first_as_of_date", "first_run_id",
     "first_how", "last_as_of_date", "last_run_id", "last_how", "runs_seen",
@@ -302,7 +312,10 @@ def view_census(model_sidecar_path, grid_json):
             "px": int(sums["px"][n]), "ink_px": int(sums["ink_px"][n]),
             "cells_px": int(sums["cells_px"][n]), "cells_ink": int(sums["cells_ink"][n]),
             "bbox_state": bbox_state, "bbox": bbox}
-    link_recorded = nfw is not None and isinstance(nfw.get("link"), dict)
+    # Link identity is recorded only when the sidecar names link elements: an
+    # empty map beside linked-category pixels records none of them.
+    link_recorded = bool(isinstance(nfw, dict) and isinstance(nfw.get("link"), dict)
+                         and nfw["link"])
     for raw_key, entry in sorted(((nfw or {}).get("link") or {}).items()):
         entry = entry if isinstance(entry, dict) else {}
         inst, elem = entry.get("link_inst_id"), entry.get("link_elem_id")
@@ -353,7 +366,7 @@ def as_of_date(meta, run_dir):
 def _blank_run(run_dir, run_id, date, refused):
     return {"run_dir": str(run_dir), "run_id": run_id, "as_of_date": date,
             "refused": refused, "views": {}, "elements": {}, "measured": [],
-            "unmeasured": {}, "requested": []}
+            "unmeasured": {}, "requested": [], "doc_title": None}
 
 
 def census_run(run_arg):
@@ -370,8 +383,11 @@ def census_run(run_arg):
                           "no as-of date: run_meta.json carries no \"date\" and the run "
                           "directory has no <date>__ prefix")
     core_state, _reason, core_by_id = rollup.load_views_core(run_dir, run_id)
-    rows = rollup.run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id), ident)
+    rows = rollup.run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id), ident,
+                           with_keys=False)
     run = _blank_run(run_dir, run_id, date, None)
+    title = meta.get("doc_title")
+    run["doc_title"] = (title.get("value") if isinstance(title, dict) else title)
     run["requested"] = rollup.unique_requested(ident["requested"])
     refusals, gridded = [], []
     for r in rows:
@@ -504,6 +520,7 @@ def run_stats(run):
         return None if any(x is None for x in values) else sum(values)
     row = {
         "as_of_date": run["as_of_date"], "run_id": run["run_id"], "run_dir": run["run_dir"],
+        "doc_title": run["doc_title"],
         "refused": run["refused"], "views_requested": len(run["requested"]),
         "views_measured": len(run["measured"]), "views_unmeasured": len(run["unmeasured"]),
         "views_capture_failed": sum(1 for u in unmeasured
@@ -513,8 +530,11 @@ def run_stats(run):
                                          if u["row_status"] == "below_capture_floor"),
         "model_cells_occupancy": _sum("model_cells"),
         "model_cells_occupancy_inside_crop_a": _sum("model_cells_inside"),
-        "anno_cells_occupancy": sum(v["anno_cells"] for v in run["views"].values()
-                                    if v["anno_cells"] is not None),
+        # Blank, not 0, when no measured view counted an annotation layer.
+        "anno_cells_occupancy": (sum(v["anno_cells"] for v in run["views"].values()
+                                     if v["anno_cells"] is not None)
+                                 if any(v["anno_cells"] is not None
+                                        for v in run["views"].values()) else None),
         "anno_cells_views": sum(1 for v in run["views"].values()
                                 if v["anno_cells"] is not None),
         "elements_distinct": len(els),
@@ -635,8 +655,17 @@ def series(runs):
                                                                else enter.get(key)),
                                      "leave_hows": []}
             e["seen"].append(i)
+            e["views"] = a["views"]
             if a["category"] is not None:
                 e["category"] = a["category"]
+            if e["source"] == "unrecorded" and a["source"] != "unrecorded":
+                e["source"] = a["source"]        # as aggregate() composes it
+        # Absent here though seen before: unmeasured when any view that last
+        # drew it is unmeasured in this run (counted for EVERY such run).
+        unmeasured = set(run["unmeasured"])
+        for key, e in elements.items():
+            if key not in run["elements"] and set(e.get("views") or ()) & unmeasured:
+                e.setdefault("unmeasured_runs", []).append(i)
     rows = []
     for key in sorted(elements):
         e = elements[key]
@@ -651,13 +680,18 @@ def series(runs):
             "last_as_of_date": runs[last]["as_of_date"], "last_run_id": runs[last]["run_id"],
             "last_how": last_how, "runs_seen": len(e["seen"]),
             "runs_in_series": len(runs),
-            "runs_unmeasured_between": sum(1 for i, how in e["leave_hows"]
-                                           if how == "unmeasured" and i in between),
+            "runs_unmeasured_between": sum(1 for i in e.get("unmeasured_runs", [])
+                                           if i in between),
             "reappearances": sum(1 for a, b in zip(e["seen"], e["seen"][1:]) if b > a + 1)})
     return per_run, rows
 
 
 # --- writing ----------------------------------------------------------------------
+
+def _file_part(text):
+    """``text`` safe as one file-name part: no path separators or traversal."""
+    return re.sub(r'[\\/:*?"<>|]', "_", str(text)).replace("..", "_")
+
 
 def _write_csv(path, columns, rows):
     with open(path, "w", encoding="utf-8", newline="") as handle:
@@ -689,6 +723,14 @@ def census(run_args, out_dir, progress=None):
     dates = {}
     for r in live:
         dates.setdefault(r["as_of_date"], []).append(r["run_dir"])
+    ids = {}
+    for r in live:
+        ids.setdefault(r["run_id"], []).append(r["run_dir"])
+    same_id = dict((i, dirs) for i, dirs in ids.items() if len(dirs) > 1)
+    if same_id:
+        raise CensusRefusal("runs share a run_id, so they cannot be told apart: "
+                            + "; ".join("{0}: {1}".format(i, ", ".join(dirs))
+                                        for i, dirs in sorted(same_id.items())))
     shared = dict((d, dirs) for d, dirs in dates.items() if len(dirs) > 1)
     if shared:
         raise CensusRefusal("runs share an as-of date, so the series has no order: "
@@ -697,10 +739,16 @@ def census(run_args, out_dir, progress=None):
     live.sort(key=lambda r: r["as_of_date"])
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # The summary is the write-last completion mark: a previous census's must
+    # not outlive this one's partial output.
+    stale = out_dir / SUMMARY_NAME
+    if stale.exists():
+        stale.unlink()
     per_run, series_rows = series(live)
     hashes, run_rows, details = {}, [], {}
     for run in live:
-        name = "{0}__{1}{2}".format(run["as_of_date"], run["run_id"], ELEMENTS_SUFFIX)
+        name = "{0}__{1}{2}".format(run["as_of_date"], _file_part(run["run_id"]),
+                                    ELEMENTS_SUFFIX)
         hashes[name] = _write_csv(out_dir / name, ELEMENT_COLUMNS, element_rows(run))
         row, detail = run_stats(run)
         info = per_run[run["run_id"]]
