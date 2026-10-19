@@ -539,6 +539,33 @@ def test_the_cli_writes_a_plan_from_a_manifest_lists_and_the_runs_on_disk(tmp_pa
     assert load_plan(str(out))["mode"] == "both"
 
 
+def test_the_cli_refuses_a_stale_run_dir_naming_both_paths(tmp_path, capsys):
+    """2026-10-19: KSRF/Hops_Interior_AR was renamed Hosp_Interior_AR and every
+    run_meta still records the old path, which the finder writes as run_dir.
+    Indexing a missing directory finds nothing, so the run was listed
+    "unmatched" with no word of why; it is now a refusal naming both."""
+    root = tmp_path / "Exports"
+    renamed = _run_dir(root / "KSRF" / "Hosp_Interior_AR", "A_2025-10-25")
+    stale = renamed.replace("Hosp_Interior_AR", "Hops_Interior_AR")
+    manifest = _manifest(tmp_path / "m.csv", [_row("A_2025-10-25")])
+    lists = tmp_path / "recapture_lists.json"
+    lists.write_text(json.dumps({"runs": [{"run_dir": stale, "scanned_dir": renamed,
+                                           "run_id": "20261008T093539",
+                                           "recapture": [4148625]}]}))
+    out = tmp_path / "capture_plan.json"
+    assert cli.main([manifest, "--output-root", str(root), "--recapture-lists", str(lists),
+                     "--out", str(out)]) == 2
+    text = capsys.readouterr().out
+    assert "REFUSED" in text and stale in text and renamed in text and "which exists" in text
+    assert not out.exists()
+    # Corrected as the plan says: the same list with the renamed path plans.
+    lists.write_text(json.dumps({"runs": [{"run_dir": renamed, "scanned_dir": renamed,
+                                           "run_id": "20261008T093539",
+                                           "recapture": [4148625]}]}))
+    assert cli.main([manifest, "--output-root", str(root), "--recapture-lists", str(lists),
+                     "--out", str(out)]) == 0
+
+
 def test_the_cli_refuses_a_bad_manifest_and_writes_nothing(tmp_path, capsys):
     (tmp_path / "bad.csv").write_text("a,b\n1,2\n")
     out = tmp_path / "plan.json"

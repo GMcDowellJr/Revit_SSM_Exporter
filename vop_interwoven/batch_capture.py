@@ -256,8 +256,11 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
                 ambiguous.append(run.get("run_id"))
                 continue
             matched_dirs.add(os.path.normpath(run["run_dir"]))
-            recaptures.append({"run_dir": run["run_dir"], "run_id": run.get("run_id"),
-                               "doc_title": title, "view_ids": ids})
+            target = {"run_dir": run["run_dir"], "run_id": run.get("run_id"),
+                      "doc_title": title, "view_ids": ids}
+            if run.get("reason"):
+                target["reason"] = run["reason"]
+            recaptures.append(target)
         job = {"key": entry["relative_path"], "full_path": entry["full_path"],
                "display_name": entry["display_name"], "stem": stem}
         if ambiguous and mode in ("recapture", "both"):

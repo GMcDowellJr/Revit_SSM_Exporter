@@ -36,7 +36,9 @@ sys.path.insert(0, os.path.dirname(HERE))
 from vop_interwoven.batch_capture import (  # noqa: E402
     DEFAULT_VIEW_TYPES, BatchPlanError, build_plan, index_runs, load_manifest,
 )
-from vop_interwoven.recapture import RecaptureRefused, load_recapture_lists  # noqa: E402
+from vop_interwoven.recapture import (  # noqa: E402
+    RecaptureRefused, check_run_dir_exists, load_recapture_lists,
+)
 
 
 def plan_from_args(args):
@@ -48,6 +50,13 @@ def plan_from_args(args):
     known = set(os.path.normpath(r["run_dir"]) for r in run_index if "run_dir" in r)
     for run in runs:
         run_dir = run.get("run_dir")
+        if run.get("recapture"):
+            # A stale recorded run_dir (a renamed folder) would otherwise
+            # index nothing and leave the run quietly "unmatched".
+            try:
+                check_run_dir_exists(run)
+            except RecaptureRefused as ex:
+                raise BatchPlanError(str(ex))
         if run_dir and os.path.normpath(run_dir) not in known:
             run_index.extend(index_runs(run_dir, max_depth=0))
             known.add(os.path.normpath(run_dir))
