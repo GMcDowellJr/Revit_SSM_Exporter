@@ -13,6 +13,7 @@ import os
 import struct
 import time
 
+from . import output_layout
 from .resolution_contract import (
     DEFAULT_COLOR_ID_EXPORT_DPI,
     MAX_STAGE_A_AXIS_PX,
@@ -3708,14 +3709,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     base_output_dir = getattr(cfg, "output_dir", None) or getattr(
         cfg, "debug_dump_path", "C:\\temp\\vop_output"
     )
-    out_dir = os.path.join(base_output_dir, "color_id_buffer")
+    # The run's layout and its final capture folder (output_layout): the
+    # view's file stem is capped to what fits there.
+    out_dir, final_dir, _layout = output_layout.capture_dir_of(cfg, base_output_dir)
     view_id = view.Id.IntegerValue
-    safe_name = "".join(
-        c if c.isalnum() or c in (" ", "-", "_") else "_"
-        for c in getattr(view, "Name", "view")
-    )
-    tiff_path = os.path.join(out_dir, "{0}_{1}.tiff".format(safe_name, view_id))
-    json_path = os.path.join(out_dir, "{0}_{1}.json".format(safe_name, view_id))
+    stem = output_layout.view_file_stem(getattr(view, "Name", "view"), view_id,
+                                        final_dir, _layout)
+    tiff_path = os.path.join(out_dir, stem + ".tiff")
+    json_path = os.path.join(out_dir, stem + ".json")
 
     scale = float(getattr(view, "Scale", 1) or 1)
     export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI))
@@ -5855,15 +5856,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     base_output_dir = getattr(cfg, "output_dir", None) or getattr(
         cfg, "debug_dump_path", "C:\\temp\\vop_output"
     )
-    out_dir = os.path.join(base_output_dir, "color_id_buffer")
-    safe_name = "".join(
-        c if c.isalnum() or c in (" ", "-", "_") else "_"
-        for c in getattr(view, "Name", "view")
-    )
-    # "_anno" suffix, so the annotation TIFF and sidecar sit beside the model
+    out_dir, final_dir, _layout = output_layout.capture_dir_of(cfg, base_output_dir)
+    # The model pass's stem (output_layout.view_file_stem, the same inputs),
+    # plus "_anno", so the annotation TIFF and sidecar sit beside the model
     # pass's rather than over them.
-    tiff_path = os.path.join(out_dir, "{0}_{1}_anno.tiff".format(safe_name, view_id))
-    json_path = os.path.join(out_dir, "{0}_{1}_anno.json".format(safe_name, view_id))
+    stem = output_layout.view_file_stem(getattr(view, "Name", "view"), view_id,
+                                        final_dir, _layout)
+    tiff_path = os.path.join(out_dir, stem + "_anno.tiff")
+    json_path = os.path.join(out_dir, stem + "_anno.json")
 
     scale = float(getattr(view, "Scale", 1) or 1)
     fit_direction = str(
@@ -6796,8 +6796,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "pass": "annotation",
         # The model pass's companion file. Named rather than inferred from the
         # "_anno" suffix, so a reader never has to reconstruct a path.
-        "model_pass_tiff_path": os.path.join(
-            out_dir, "{0}_{1}.tiff".format(safe_name, view_id)),
+        "model_pass_tiff_path": os.path.join(out_dir, stem + ".tiff"),
         # C5: one frame record per sidecar (pre-C5: "resolution").
         # C6: achieved values only -- see the model pass's frame record for
         # where each dropped request is derived from.

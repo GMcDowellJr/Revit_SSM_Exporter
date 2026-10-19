@@ -51,7 +51,8 @@ import json
 import os
 import re
 
-from .run_meta import RUN_META_FILENAME, run_identity, write_run_meta
+from . import output_layout
+from .run_meta import clock_stamp, write_run_meta
 
 DEFAULT_VIEW_TYPES = (
     "FloorPlan", "CeilingPlan", "AreaPlan", "EngineeringPlan", "Section",
@@ -120,22 +121,6 @@ def title_matches(recorded, opened):
     return opened == recorded or opened == recorded + DETACHED_SUFFIX
 
 
-def model_key(entry):
-    """``<project_folder>/<stem without its date>``: the output subdirectory
-    a NEW capture of this file writes its run into (editable in the plan)."""
-    stem = entry["stem"]
-    date = archive_date(stem)
-    if date:
-        stem = stem[:len(stem) - len(date)].rstrip("_- ")
-    parts = [p for p in (entry.get("project_folder") or "").replace("\\", "/").split("/") if p]
-    parts.append(stem)
-    return "/".join(_safe(p) for p in parts)
-
-
-def _safe(name):
-    return re.sub(r'[<>:"|?*]', "_", name).strip() or "_"
-
-
 # --- the runs already there ------------------------------------------------------------
 
 def _load_json(path):
@@ -149,7 +134,7 @@ def _value(record):
 
 
 def index_runs(root, max_depth=4):
-    """Every run_meta.json under ``root`` (to ``max_depth`` levels), as
+    """Every run's record (run_meta.json or run_meta_<d>.json) under ``root`` (to ``max_depth`` levels), as
     ``{run_dir, run_id, date, doc_title, finalized, recaptures}``; an
     unreadable one is listed with ``error`` rather than dropped."""
     runs = []
@@ -161,10 +146,15 @@ def index_runs(root, max_depth=4):
         if depth > max_depth:
             dirnames[:] = []
             continue
-        if RUN_META_FILENAME not in filenames:
+        if not any(n == output_layout.RUN_META_V1
+                   or (n.startswith(output_layout.RUN_META_PREFIX) and n.endswith(".json"))
+                   for n in filenames):
             continue
         dirnames[:] = []          # a run directory holds no runs
-        path = os.path.join(dirpath, RUN_META_FILENAME)
+        path, why = output_layout.find_run_meta(dirpath)
+        if path is None:
+            runs.append({"run_dir": dirpath, "error": why})
+            continue
         try:
             meta = _load_json(path)
             runs.append({"run_dir": dirpath, "run_id": meta.get("run_id"),
@@ -207,8 +197,10 @@ def same_file(a, b):
 
 
 def run_meta_of(run_dir):
-    """The run's run_meta.json, or None with the reason."""
-    path = os.path.join(run_dir, RUN_META_FILENAME)
+    """The run's record, or None with the reason."""
+    path, why = output_layout.find_run_meta(run_dir)
+    if path is None:
+        return None, why
     try:
         return _load_json(path), None
     except (IOError, OSError, ValueError) as ex:
@@ -295,8 +287,12 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
                                                     [r.get("run_id") for r in unsure])})
             continue
         date = archive_date(stem)
+        # The folder the run goes into is the one selected (Greg, 2026-10-19),
+        # not one derived from the manifest: a derived <project>/<model with
+        # version and size> made every archive version its own folder and
+        # the run paths 60+ characters longer (output_layout's path limit).
         job.update(kind="capture",
-                   output_dir=os.path.join(output_root, *model_key(entry).split("/")),
+                   output_dir=output_root,
                    date_override=date,
                    date_source="archive_name" if date else "capture_day",
                    view_types=list(view_types))
@@ -483,7 +479,7 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
     run directory a job wrote gains ``opened_from``. Returns the log record.
     """
     pending, done = pending_jobs(plan, limit=limit)
-    clock_id = run_identity(None, now=now)["run_id"]
+    clock_id = clock_stamp(now)
     record = {"schema": BATCH_LOG_SCHEMA, "started": clock_id, "plan_mode": plan.get("mode"),
               "jobs": [], "already_done": [{"key": j["key"], "detail": j.get("done_detail")}
                                            for j in done],

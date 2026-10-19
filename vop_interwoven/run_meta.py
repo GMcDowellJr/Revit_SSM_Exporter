@@ -20,9 +20,12 @@ import json
 import os
 
 from . import __version__ as _PACKAGE_VERSION
+from . import output_layout
 
 RUN_META_SCHEMA = "vop.run_meta.v1"
-RUN_META_FILENAME = "run_meta.json"
+# The v1 name. A v2 run's record is run_meta_<d>.json (output_layout);
+# find a run's record with output_layout.find_run_meta, never by this name.
+RUN_META_FILENAME = output_layout.RUN_META_V1
 # The exporter's NAME and its VERSION are separate keys. exporter_version used
 # to hold the package name, which identified nothing. It is now
 # "<__version__>+src.<12 hex>": the package's declared version plus a
@@ -83,7 +86,18 @@ def output_date_str(date_override, now=None):
     return (now or _clock()).strftime("%Y-%m-%d")
 
 
-RUN_ID_CLOCK_FORMAT = "%Y%m%dT%H%M%S"
+# Minutes, not seconds (2026-10-19: path length; two runs of one archive in
+# one minute into one folder are refused by check_run_directory). Run ids
+# minted before carry seconds; their first 13 characters parse with this.
+RUN_ID_CLOCK_FORMAT = "%Y%m%dT%H%M"
+# Timestamps that are not run ids (a recapture's captured_at, a batch log's
+# name) keep seconds: two in one minute must stay two.
+CLOCK_SECONDS_FORMAT = "%Y%m%dT%H%M%S"
+
+
+def clock_stamp(now=None):
+    """The execution clock as YYYYMMDDTHHMMSS."""
+    return (now or _clock()).strftime(CLOCK_SECONDS_FORMAT)
 
 
 def _clock():
@@ -97,7 +111,7 @@ def run_identity(date_override, now=None, run_id=None):
     apart from WHAT DATE its data is as of.
 
     * ``run_id`` is minted from the execution clock, ``now`` (default
-      datetime.now()), as YYYYMMDDTHHMMSS, plus ``_<tag>`` when the override
+      datetime.now()), as YYYYMMDDTHHMM (YYYYMMDDTHHMMSS before 2026-10-19), plus ``_<tag>`` when the override
       is a tag. A date override never enters it: with the override in it,
       two re-runs of one archive snapshot (or two archive models with the
       same snapshot date) shared ``<date>T000000`` and one run's files
@@ -118,7 +132,7 @@ def run_identity(date_override, now=None, run_id=None):
     if run_id:
         clock = None
         try:
-            clock = datetime.strptime(str(run_id)[:15], RUN_ID_CLOCK_FORMAT)
+            clock = datetime.strptime(str(run_id)[:13], RUN_ID_CLOCK_FORMAT)
         except ValueError:
             clock = None   # not a minted id; the as-of date falls back to now
         clock = clock or now or _clock()
@@ -172,19 +186,19 @@ def check_run_directory(run_dir, run_id, continuing=False):
     """
     if not os.path.exists(run_dir):
         return
-    path = os.path.join(run_dir, RUN_META_FILENAME)
-    if not os.path.isfile(path):
+    path, why = output_layout.find_run_meta(run_dir)
+    if path is None:
         raise RunDirectoryConflict(
-            "run directory {0} already exists and holds no {1}, so it cannot be "
-            "shown to be run {2}'s; refusing to write into it".format(
-                run_dir, RUN_META_FILENAME, run_id))
+            "run directory {0} already exists and holds no single run_meta file "
+            "({1}), so it cannot be shown to be run {2}'s; refusing to write into "
+            "it".format(run_dir, why, run_id))
     try:
         with open(path) as handle:
             existing = json.load(handle).get("run_id")
     except (IOError, OSError, ValueError, AttributeError) as ex:
         raise RunDirectoryConflict(
             "run directory {0} holds an unreadable {1} ({2}: {3}); refusing to "
-            "write run {4} into it".format(run_dir, RUN_META_FILENAME,
+            "write run {4} into it".format(run_dir, os.path.basename(path),
                                            type(ex).__name__, ex, run_id))
     if existing != run_id:
         raise RunDirectoryConflict(
@@ -194,7 +208,7 @@ def check_run_directory(run_dir, run_id, continuing=False):
         raise RunDirectoryConflict(
             "run directory {0} already holds run {1!r}, and this run minted the "
             "same id rather than continuing it (two runs started in the same "
-            "second); refusing to write into it".format(run_dir, run_id))
+            "minute); refusing to write into it".format(run_dir, run_id))
 
 
 def _value(v):
@@ -329,6 +343,9 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
         # or None. Never written into "date".
         "run_tag": run_tag,
         "run_dir": run_dir,
+        # Which file layout the run writes (vop_interwoven/output_layout.py);
+        # a record without it is a v1 run.
+        "output_layout": output_layout.NEW_RUN_LAYOUT,
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
         "exporter": EXPORTER_NAME,
@@ -425,15 +442,26 @@ def write_merged_run_meta(batch_meta_paths, output_dir, run_complete):
     return write_run_meta(merged, output_dir)
 
 
+def run_meta_path(meta, output_dir):
+    """Where ``meta`` is written in ``output_dir``: over the directory's one
+    existing run_meta file when it has one (a v1 run keeps run_meta.json),
+    else named by the record's layout and file date."""
+    existing, _why = output_layout.find_run_meta(output_dir)
+    if existing is not None:
+        return existing
+    return os.path.join(output_dir, output_layout.run_meta_name(
+        meta.get("output_layout") or output_layout.V1, output_layout.file_date(meta)))
+
+
 def write_run_meta(meta, output_dir):
-    """Write run_meta.json ATOMICALLY: to a sibling temporary file, then
+    """Write the run's record ATOMICALLY: to a sibling temporary file, then
     replace. Opening the final path with "w" truncated the readable
     finalized:false record before the finalized one was serialised, so a
     process that stopped mid-write left empty or partial JSON (review,
     PR #221) -- the opposite of the interrupted-run record promised above.
     The temporary file is removed if the write fails."""
     import tempfile
-    path = os.path.join(output_dir, RUN_META_FILENAME)
+    path = run_meta_path(meta, output_dir)
     fd, tmp_path = tempfile.mkstemp(prefix=".run_meta_", suffix=".json.tmp",
                                     dir=output_dir)
     try:

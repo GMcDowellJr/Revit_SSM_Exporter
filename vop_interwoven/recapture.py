@@ -55,9 +55,9 @@ import csv
 import json
 import os
 
+from . import output_layout
 from .run_meta import (
-    RUN_META_FILENAME, _replace, exporter_version, git_commit, run_identity,
-    view_outcomes,
+    _replace, clock_stamp, exporter_version, git_commit, view_outcomes,
 )
 
 RECAPTURE_REASON = "ticks_outside_crop_loop"
@@ -84,11 +84,11 @@ def _vid(value):
 
 
 def load_run_meta(run_dir):
-    """The run's run_meta.json, or RecaptureRefused."""
-    path = os.path.join(run_dir, RUN_META_FILENAME)
-    if not os.path.isfile(path):
-        raise RecaptureRefused("{0} holds no {1}; it cannot be shown to be a run's".format(
-            run_dir, RUN_META_FILENAME))
+    """The run's record (run_meta.json or run_meta_<d>.json), or
+    RecaptureRefused."""
+    path, why = output_layout.find_run_meta(run_dir)
+    if path is None:
+        raise RecaptureRefused("{0}; it cannot be shown to be a run's".format(why))
     try:
         with open(path) as handle:
             meta = json.load(handle)
@@ -136,12 +136,12 @@ def recapture_plan(meta, view_ids, doc_title):
 
 def recapture_record(meta, view_ids, reason=RECAPTURE_REASON, now=None):
     """The record every recaptured sidecar and run_meta carry: WHEN (the
-    execution clock, minted as a run id is), WHICH build, WHY, which views,
+    execution clock, to the second), WHICH build, WHY, which views,
     and what build the run itself was."""
     version, source = exporter_version()
     return {
         "schema": RECAPTURE_SCHEMA,
-        "captured_at": run_identity(None, now=now)["run_id"],
+        "captured_at": clock_stamp(now),
         "exporter_version": version,
         "exporter_source": source,
         "git_commit": git_commit(),

@@ -1339,6 +1339,16 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     else:
         check_run_directory(run_dir, run_id, continuing=continuing)
         output_dir = run_dir
+    # The run's file layout: an existing run keeps its own (a recapture into
+    # a v1 run writes v1 names); a new run is v2, and is refused here when its
+    # directory is too deep for any view's files (output_layout). Private
+    # attributes, so neither enters Config.to_dict or the config hash.
+    from vop_interwoven import output_layout
+    layout = output_layout.layout_of_run(run_dir) or output_layout.NEW_RUN_LAYOUT
+    if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+        output_layout.check_run_budget(run_dir, layout)
+    cfg._stage_a_layout = layout
+    cfg._stage_a_run_dir = run_dir
 
     # Keep pipeline-side exports aligned with streaming output directory by default
     try:

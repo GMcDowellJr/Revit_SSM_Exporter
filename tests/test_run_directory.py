@@ -35,6 +35,7 @@ from vop_interwoven.run_meta import (
     RunDirectoryConflict, check_run_directory, run_directory, run_identity,
 )
 from vop_interwoven.streaming import run_vop_pipeline_streaming
+from tests.layout_helpers import run_meta_file
 
 REPO = Path(__file__).resolve().parent.parent
 THINRUNNER = REPO / "vop_interwoven" / "thinrunner_streaming.py"
@@ -45,12 +46,13 @@ T0 = datetime(2026, 10, 5, 10, 36, 0)
 
 @pytest.fixture
 def clock(monkeypatch):
-    """The execution clock, one second further on at every read."""
+    """The execution clock, one minute further on at every read (run ids
+    are minted to the minute)."""
     state = {"t": T0}
 
     def _tick():
         now = state["t"]
-        state["t"] = now + timedelta(seconds=1)
+        state["t"] = now + timedelta(minutes=1)
         return now
     monkeypatch.setattr(run_meta, "_clock", _tick)
     return state
@@ -83,7 +85,9 @@ def _fake_capture(monkeypatch, writer=None, calls=None):
         vid = int(ids[0])
         if calls is not None:
             calls.append(vid)
-        cap = os.path.join(cfg.output_dir, "color_id_buffer")
+        # The capture folder the real capture writes into (output_layout).
+        from vop_interwoven.output_layout import capture_dir_of
+        cap = capture_dir_of(cfg, cfg.output_dir)[0]
         os.makedirs(cap, exist_ok=True)
         stem = os.path.join(cap, "V_{0}".format(vid))
         if writer is not None:
@@ -126,7 +130,7 @@ def _tree(folder):
 
 
 def _meta(run_dir):
-    return json.loads((Path(run_dir) / "run_meta.json").read_text())
+    return json.loads(run_meta_file(run_dir).read_text())
 
 
 # --- run_identity ------------------------------------------------------------------
@@ -134,22 +138,22 @@ def _meta(run_dir):
 def test_a_date_override_is_the_as_of_date_and_never_the_run_id():
     now = datetime(2026, 10, 5, 10, 36, 1)
     ident = run_identity("2025-02-03", now=now)
-    assert ident == {"run_id": "20261005T103601", "as_of_date": "2025-02-03",
+    assert ident == {"run_id": "20261005T1036", "as_of_date": "2025-02-03",
                      "run_tag": None}
     # A datetime override is a date too: no tag, and none of its colons in
     # the id (the id now names a directory).
     ident = run_identity(datetime(2025, 2, 3, 8, 0), now=now)
-    assert ident == {"run_id": "20261005T103601", "as_of_date": "2025-02-03",
+    assert ident == {"run_id": "20261005T1036", "as_of_date": "2025-02-03",
                      "run_tag": None}
 
 
 def test_a_tag_is_appended_to_the_clock_and_the_date_is_today():
     now = datetime(2026, 10, 5, 10, 36, 1)
     assert run_identity("PR_999", now=now) == {
-        "run_id": "20261005T103601_PR_999", "as_of_date": "2026-10-05",
+        "run_id": "20261005T1036_PR_999", "as_of_date": "2026-10-05",
         "run_tag": "PR_999"}
     assert run_identity(None, now=now) == {
-        "run_id": "20261005T103601", "as_of_date": "2026-10-05", "run_tag": None}
+        "run_id": "20261005T1036", "as_of_date": "2026-10-05", "run_tag": None}
 
 
 def test_a_passed_run_id_is_not_reminted_and_keeps_its_own_date():
@@ -198,7 +202,7 @@ def test_two_models_same_day_same_root_never_touch_each_others_files(
     assert _meta(first["run_dir"])["doc_title"]["value"] == "Tower.rvt"
     assert _meta(second["run_dir"])["doc_title"]["value"] == "Annex.rvt"
     # The capture landed in its own run's directory, not the root.
-    assert json.loads((Path(first["run_dir"]) / "color_id_buffer" / "V_4242.json")
+    assert json.loads((Path(first["run_dir"]) / "color_id" / "V_4242.json")
                       .read_text())["doc"] == "Tower.rvt"
 
 
@@ -247,7 +251,7 @@ def test_overrides_set_the_date_and_tag_and_the_clock_sets_the_id(
 
 def _occupy(run_dir, run_id):
     os.makedirs(run_dir)
-    with open(os.path.join(run_dir, "run_meta.json"), "w") as handle:
+    with open(str(run_meta_file(run_dir)), "w") as handle:
         json.dump({"run_id": run_id}, handle)
 
 
@@ -261,7 +265,7 @@ def test_a_run_dir_holding_another_run_is_refused_before_any_view(
     tree = _tree(tmp_path)
     with pytest.raises(RunDirectoryConflict) as err:
         _run(tmp_path, "Tower.rvt")
-    assert "20991231T000000" in str(err.value) and "20261005T103600" in str(err.value)
+    assert "20991231T000000" in str(err.value) and "20261005T1036" in str(err.value)
     assert calls == [] and _tree(tmp_path) == tree
 
 
@@ -288,12 +292,12 @@ def test_the_same_run_id_passed_in_continues(tmp_path, monkeypatch, clock):
 def test_a_minted_id_that_finds_its_own_dir_is_a_second_run_not_a_batch(tmp_path):
     """Two runs started in the same second with the same override mint the
     same id. Only a caller that PASSED the id in is continuing a run."""
-    run_dir = str(tmp_path / "2026-10-05__20261005T103600")
-    _occupy(run_dir, "20261005T103600")
+    run_dir = str(tmp_path / "2026-10-05__20261005T1036")
+    _occupy(run_dir, "20261005T1036")
     with pytest.raises(RunDirectoryConflict):
-        check_run_directory(run_dir, "20261005T103600")
-    check_run_directory(run_dir, "20261005T103600", continuing=True)
-    check_run_directory(str(tmp_path / "absent"), "20261005T103600")
+        check_run_directory(run_dir, "20261005T1036")
+    check_run_directory(run_dir, "20261005T1036", continuing=True)
+    check_run_directory(str(tmp_path / "absent"), "20261005T1036")
 
 
 # --- A-G3 thinrunner batches ---------------------------------------------------------
@@ -338,7 +342,7 @@ def test_a_batched_thinrunner_run_is_one_run_dir_with_one_run_id(
     assert sorted(p.name for p in run_dir.glob("_batch_tmp_*")) == [
         "_batch_tmp_1", "_batch_tmp_2", "_batch_tmp_3"]
     # Every capture moved into the run's one color_id_buffer/.
-    assert sorted(p.name for p in (run_dir / "color_id_buffer").iterdir()) == [
+    assert sorted(p.name for p in (run_dir / "color_id").iterdir()) == [
         "V_11.json", "V_11.tiff", "V_12.json", "V_12.tiff", "V_13.json", "V_13.tiff"]
 
     # views_core: one file, every row the one RunId -- by the tool's own I1.
@@ -398,13 +402,27 @@ def test_register_grid_rollup_run_unchanged_on_a_new_run_dir(tmp_path, monkeypat
     assert reg.main([run_dir]) == 0
     assert grid.main([run_dir]) == 0
     assert rollup.main([run_dir]) == 0
-    summary = json.loads((Path(run_dir) / "analysis_grid" / rollup.SUMMARY_NAME).read_text())
+    # A v2 run: grid/ and the dated name (output_layout).
+    _csv, summary_name = rollup.output_names(Path(run_dir) / "color_id")
+    assert summary_name == "grid_rollup_2026-10-05.summary.json"
+    summary = json.loads((Path(run_dir) / "grid" / summary_name).read_text())
+    assert (Path(run_dir) / "color_id" / "V_5_anno.reg.json").exists()
     print("A-G6: difference {0}, refused runs {1}, rows {2}".format(
         summary["count_invariant"]["difference"], summary["refused_runs"]["count"],
         summary["denominator"]))
     assert summary["count_invariant"]["difference"] == 0
     assert summary["refused_runs"]["count"] == 0
     assert summary["denominator"] == 2
+    # The rest of the chain on the same v2 run: the kinds inventory in grid/,
+    # dated, and the runs index finding both through the run's record.
+    from tools import stage_a_kinds as kinds
+    from tools import stage_a_runs_index as idx
+    assert kinds.main(["inventory", run_dir]) == 0
+    assert (Path(run_dir) / "grid" / "kinds_inventory_2026-10-05.json").is_file()
+    rows, _json_rows, _scan = idx.build_index(str(root))
+    assert [(r["rollup_state"], r["rollup_location"], r["kinds_state"]) for r in rows] == [
+        ("value", "grid", "value")]
+    assert rows[0]["rollup_csv_path_rel"].endswith("/grid/grid_rollup_2026-10-05.csv")
 
 
 # --- PR #230 review: one identity per run, read once --------------------------------
@@ -426,7 +444,7 @@ def test_perf_rows_carry_the_runs_one_run_id(tmp_path, monkeypatch, clock):
     with open(out["perf_csv_path"], newline="", encoding="utf-8") as handle:
         perf = list(csv.DictReader(handle))
     assert len(perf) == 3
-    assert {r["RunId"] for r in perf} == {"20261005T103600"}
+    assert {r["RunId"] for r in perf} == {"20261005T1036"}
     assert {r["Date"] for r in perf} == {"2025-02-03"}
     assert os.path.basename(out["perf_csv_path"]) == "views_perf_2025-02-03.csv"
 
@@ -442,7 +460,7 @@ def test_a_run_straddling_midnight_names_its_files_by_its_own_date(
     exp = StreamingExporter(str(tmp_path), Config(enable_color_id_buffer_stage_a=True),
                             _Doc("Tower.rvt"), export_png=False, export_csv=True,
                             view_ids=[1])
-    assert exp.run_id == "20261005T235959" and exp.run_meta["date"] == "2026-10-05"
+    assert exp.run_id == "20261005T2359" and exp.run_meta["date"] == "2026-10-05"
     assert os.path.basename(exp.core_csv_path) == "views_core_2026-10-05.csv"
     exp.finalize()
 
@@ -487,6 +505,6 @@ def test_diagnostics_and_csv_rows_carry_one_run_id(tmp_path, monkeypatch, clock)
     # Control: the pipeline really ran (a raise inside it is swallowed by
     # run_vop_pipeline, and would leave this test asserting on nothing).
     diag = json.loads((tmp_path / "views_diagnostics_2025-02-03.json").read_text())
-    assert seen["run_id"] == "20261005T103600"
+    assert seen["run_id"] == "20261005T1036"
     assert diag["metadata"]["run_id"] == diag["metadata"]["exporter_run_id"] == seen["run_id"]
     assert diag["metadata"]["date"] == "2025-02-03"
