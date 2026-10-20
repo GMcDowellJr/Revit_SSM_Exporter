@@ -158,6 +158,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 import time
@@ -436,19 +437,24 @@ def _blank_run(run_dir, run_id, date, refused):
             "unmeasured": {}, "requested": [], "doc_title": None}
 
 
-def census_run(run_arg):
-    """One run: its measured views' elements and its unmeasured views."""
+def run_views(run_arg):
+    """``(run, gridded, (folder, grid_dir))``: the run's identity, requested
+    and unmeasured views (``run["unmeasured"]``, by the roll-up's own rows)
+    and its gridded views as ``[(view id, stem)]`` -- everything a census is
+    decided by before any element is read. ``run["refused"]`` is set when the
+    run is refused (``gridded`` then empty)."""
     sidecars, folder, run_dir, grid_dir = rollup.run_layout(run_arg)
     meta = dsc.find_run_meta(folder / "run_meta.json") or {}
     run_id = meta.get("run_id")
     date = as_of_date(meta, run_dir)
     ident = rollup.run_identity(meta)
+    where = (folder, grid_dir)
     if ident["refused"]:
-        return _blank_run(run_dir, run_id, date, ident["refused"])
+        return _blank_run(run_dir, run_id, date, ident["refused"]), [], where
     if date is None:
         return _blank_run(run_dir, run_id, None,
                           "no as-of date: run_meta.json carries no \"date\" and the run "
-                          "directory has no <date>__ prefix")
+                          "directory has no <date>__ prefix"), [], where
     core_state, _reason, core_by_id = rollup.load_views_core(run_dir, run_id)
     rows = rollup.run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id), ident,
                            with_keys=False)
@@ -456,7 +462,7 @@ def census_run(run_arg):
     title = meta.get("doc_title")
     run["doc_title"] = (title.get("value") if isinstance(title, dict) else title)
     run["requested"] = rollup.unique_requested(ident["requested"])
-    refusals, gridded = [], []
+    gridded = []
     for r in rows:
         if r["row_status"] == "orphan_sidecar":
             continue
@@ -466,6 +472,16 @@ def census_run(run_arg):
                                       "capture_status": r["run_meta_capture_status"]}
             continue
         gridded.append((vid, r["view_stem"]))
+    return run, gridded, where
+
+
+def census_run(run_arg):
+    """One run: its measured views' elements and its unmeasured views."""
+    run, gridded, (folder, grid_dir) = run_views(run_arg)
+    if run["refused"]:
+        return run
+    run_dir, run_id, date = run["run_dir"], run["run_id"], run["as_of_date"]
+    refusals = []
     # One view's elements at a time, folded into the run's totals and dropped:
     # a 358-view run holds ~280,000 element-in-view records (2025-11-01), and
     # keeping them all for every run of a series is what memory cannot hold.
@@ -952,25 +968,53 @@ def _tiffs(sidecar, reg_path):
     return found
 
 
-def census_inputs(files):
-    """``{path relative to the run: sha256}`` of every file the census reads,
-    itself or through the roll-up's rows: the run_meta, the views_core
-    file(s), every model sidecar and its TIFF, each view's registration
-    record and registered TIFF, and its grid json and npz, where present.
-    Hashing them is how a recapture, a re-registration or a re-grid makes a
-    census stale."""
-    paths = set(output_layout.run_meta_candidates(files.run_dir))
+def _stat(path):
+    st = os.stat(str(path))
+    return [st.st_size, st.st_mtime_ns]
+
+
+def census_inputs(files, previous=None):
+    """``(inputs, stats)``. ``inputs`` is ``{path relative to the run:
+    sha256}`` of every file the census reads, itself or through the
+    roll-up's rows: the run_meta, the views_core file(s), every model sidecar
+    and its TIFF, each view's registration record and registered TIFF, and
+    its grid json and npz, where present. Hashing them is how a recapture, a
+    re-registration or a re-grid makes a census stale.
+
+    ``stats`` is ``{path: [size, mtime_ns]}`` of the TIFFs only. A TIFF whose
+    size and modified time equal the ones ``previous`` (the census summary
+    on disk) recorded keeps the sha256 recorded with them, unread; any other
+    is hashed. The TIFFs are most of the bytes of a run, and every writer
+    that replaces one gives it a new modified time. DECLARED LIMIT: a TIFF
+    replaced by one of the same size with its modified time restored (a copy
+    that preserves timestamps) is not seen. The JSON records and the npz are
+    always hashed."""
+    prev_inputs = (previous or {}).get("inputs") or {}
+    prev_stats = (previous or {}).get("input_stats") or {}
+    paths, tiffs = set(), set()
+    paths |= set(output_layout.run_meta_candidates(files.run_dir))
     paths |= set(output_layout.run_meta_candidates(files.folder))
     paths |= set(str(p) for p in files.run_dir.glob("views_core_*.csv"))
     for sidecar in files.sidecars:
         sidecar = Path(sidecar)
         paths.add(str(sidecar))
         reg_path = rollup.registration_record_path(sidecar)
-        for extra in [reg_path, files.grid_dir / (sidecar.stem + ".grid.json"),
-                      files.grid_dir / (sidecar.stem + ".grid.npz")] + _tiffs(sidecar, reg_path):
+        for extra in (reg_path, files.grid_dir / (sidecar.stem + ".grid.json"),
+                      files.grid_dir / (sidecar.stem + ".grid.npz")):
             if Path(extra).is_file():
                 paths.add(str(extra))
-    return dict((_rel(p, files.run_dir), grid.sha256_file(p)) for p in sorted(paths))
+        tiffs |= set(str(t) for t in _tiffs(sidecar, reg_path) if Path(t).is_file())
+    inputs, stats = {}, {}
+    for p in sorted(paths):
+        inputs[_rel(p, files.run_dir)] = grid.sha256_file(p)
+    for p in sorted(tiffs):
+        rel = _rel(p, files.run_dir)
+        stats[rel] = _stat(p)
+        if prev_stats.get(rel) == stats[rel] and rel in prev_inputs:
+            inputs[rel] = prev_inputs[rel]
+        else:
+            inputs[rel] = grid.sha256_file(p)
+    return inputs, stats
 
 
 def _write_json(path, record):
@@ -1035,13 +1079,57 @@ def adopt_undated(files):
     return legacy_summary
 
 
-def write_run_census(files, inputs=None):
+def _plain(obj):
+    return json.loads(json.dumps(obj, sort_keys=True, default=str))
+
+
+def upgrade_tiff_inputs(files):
+    """Add the TIFFs to a census recorded without them (an earlier 2.0.0)
+    instead of recomputing it, when that census is provably what a
+    recompute would write: its schema, version and CSV are current, every
+    input it DID record is unchanged, and every view's status by the
+    roll-up's rows -- which hash both TIFFs against the hashes the grid and
+    registration records hold -- is the one it recorded (measured views,
+    and each unmeasured view's row status and reason). The census is a
+    function of exactly those, so the TIFF hashes are added and nothing is
+    recomputed. Returns a reason string when upgraded, else None (the census
+    is then judged stale or fresh as usual). A refused census is not
+    upgraded: it is recomputed."""
+    path = files.census_path("summary")
+    if not path.is_file():
+        return None
+    rec, _why = _read_record(path)
+    if (rec is None or rec.get("inputs_include_tiffs") or rec.get("state") != "value"
+            or _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir)):
+        return None
+    inputs, stats = census_inputs(files)
+    if dict((k, v) for k, v in inputs.items() if k not in stats) != rec.get("inputs"):
+        return None
+    run, gridded, _where = run_views(files.run_dir)
+    if run["refused"]:
+        return None
+    measured = sorted((vid for vid, _stem in gridded), key=_vid_sort)
+    unmeasured = [dict(view_id=vid, **u) for vid, u in
+                  sorted(run["unmeasured"].items(), key=lambda kv: _vid_sort(kv[0]))]
+    if (_plain(measured) != _plain(rec.get("measured_view_ids"))
+            or _plain(unmeasured) != _plain((rec.get("detail") or {}).get("unmeasured_views"))):
+        return None
+    rec.update(inputs=inputs, input_stats=stats, inputs_include_tiffs=True,
+               inputs_upgraded={"tiffs_added": len(stats),
+                                "rule": "every recorded input unchanged and every view's "
+                                        "roll-up status (TIFFs hashed against the grid "
+                                        "and registration records) as recorded"})
+    _write_json(path, rec)
+    return "{0} TIFF hashes added; every view's status as recorded".format(len(stats))
+
+
+def write_run_census(files, inputs=None, stats=None):
     """The census of one run, into its grid folder: the element CSV, then
     the summary naming its sha256 and the sha256 of every input (written
     last; CLAUDE.md, defect class 4). A refused run gets a summary saying so
     and no CSV. Returns the summary as written."""
     if inputs is None:
-        inputs = census_inputs(files)
+        inputs, stats = census_inputs(files)
     run = census_run(files.run_dir)
     files.grid_dir.mkdir(parents=True, exist_ok=True)
     csv_path, summary_path = files.census_path("csv"), files.census_path("summary")
@@ -1062,9 +1150,12 @@ def write_run_census(files, inputs=None):
         "measured_view_ids": list(run["measured"]),
         "unmeasured_view_ids": sorted(run["unmeasured"], key=_vid_sort),
         "inputs": inputs,
+        "input_stats": stats or {},
+        "inputs_include_tiffs": True,
         "inputs_rule": "sha256 of the run_meta, views_core, every model sidecar and its "
                        "TIFF, and each view's registration record, registered TIFF, grid "
-                       "json and grid npz present",
+                       "json and grid npz present; a TIFF whose [size, mtime_ns] in "
+                       "input_stats is unchanged keeps its recorded sha256 unread",
         "csv": None, "csv_sha256": None,
         "definitions": DEFINITIONS,
     }
@@ -1364,14 +1455,19 @@ def drive(root, progress=None):
         adopted = adopt_undated(f)
         if adopted:
             say("        renamed {0} -> {1} in {2}".format(adopted, f.census_summary, f.name))
-        inputs = census_inputs(f)
+        upgraded = upgrade_tiff_inputs(f)
+        if upgraded:
+            say("        upgraded {0}: {1}".format(f.name, upgraded))
+        previous = (_read_record(f.census_path("summary"))[0]
+                    if f.census_path("summary").is_file() else None)
+        inputs, stats = census_inputs(f, previous)
         why = census_staleness(f, inputs)
         if why:
-            rec = write_run_census(f, inputs)
+            rec = write_run_census(f, inputs, stats)
             action = "computed"
         else:
             rec = _load_json(f.census_path("summary"))
-            action = "fresh"
+            action = "upgraded" if upgraded else "fresh"
         actions.append({"step": "census", "run": f.name, "action": action,
                         "state": rec.get("state"), "why": "; ".join(why)})
         say("[{0}/{1}] census {2:<8} {3:.0f}s {4} ({5}){6}".format(
@@ -1450,11 +1546,12 @@ def main(argv=None):
             print("no run folder under {0}".format(args.root))
             return 2
         done = [a for a in actions if a["action"] == "computed"]
-        print("{0} census(es) and {1} pair(s) computed; {2} fresh; {3} run(s) skipped".format(
-            sum(1 for a in done if a["step"] == "census"),
-            sum(1 for a in done if a["step"] == "pair"),
-            sum(1 for a in actions if a["action"] == "fresh"),
-            sum(1 for a in actions if a["action"] == "skipped")))
+        print("{0} census(es) and {1} pair(s) computed; {2} upgraded; {3} fresh; {4} run(s) "
+              "skipped".format(sum(1 for a in done if a["step"] == "census"),
+                               sum(1 for a in done if a["step"] == "pair"),
+                               sum(1 for a in actions if a["action"] == "upgraded"),
+                               sum(1 for a in actions if a["action"] == "fresh"),
+                               sum(1 for a in actions if a["action"] == "skipped")))
         refused = [a for a in actions if a["state"] == "refused"]
         for a in refused:
             print("REFUSED {0} {1}".format(a["step"], a["run"]))

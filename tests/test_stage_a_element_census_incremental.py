@@ -587,3 +587,91 @@ def test_a_census_summary_that_links_outside_the_run_is_not_read(tmp_path):
     assert by["RUN_B"]["census_state"] == "unreadable"
     assert "resolves outside" in by["RUN_B"]["census_reason"]
     assert by["RUN_A"]["census_state"] == "value"                     # control
+
+
+# --- 9. TIFFs: the upgrade in place, and the size / mtime shortcut ---------------------------
+
+def _strip_tiffs(run):
+    """The census summary as an earlier 2.0.0 wrote it: no TIFF inputs."""
+    path = _files(run).census_path("summary")
+    rec = json.loads(path.read_text())
+    for rel in rec.pop("input_stats"):
+        rec["inputs"].pop(rel)
+    rec.pop("inputs_include_tiffs")
+    path.write_text(json.dumps(rec))
+
+
+def test_a_census_recorded_without_tiffs_is_upgraded_not_recomputed(tmp_path, monkeypatch):
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    before = dict((r, _census(r)[1]) for r in (a, b, c))
+    for run in (a, b, c):
+        _strip_tiffs(run)
+
+    def _no(*_a, **_k):
+        raise AssertionError("census recomputed")
+    monkeypatch.setattr(census, "census_run", _no)
+    actions = census.drive(model)
+    assert [(x["run"], x["action"]) for x in actions if x["step"] == "census"] == [
+        (a.name, "upgraded"), (b.name, "upgraded"), (c.name, "upgraded")]
+    assert _computed(actions) == [("pair", a.name), ("pair", b.name), ("pair", c.name)]
+    for run in (a, b, c):
+        rec, rows = _census(run)
+        assert rows == before[run] and rec["inputs_include_tiffs"] is True
+        assert "color_id_buffer/V_1.tiff" in rec["inputs"]
+        assert rec["inputs_upgraded"]["tiffs_added"] == len(rec["input_stats"]) > 0
+    assert _computed(census.drive(model)) == []                       # then fresh
+
+
+def test_a_tiff_that_no_longer_matches_its_grid_is_recomputed_not_upgraded(tmp_path):
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    for run in (a, b, c):
+        _strip_tiffs(run)
+    tiff = _capture_dir(b) / "V_1.tiff"
+    data = bytearray(tiff.read_bytes())
+    data[-1] ^= 0xFF
+    tiff.write_bytes(bytes(data))
+    actions = census.drive(model)
+    assert [(x["run"], x["action"]) for x in actions if x["step"] == "census"] == [
+        (a.name, "upgraded"), (b.name, "computed"), (c.name, "upgraded")]
+    assert _census(b)[0]["figures"]["views_measured"] == 1          # V_1 now grid_stale
+
+
+def test_an_unchanged_tiff_is_not_read_again(tmp_path, monkeypatch):
+    model = _model(tmp_path)
+    _three(model)
+    census.drive(model)
+    read = []
+    real = grid.sha256_file
+
+    def _count(path):
+        if str(path).endswith(".tiff"):
+            read.append(Path(path).name)
+        return real(path)
+    monkeypatch.setattr(grid, "sha256_file", _count)
+    assert _computed(census.drive(model)) == []
+    assert read == []
+    tiff = _capture_dir(model / "2025-02-01__RUN_B") / "V_3.tiff"      # control: touched
+    st = tiff.stat()
+    import os
+    os.utime(str(tiff), ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))
+    assert _computed(census.drive(model)) == []                       # same bytes: fresh
+    assert read == ["V_3.tiff"]
+
+
+def test_declared_limit_a_same_size_tiff_with_its_mtime_restored_is_not_seen(tmp_path):
+    """Pinned, so the limit stays known: the shortcut trusts size + mtime."""
+    import os
+    model = _model(tmp_path)
+    _a, b, _c = _three(model)
+    census.drive(model)
+    tiff = _capture_dir(b) / "V_1.tiff"
+    st = tiff.stat()
+    data = bytearray(tiff.read_bytes())
+    data[-1] ^= 0xFF
+    tiff.write_bytes(bytes(data))
+    os.utime(str(tiff), ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert _computed(census.drive(model)) == []

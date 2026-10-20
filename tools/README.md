@@ -353,7 +353,14 @@ ids; refusals; the tool version; and the sha256 of every input it read
 (`inputs`: run_meta, views_core, every model sidecar and its TIFF, each
 view's registration record, registered TIFF, grid json and grid npz), so a
 recapture makes it stale. The TIFFs are hashed because the roll-up's
-staleness check, which decides which views are measured, hashes them. A run
+staleness check, which decides which views are measured, hashes them. Each
+TIFF's size and modified time are recorded beside its hash
+(`input_stats`); an unchanged pair keeps the recorded hash without reading
+the file (declared limit: a same-size file with its modified time restored
+is not seen). A census recorded without TIFFs (an earlier 2.0.0) is
+upgraded in place, not recomputed, when every input it recorded is unchanged
+and every view's roll-up status is the one it recorded; its pairs are then
+recomputed. A run
 folder with no capture folder is skipped: no census, no place in the series.
 
 **Per pair** (`element_transitions_<d>.csv`): one row per element key on
