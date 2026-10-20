@@ -84,7 +84,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA = "vop.stage_a.runs_index.v1"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 
 CSV_NAME = "runs_index.csv"
 JSON_NAME = "runs_index.json"
@@ -164,6 +164,11 @@ COLUMNS = [
     "n_runs_same_model_as_of", "n_config_hash_in_model",
     # appended (1.1.0): the run_meta fields recorded as unavailable, with reasons
     "run_meta_unavailable",
+    # appended (1.3.0): the per-run element census and the run's transitions
+    # against its predecessor (tools/stage_a_element_census.py), in its grid folder
+    "census_state", "census_reason", "census_csv_path_rel", "census_summary_path_rel",
+    "transitions_state", "transitions_reason", "transitions_csv_path_rel",
+    "transitions_summary_path_rel",
 ]
 
 # Columns holding JSON in the CSV; real objects in runs_index.json.
@@ -468,6 +473,61 @@ def kinds_facts(run_dir, root, meta=None):
     return out
 
 
+# The states a census / transitions summary records (stage_a_element_census).
+CENSUS_STATES = ("value", "refused", "no_predecessor")
+
+
+def census_facts(run_dir, root, meta, prefix):
+    """``census_*`` or ``transitions_*`` (``prefix``): the per-run census or
+    the transitions summary in the run's grid folder, in its own layout. The
+    state is the summary's own (``value``, ``refused``, ``no_predecessor``),
+    else ``absent`` / ``unreadable``; ``csv_mismatch`` when the CSV is not the
+    one the summary names, whose path is then left empty so nothing reads it."""
+    out = dict((prefix + k, "") for k in ("_state", "_reason", "_csv_path_rel",
+                                          "_summary_path_rel"))
+    layout = output_layout.layout_of_run(run_dir) or output_layout.V1
+    names = (output_layout.census_names if prefix == "census"
+             else output_layout.transitions_names)(
+                 layout, output_layout.census_file_date(meta, run_dir))
+    csv_name, summary_name = names
+    summary_path = None
+    for sub in GRID_DIRS:
+        if (run_dir / sub / summary_name).is_file():
+            summary_path = run_dir / sub / summary_name
+            break
+    if summary_path is None:
+        out[prefix + "_state"] = "absent"
+        out[prefix + "_reason"] = "no {0} in {1}/".format(summary_name, "/ or ".join(GRID_DIRS))
+        return out
+    out[prefix + "_summary_path_rel"] = _rel(summary_path, root)
+    escape = _escapes(summary_path, summary_path.parent)
+    if escape:
+        out[prefix + "_state"], out[prefix + "_reason"] = "unreadable", escape
+        return out
+    record, why = _load_json_object(summary_path)
+    if record is None:
+        out[prefix + "_state"], out[prefix + "_reason"] = "unreadable", why
+        return out
+    state = record.get("state")
+    if state not in CENSUS_STATES:
+        out[prefix + "_state"] = "unreadable"
+        out[prefix + "_reason"] = "the summary records state {0!r}".format(state)
+        return out
+    out[prefix + "_state"] = state
+    if state != "value":
+        out[prefix + "_reason"] = _cell(record.get("refused") or record.get("reason"))
+        return out
+    csv_path, csv_err = _named_csv(record, summary_path, csv_name)
+    actual, match, hash_err = _sha_match(csv_path, record.get("csv_sha256"))
+    if csv_err or hash_err or match != "true":
+        out[prefix + "_state"] = "csv_mismatch"
+        out[prefix + "_reason"] = csv_err or hash_err or (
+            "{0} does not match the csv_sha256 its summary records".format(csv_path.name))
+        return out
+    out[prefix + "_csv_path_rel"] = _rel(csv_path, root)
+    return out
+
+
 def dated_file_facts(run_dir, root, names):
     """Presence and path of each dated per-run file at the run's top level;
     ``views_core_rows`` counts the data rows of the one views_core file.
@@ -595,6 +655,8 @@ def run_row(run_dir, meta, root):
     except OSError as ex:
         names = _err(ex)
     row.update(dated_file_facts(run_dir, root, names))
+    row.update(census_facts(run_dir, root, meta, "census"))
+    row.update(census_facts(run_dir, root, meta, "transitions"))
 
     m = FOLDER_NAME.match(run_dir.name)
     folder_date, folder_run_id = m.group(1), m.group(2)

@@ -26,7 +26,7 @@ from tools import stage_a_kinds as kinds
 from tools import stage_a_sidecar_shapes as shapes
 
 from tests.test_register_stage_a_annotation import MODEL_ELEMENT
-from tests.test_stage_a_grid_rollup import _capture, _outcome, _run
+from tests.test_stage_a_grid_rollup import _capture, _grid_dir, _outcome, _run, _run_meta_path
 
 EID = MODEL_ELEMENT[0]
 BBOX = {"min": [1.0, 2.0, 0.0], "max": [4.5, 2.5, 10.0]}
@@ -67,17 +67,21 @@ def _view(run, n, eid=EID, host=None, link=None, date=None, status="success",
     model_path.write_text(json.dumps(side))
     if register:
         reg.register(anno_path)
-    grid.grid_view(model_path, run / "analysis_grid")
+    grid.grid_view(model_path, _grid_dir(run))
     _outcome(run, n, status=status, reason="" if status == "success" else "annotation_failed",
              **({"date": date} if date else {}))
     return model_path
 
 
-def _dated_run(tmp_path, date, run_id):
-    run = _run(tmp_path, name="{0}__{1}".format(date, run_id), run_id=run_id)
-    meta = json.loads((run / "run_meta.json").read_text())
+def _dated_run(tmp_path, date, run_id, layout="v1", name=None):
+    """A run folder ``<date>__<run_id>`` (or ``name``) whose run_meta's as-of
+    date is ``date``, in ``layout``."""
+    run = _run(tmp_path, name=name or "{0}__{1}".format(date, run_id), run_id=run_id,
+               layout=layout, date=date)
+    path = _run_meta_path(run)
+    meta = json.loads(path.read_text())
     meta["date"] = date
-    (run / "run_meta.json").write_text(json.dumps(meta))
+    path.write_text(json.dumps(meta))
     return run
 
 
@@ -402,7 +406,7 @@ def test_the_bbox_centre_is_read_through_the_shared_reader_in_either_shape(tmp_p
     assert (e9["bbox_cx_ft"], e9["bbox_dx_ft"]) == ("", "")         # not 0
     header = next(csv.reader(open(str(out / "2025-01-01__RUN_A.elements.csv"),
                                   encoding="utf-8")))
-    assert header[-3:] == ["bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft"]   # appended
+    assert header[24:27] == ["bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft"]  # appended in 1.2.0
     assert header.index("bbox_dz_ft") == census.ELEMENT_COLUMNS.index("bbox_dz_ft") == 21
 
 

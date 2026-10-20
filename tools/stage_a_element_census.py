@@ -78,14 +78,48 @@ sets differ), when it has no as-of date, or when any gridded view's element
 x cell accounting cannot be read: a grid made before ``ec_keys`` is the
 named refusal ``grid_predates_ec_keys``, never a zero.
 
-Outputs in ``--out`` (default, one run only: its grid folder, ``grid/`` in a
-v2 run and ``analysis_grid/`` in a v1 run; required for more): ``<as_of_date>__<run_id>.elements.csv`` per run,
-``element_census_runs.csv``, ``element_census_series.csv``, then
-``element_census.summary.json`` carrying every CSV's sha256, written last
-(CLAUDE.md, defect class 4). An empty CSV cell is "not applicable", never 0.
-Columns are appended, never reordered.
+OUTPUTS (2.0.0). Three steps, so adding a capture costs one run's census and
+one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
 
-    python tools/stage_a_element_census.py <run> [<run> ...] [--out DIR]
+  * PER RUN, into the run's grid folder (``grid/`` in v2, ``analysis_grid/``
+    in v1; names ``output_layout.census_names``, dated by ``file_date`` in
+    both layouts; an undated census an earlier 2.0.0 wrote is renamed, not
+    recomputed, by the driver):
+    ``element_census_<d>.csv`` (the per-element columns above, plus
+    ``view_ids``), then ``element_census_<d>.summary.json`` -- the run
+    figures (the runs-CSV row without the transition columns), the measured
+    and unmeasured view ids, refusals, the tool version, the CSV's sha256 and
+    the sha256 of every input read (``census_inputs``) -- written LAST
+    (CLAUDE.md, defect class 4). A refused run: a summary saying so, no CSV.
+  * PAIR, into the later run's grid folder (``transitions_names``):
+    ``element_transitions_<d>.csv``, one row per element key on either side
+    with its class, both sides' presence and the views that decided it, then
+    the summary: counts per class (and ``_LINK``), common measured views, the
+    host-id Jaccard, the predecessor's run_id / path / as-of date, both census
+    files' sha256. The predecessor is the run with the previous as-of date in
+    the same model folder (``predecessors``), never run_id or folder order.
+    The pair is read from the two census FILES through ``classify``,
+    ``transitions`` and ``host_id_overlap``, the functions the series uses.
+    The first run: a ``no_predecessor`` summary and no CSV, never zeros. Two
+    runs on one as-of date refuse, by name, their pairs and the next run's.
+  * DRIVER, ``--root <model folder>``: walks the runs
+    (``stage_a_runs_index.discover``) and computes only what is missing or
+    stale (``census_staleness``: an input hash, the schema, the version or
+    the CSV changed; ``pair_staleness``: the predecessor is no longer the
+    previous as-of date, or either census changed), printing what it did and
+    why.
+
+``--out DIR`` with run arguments is the multi-run convenience, built on the
+same functions: ``<as_of_date>__<run_id>.elements.csv`` per run,
+``element_census_runs.csv``, ``element_census_series.csv``, then
+``element_census.summary.json`` naming every CSV's sha256 (as in 1.3.0). The
+series is otherwise BI's (tools/notes/ELEMENT_CENSUS_2025-02-03_to_2025-11-01.md
+section 8). An empty CSV cell is "not applicable", never 0. Columns are
+appended, never reordered.
+
+    python tools/stage_a_element_census.py --root <model folder>
+    python tools/stage_a_element_census.py <run> [<run> ...]           # each run's census
+    python tools/stage_a_element_census.py <run> [<run> ...] --out DIR
 
 One line is printed as each run is read (its time, views and elements), so
 a series run shows where it is. A run argument that is not a directory is a
@@ -112,15 +146,19 @@ created in the next can be matched on category, place and size (the 44-run
 series: 30-50 % of a week's gone and created match on category and size
 alone, with no position to tell replace-in-place from new modeling).
 
-Exit 0 when no run is refused and every requested view is measured; 1 for
-an unmeasured view or a refused run; 2 when every run is refused, two runs
-share an as-of date, or on bad arguments (a run that is not a directory).
+Exit, ``--root``: 0 nothing refused, 1 a census or pair refused, 2 no run
+found. Runs without ``--out``: 0 every view measured, 1 a view unmeasured, 2
+a run refused. ``--out``: 0 when no run is refused and every requested view
+is measured; 1 for an unmeasured view or a refused run; 2 when every run is
+refused, two runs share an as-of date, or on bad arguments (a run that is not
+a directory).
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 import time
@@ -135,10 +173,14 @@ from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 from tools import stage_a_sidecar_shapes as shapes  # noqa: E402
+from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA = "vop.stage_a.element_census.v1"
-TOOL_VERSION = "1.3.0"
+RUN_SCHEMA = "vop.stage_a.element_census.run.v1"
+PAIR_SCHEMA = "vop.stage_a.element_transitions.v1"
+TOOL_VERSION = "2.0.0"
 
+# The multi-run --out convenience (one folder, every run).
 ELEMENTS_SUFFIX = ".elements.csv"
 RUNS_CSV = "element_census_runs.csv"
 SERIES_CSV = "element_census_series.csv"
@@ -161,6 +203,9 @@ ELEMENT_COLUMNS = [
     "bbox_differs_views", "source_conflict_views",
     # 1.2.0: appended. The bbox_3d centre, in the sidecar's model/host feet.
     "bbox_cx_ft", "bbox_cy_ft", "bbox_cz_ft",
+    # 2.0.0: appended. The measured views the element was collected in,
+    # ";"-separated, in view-id order: what the pair step classifies on.
+    "view_ids",
 ]
 RUN_COLUMNS = (
     ["as_of_date", "run_id", "run_dir", "refused", "views_requested", "views_measured",
@@ -180,11 +225,34 @@ RUN_COLUMNS = (
     # 1.3.0: appended. The run's document title, so a series that mixes
     # models (element ids are per model) shows it.
     + ["doc_title"])
+# The run-level figures a per-run census summary carries: the runs-CSV row
+# without the columns that compare a run with its predecessor.
+PAIR_RUN_COLUMNS = (["prev_as_of_date", "common_measured_views",
+                     "host_id_jaccard_common_views"]
+                    + [t for t in TRANSITIONS] + ["{0}_LINK".format(t) for t in TRANSITIONS])
+RUN_FIGURE_COLUMNS = [c for c in RUN_COLUMNS if c not in PAIR_RUN_COLUMNS]
+TRANSITION_COLUMNS = [
+    "run_id", "as_of_date", "prev_run_id", "prev_as_of_date", "element_key", "source",
+    "category", "class", "in_prev", "in_cur", "deciding_view_ids",
+]
 SERIES_COLUMNS = [
     "element_key", "source", "category", "first_as_of_date", "first_run_id",
     "first_how", "last_as_of_date", "last_run_id", "last_how", "runs_seen",
     "runs_in_series", "runs_unmeasured_between", "reappearances",
 ]
+
+
+DEFINITIONS = {
+    "measured_view": "a requested view whose grid roll-up row is gridded",
+    "cells_ink": "a key's ec_ rows with ec_ink_px >= stage_a_grid."
+                 "OCCUPANCY_MIN_INK_PX, through stage_a_kinds._key_sums",
+    "first_cells": "the ink cells of the element's largest measured view "
+                   "(ties: lowest view id)",
+    "model_cells_occupancy": "grid occupancy all_cells model_only + overlap, "
+                             "summed over measured views",
+    "link": "link elements are counted by identity; their cells are "
+            "colour-per-category and are carried as link_category_cells_ink",
+}
 
 
 class CensusRefusal(Exception):
@@ -369,19 +437,24 @@ def _blank_run(run_dir, run_id, date, refused):
             "unmeasured": {}, "requested": [], "doc_title": None}
 
 
-def census_run(run_arg):
-    """One run: its measured views' elements and its unmeasured views."""
+def run_views(run_arg):
+    """``(run, gridded, (folder, grid_dir))``: the run's identity, requested
+    and unmeasured views (``run["unmeasured"]``, by the roll-up's own rows)
+    and its gridded views as ``[(view id, stem)]`` -- everything a census is
+    decided by before any element is read. ``run["refused"]`` is set when the
+    run is refused (``gridded`` then empty)."""
     sidecars, folder, run_dir, grid_dir = rollup.run_layout(run_arg)
     meta = dsc.find_run_meta(folder / "run_meta.json") or {}
     run_id = meta.get("run_id")
     date = as_of_date(meta, run_dir)
     ident = rollup.run_identity(meta)
+    where = (folder, grid_dir)
     if ident["refused"]:
-        return _blank_run(run_dir, run_id, date, ident["refused"])
+        return _blank_run(run_dir, run_id, date, ident["refused"]), [], where
     if date is None:
         return _blank_run(run_dir, run_id, None,
                           "no as-of date: run_meta.json carries no \"date\" and the run "
-                          "directory has no <date>__ prefix")
+                          "directory has no <date>__ prefix"), [], where
     core_state, _reason, core_by_id = rollup.load_views_core(run_dir, run_id)
     rows = rollup.run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id), ident,
                            with_keys=False)
@@ -389,7 +462,7 @@ def census_run(run_arg):
     title = meta.get("doc_title")
     run["doc_title"] = (title.get("value") if isinstance(title, dict) else title)
     run["requested"] = rollup.unique_requested(ident["requested"])
-    refusals, gridded = [], []
+    gridded = []
     for r in rows:
         if r["row_status"] == "orphan_sidecar":
             continue
@@ -399,6 +472,16 @@ def census_run(run_arg):
                                       "capture_status": r["run_meta_capture_status"]}
             continue
         gridded.append((vid, r["view_stem"]))
+    return run, gridded, where
+
+
+def census_run(run_arg):
+    """One run: its measured views' elements and its unmeasured views."""
+    run, gridded, (folder, grid_dir) = run_views(run_arg)
+    if run["refused"]:
+        return run
+    run_dir, run_id, date = run["run_dir"], run["run_id"], run["as_of_date"]
+    refusals = []
     # One view's elements at a time, folded into the run's totals and dropped:
     # a 358-view run holds ~280,000 element-in-view records (2025-11-01), and
     # keeping them all for every run of a series is what memory cannot hold.
@@ -486,7 +569,8 @@ def element_rows(run):
             "bbox_state": a["bbox_state"], "bbox_dx_ft": bbox[0], "bbox_dy_ft": bbox[1],
             "bbox_dz_ft": bbox[2], "bbox_differs_views": a["bbox_differs_views"],
             "source_conflict_views": a["source_conflict_views"],
-            "bbox_cx_ft": bbox[3], "bbox_cy_ft": bbox[4], "bbox_cz_ft": bbox[5]})
+            "bbox_cx_ft": bbox[3], "bbox_cy_ft": bbox[4], "bbox_cz_ft": bbox[5],
+            "view_ids": ";".join(sorted(a["views"], key=_vid_sort))})
     return rows
 
 
@@ -581,42 +665,68 @@ def run_stats(run):
 # --- across runs ------------------------------------------------------------------
 
 def _side(views, measured, unmeasured):
-    """How an element's views stand on the OTHER run: any unmeasured there
-    wins (a failed capture never makes a creation or a deletion), then any
-    measured there; else none of them was requested there ("dropped")."""
-    if any(v in unmeasured for v in views):
-        return "unmeasured"
-    if any(v in measured for v in views):
-        return "measured"
-    return "dropped"
+    """``(how, deciding views)``: how an element's views stand on the OTHER
+    run. Any unmeasured there wins (a failed capture never makes a creation
+    or a deletion), then any measured there; else none of them was requested
+    there ("dropped"). The deciding views are the ones that matched."""
+    hit = [v for v in views if v in unmeasured]
+    if hit:
+        return "unmeasured", hit
+    hit = [v for v in views if v in measured]
+    if hit:
+        return "measured", hit
+    return "dropped", list(views)
+
+
+def classify(prev, cur):
+    """``{key: record}`` for every element key on either side of two adjacent
+    runs: its transition word (``TRANSITIONS``), the views that decided it
+    (none for ``persisted``: presence on both sides decides it), presence on
+    each side, and its source and category (the later side's where both have
+    it). The one classifier: ``transitions`` counts it and the pair step
+    writes it."""
+    pm, pu = set(prev["measured"]), set(prev["unmeasured"])
+    cm, cu = set(cur["measured"]), set(cur["unmeasured"])
+    out = {}
+    for key in set(prev["elements"]) | set(cur["elements"]):
+        p, c = prev["elements"].get(key), cur["elements"].get(key)
+        if p and c:
+            word, deciding = "persisted", []
+        elif c:
+            side, deciding = _side(c["views"], pm, pu)
+            word = {"unmeasured": "unmeasured_in", "measured": "created",
+                    "dropped": "new_view"}[side]
+        else:
+            side, deciding = _side(p["views"], cm, cu)
+            word = {"unmeasured": "unmeasured_out", "measured": "gone",
+                    "dropped": "view_dropped"}[side]
+        e = c or p
+        out[key] = {"word": word, "deciding_views": sorted(deciding, key=_vid_sort),
+                    "source": e["source"],
+                    "category": (c or {}).get("category") if (c or {}).get("category")
+                    is not None else (p or {}).get("category"),
+                    "in_prev": p is not None, "in_cur": c is not None}
+    return out
+
+
+ENTER_OF = {"unmeasured_in": "unmeasured", "created": "created", "new_view": "new_view"}
+LEAVE_OF = {"unmeasured_out": "unmeasured", "gone": "gone", "view_dropped": "view_dropped"}
 
 
 def transitions(prev, cur):
-    """``({key: (enter_how, leave_how)}, counts)`` between two adjacent runs.
-    ``enter_how`` is how a key seen in ``cur`` relates to ``prev``;
-    ``leave_how`` how a key seen in ``prev`` relates to ``cur``."""
-    pm, pu = set(prev["measured"]), set(prev["unmeasured"])
-    cm, cu = set(cur["measured"]), set(cur["unmeasured"])
+    """``({key: enter_how}, {key: leave_how}, counts)`` between two adjacent
+    runs, from ``classify``. ``enter_how`` is how a key seen in ``cur``
+    relates to ``prev``; ``leave_how`` how a key seen in ``prev`` relates to
+    ``cur``."""
     counts = dict(("{0}{1}".format(t, sfx), 0) for t in TRANSITIONS for sfx in ("", "_LINK"))
     enter, leave = {}, {}
-    for key in set(prev["elements"]) | set(cur["elements"]):
-        p, c = prev["elements"].get(key), cur["elements"].get(key)
-        sfx = "_LINK" if (c or p)["source"] == "LINK" else ""
-        if p and c:
-            word = "persisted"
-        elif c:
-            side = _side(c["views"], pm, pu)
-            word = {"unmeasured": "unmeasured_in", "measured": "created",
-                    "dropped": "new_view"}[side]
-            enter[key] = {"unmeasured_in": "unmeasured", "created": "created",
-                          "new_view": "new_view"}[word]
-        else:
-            side = _side(p["views"], cm, cu)
-            word = {"unmeasured": "unmeasured_out", "measured": "gone",
-                    "dropped": "view_dropped"}[side]
-            leave[key] = {"unmeasured_out": "unmeasured", "gone": "gone",
-                          "view_dropped": "view_dropped"}[word]
-        counts[word + sfx] += 1
+    for key, rec in classify(prev, cur).items():
+        word = rec["word"]
+        if word in ENTER_OF:
+            enter[key] = ENTER_OF[word]
+        elif word in LEAVE_OF:
+            leave[key] = LEAVE_OF[word]
+        counts[word + ("_LINK" if rec["source"] == "LINK" else "")] += 1
     return enter, leave, counts
 
 
@@ -781,17 +891,7 @@ def census(run_args, out_dir, progress=None):
         "series_last_how": {"denominator": len(series_rows),
                             "counts": dict((h, sum(1 for s in series_rows
                                                    if s["last_how"] == h)) for h in LEAVE)},
-        "definitions": {
-            "measured_view": "a requested view whose grid roll-up row is gridded",
-            "cells_ink": "a key's ec_ rows with ec_ink_px >= stage_a_grid."
-                         "OCCUPANCY_MIN_INK_PX, through stage_a_kinds._key_sums",
-            "first_cells": "the ink cells of the element's largest measured view "
-                           "(ties: lowest view id)",
-            "model_cells_occupancy": "grid occupancy all_cells model_only + overlap, "
-                                     "summed over measured views",
-            "link": "link elements are counted by identity; their cells are "
-                    "colour-per-category and are carried as link_category_cells_ink",
-        },
+        "definitions": DEFINITIONS,
         "csv_sha256": hashes,
     }
     with open(out_dir / SUMMARY_NAME, "w", encoding="utf-8") as handle:
@@ -799,21 +899,679 @@ def census(run_args, out_dir, progress=None):
     return summary, runs
 
 
+# --- per run, into the run's grid folder (2.0.0) -------------------------------------
+
+class RunFiles(object):
+    """Where one run's census and transition files are, in its own layout
+    (``vop_interwoven/output_layout``: grid folder by layout, names dated by
+    ``census_file_date`` in both), and the identity read from its run_meta.
+
+    ``has_capture`` is False for a run folder holding no capture folder and
+    no model sidecar (Stage A off, or nothing exported): ``run_layout`` would
+    take such a folder for a capture folder and its PARENT for the run, so
+    the run is kept as given and nothing is computed or written for it."""
+
+    def __init__(self, run_arg):
+        self.sidecars, self.folder, self.run_dir, self.grid_dir = rollup.run_layout(run_arg)
+        self.has_capture = bool(self.sidecars) or (
+            Path(self.folder).name in output_layout.CAPTURE_DIR.values())
+        if not self.has_capture:
+            self.folder = self.run_dir = Path(run_arg)
+            self.grid_dir = self.run_dir / output_layout.GRID_DIR[output_layout.V1]
+        self.run_dir = Path(self.run_dir).resolve()
+        self.grid_dir = Path(self.grid_dir)
+        self.meta = dsc.find_run_meta(Path(self.folder) / "run_meta.json") or {}
+        self.run_id = self.meta.get("run_id")
+        self.as_of_date = as_of_date(self.meta, self.run_dir)
+        self.layout = output_layout.layout_of_capture_dir(self.folder)
+        d = output_layout.census_file_date(self.meta, self.run_dir)
+        self.census_csv, self.census_summary = output_layout.census_names(self.layout, d)
+        self.pair_csv, self.pair_summary = output_layout.transitions_names(self.layout, d)
+
+    @property
+    def name(self):
+        return self.run_dir.name
+
+    def census_path(self, which):
+        return self.grid_dir / (self.census_csv if which == "csv" else self.census_summary)
+
+    def pair_path(self, which):
+        return self.grid_dir / (self.pair_csv if which == "csv" else self.pair_summary)
+
+
+def _rel(path, base):
+    try:
+        return Path(path).resolve().relative_to(Path(base).resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _tiffs(sidecar, reg_path):
+    """``(tiffs, unresolved)`` for one view: the model TIFF and the
+    registered annotation TIFF, found by the resolvers the roll-up's
+    staleness check uses (``stage_a_grid_rollup.staleness``), which hashes
+    both -- a TIFF swapped under an unchanged record turns the view
+    ``grid_stale`` and so changes the census. ``unresolved`` is ``{label:
+    reason}`` for one that cannot be found: recorded as an input of its own,
+    so a TIFF that goes missing or comes back makes the census stale."""
+    found, unresolved = [], {}
+    try:
+        found.append(dsc._resolve_tiff_path(sidecar, _load_json(sidecar)))
+    except (OSError, ValueError, AttributeError) as ex:
+        unresolved["model TIFF of " + sidecar.name] = _err(ex)
+    if Path(reg_path).is_file():
+        try:
+            found.append(grid._resolve_recorded(_load_json(reg_path).get("registered_tiff"),
+                                                Path(reg_path).parent,
+                                                "the registered annotation TIFF"))
+        except (OSError, ValueError, AttributeError, grid.GridRefusal) as ex:
+            unresolved["registered TIFF of " + Path(reg_path).name] = _err(ex)
+    return found, unresolved
+
+
+def _stat(path):
+    st = os.stat(str(path))
+    return [st.st_size, st.st_mtime_ns]
+
+
+def census_inputs(files, previous=None):
+    """``(inputs, stats)``. ``inputs`` is ``{path relative to the run:
+    sha256}`` of every file the census reads, itself or through the
+    roll-up's rows: the run_meta, the views_core file(s), every model sidecar
+    and its TIFF, each view's registration record and registered TIFF, and
+    its grid json and npz, where present. Hashing them is how a recapture, a
+    re-registration or a re-grid makes a census stale.
+
+    ``stats`` is ``{path: [size, mtime_ns]}`` of the TIFFs only. A TIFF whose
+    size and modified time equal the ones ``previous`` (the census summary
+    on disk) recorded keeps the sha256 recorded with them, unread; any other
+    is hashed. The TIFFs are most of the bytes of a run, and every writer
+    that replaces one gives it a new modified time. DECLARED LIMIT: a TIFF
+    replaced by one of the same size with its modified time restored (a copy
+    that preserves timestamps) is not seen. The JSON records and the npz are
+    always hashed."""
+    prev_inputs = (previous or {}).get("inputs") or {}
+    prev_stats = (previous or {}).get("input_stats") or {}
+    paths, tiffs, unresolved = set(), set(), {}
+    paths |= set(output_layout.run_meta_candidates(files.run_dir))
+    paths |= set(output_layout.run_meta_candidates(files.folder))
+    paths |= set(str(p) for p in files.run_dir.glob("views_core_*.csv"))
+    for sidecar in files.sidecars:
+        sidecar = Path(sidecar)
+        paths.add(str(sidecar))
+        reg_path = rollup.registration_record_path(sidecar)
+        for extra in (reg_path, files.grid_dir / (sidecar.stem + ".grid.json"),
+                      files.grid_dir / (sidecar.stem + ".grid.npz")):
+            if Path(extra).is_file():
+                paths.add(str(extra))
+        found, missing = _tiffs(sidecar, reg_path)
+        tiffs |= set(str(t) for t in found if Path(t).is_file())
+        unresolved.update(missing)
+    inputs, stats = {}, {}
+    for p in sorted(paths):
+        inputs[_rel(p, files.run_dir)] = grid.sha256_file(p)
+    for p in sorted(tiffs):
+        rel = _rel(p, files.run_dir)
+        stats[rel] = _stat(p)
+        if prev_stats.get(rel) == stats[rel] and rel in prev_inputs:
+            inputs[rel] = prev_inputs[rel]
+        else:
+            inputs[rel] = grid.sha256_file(p)
+    for label, reason in sorted(unresolved.items()):
+        # Not a path: what was looked for, and why it was not found.
+        inputs["unresolved: " + label] = reason
+    return inputs, stats
+
+
+def _write_json(path, record):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, indent=2, sort_keys=True, default=str)
+    return grid.sha256_file(path)
+
+
+def _unlink(path):
+    if Path(path).exists():
+        Path(path).unlink()
+
+
+def _ours(rec, schema):
+    return isinstance(rec, dict) and rec.get("schema") == schema
+
+
+def remove_undated(files, step):
+    """Remove the undated census (``step`` "census") or transitions files an
+    earlier 2.0.0 wrote into the run's grid folder, now that their dated
+    names are written: only a summary of this tool's own schema, and the CSV
+    it names under the undated name. Anything else of that name is left."""
+    legacy_csv, legacy_summary = (output_layout.CENSUS_UNDATED if step == "census"
+                                  else output_layout.TRANSITIONS_UNDATED)
+    old = files.grid_dir / legacy_summary
+    current = files.census_summary if step == "census" else files.pair_summary
+    if legacy_summary == current or not old.is_file():
+        return False
+    rec, _why = _read_record(old)
+    if not _ours(rec, RUN_SCHEMA if step == "census" else PAIR_SCHEMA):
+        return False
+    old.unlink()
+    if rec.get("csv") == legacy_csv:
+        _unlink(files.grid_dir / legacy_csv)
+    return True
+
+
+def adopt_undated(files):
+    """Rename a run's undated census (an earlier 2.0.0's names) to its dated
+    names rather than recompute it: the CSV first, then the summary, now
+    naming the dated CSV, written to its dated name and the undated one
+    removed (so an interruption leaves an undated summary naming a missing
+    CSV, which is stale and recomputed -- never a dated summary without its
+    CSV). Only a current-version summary of this schema whose CSV is the one
+    it names is adopted. Returns the old summary name, or None. The pairs
+    that recorded the old summary's sha256 are then stale and recomputed."""
+    legacy_csv, legacy_summary = output_layout.CENSUS_UNDATED
+    old, new = files.grid_dir / legacy_summary, files.census_path("summary")
+    if old == new or new.exists() or not old.is_file():
+        return None
+    rec, _why = _read_record(old)
+    if rec is None or _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir):
+        return None
+    if rec.get("state") == "value":
+        if rec.get("csv") != legacy_csv:
+            return None
+        (files.grid_dir / legacy_csv).replace(files.census_path("csv"))
+        rec["csv"] = files.census_csv
+    rec["renamed_from"] = legacy_summary
+    _write_json(new, rec)
+    old.unlink()
+    return legacy_summary
+
+
+def _plain(obj):
+    return json.loads(json.dumps(obj, sort_keys=True, default=str))
+
+
+def upgrade_tiff_inputs(files):
+    """Add the TIFFs to a census recorded without them (an earlier 2.0.0)
+    instead of recomputing it, when that census is provably what a
+    recompute would write: its schema, version and CSV are current, every
+    input it DID record is unchanged, and every view's status by the
+    roll-up's rows -- which hash both TIFFs against the hashes the grid and
+    registration records hold -- is the one it recorded (measured views,
+    and each unmeasured view's row status and reason). The census is a
+    function of exactly those, so the TIFF hashes are added and nothing is
+    recomputed. Returns a reason string when upgraded, else None (the census
+    is then judged stale or fresh as usual). A refused census is not
+    upgraded: it is recomputed."""
+    path = files.census_path("summary")
+    if not path.is_file():
+        return None
+    rec, _why = _read_record(path)
+    if (rec is None or rec.get("inputs_include_tiffs") or rec.get("state") != "value"
+            or _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir)):
+        return None
+    inputs, stats = census_inputs(files)
+    if dict((k, v) for k, v in inputs.items() if k not in stats) != rec.get("inputs"):
+        return None
+    run, gridded, _where = run_views(files.run_dir)
+    if run["refused"]:
+        return None
+    measured = sorted((vid for vid, _stem in gridded), key=_vid_sort)
+    unmeasured = [dict(view_id=vid, **u) for vid, u in
+                  sorted(run["unmeasured"].items(), key=lambda kv: _vid_sort(kv[0]))]
+    if (_plain(measured) != _plain(rec.get("measured_view_ids"))
+            or _plain(unmeasured) != _plain((rec.get("detail") or {}).get("unmeasured_views"))):
+        return None
+    rec.update(inputs=inputs, input_stats=stats, inputs_include_tiffs=True,
+               inputs_upgraded={"tiffs_added": len(stats),
+                                "rule": "every recorded input unchanged and every view's "
+                                        "roll-up status (TIFFs hashed against the grid "
+                                        "and registration records) as recorded"})
+    _write_json(path, rec)
+    return "{0} TIFF hashes added; every view's status as recorded".format(len(stats))
+
+
+def write_run_census(files, inputs=None, stats=None):
+    """The census of one run, into its grid folder: the element CSV, then
+    the summary naming its sha256 and the sha256 of every input (written
+    last; CLAUDE.md, defect class 4). A refused run gets a summary saying so
+    and no CSV. Returns the summary as written."""
+    if inputs is None:
+        inputs, stats = census_inputs(files)
+    run = census_run(files.run_dir)
+    files.grid_dir.mkdir(parents=True, exist_ok=True)
+    csv_path, summary_path = files.census_path("csv"), files.census_path("summary")
+    # The summary is the write-last completion mark: the previous one must
+    # not outlive this census's partial output.
+    _unlink(summary_path)
+    row, detail = run_stats(run) if not run["refused"] else (
+        {"as_of_date": run["as_of_date"], "run_id": run["run_id"],
+         "run_dir": run["run_dir"], "refused": run["refused"]}, None)
+    summary = {
+        "schema": RUN_SCHEMA, "tool_version": TOOL_VERSION,
+        "state": "refused" if run["refused"] else "value", "refused": run["refused"],
+        "run_id": run["run_id"], "as_of_date": run["as_of_date"],
+        "run_dir": str(files.run_dir), "run_dir_name": files.name, "layout": files.layout,
+        "doc_title": run["doc_title"],
+        "figures": dict((c, row.get(c)) for c in RUN_FIGURE_COLUMNS),
+        "detail": detail,
+        "measured_view_ids": list(run["measured"]),
+        "unmeasured_view_ids": sorted(run["unmeasured"], key=_vid_sort),
+        "inputs": inputs,
+        "input_stats": stats or {},
+        "inputs_include_tiffs": True,
+        "inputs_rule": "sha256 of the run_meta, views_core, every model sidecar and its "
+                       "TIFF, and each view's registration record, registered TIFF, grid "
+                       "json and grid npz present; a TIFF whose [size, mtime_ns] in "
+                       "input_stats is unchanged keeps its recorded sha256 unread",
+        "csv": None, "csv_sha256": None,
+        "definitions": DEFINITIONS,
+    }
+    if run["refused"]:
+        _unlink(csv_path)
+    else:
+        summary["csv"] = csv_path.name
+        summary["csv_sha256"] = _write_csv(csv_path, ELEMENT_COLUMNS, element_rows(run))
+    _write_json(summary_path, summary)
+    remove_undated(files, "census")
+    return summary
+
+
+def _read_record(path):
+    try:
+        rec = _load_json(path)
+    except (OSError, ValueError) as ex:
+        return None, "{0} cannot be read: {1}".format(Path(path).name, _err(ex))
+    if not isinstance(rec, dict):
+        return None, "{0} is not a JSON object".format(Path(path).name)
+    return rec, None
+
+
+def _csv_check(rec, folder):
+    """Why the CSV a summary names is not the one on disk, or None."""
+    if rec.get("state") != "value":
+        return None
+    name = rec.get("csv")
+    if not isinstance(name, str) or Path(name).name != name:
+        return "the summary names csv {0!r}, not a file beside it".format(name)
+    path = Path(folder) / name
+    if not path.is_file():
+        return "{0} named by the summary is missing".format(name)
+    if grid.sha256_file(path) != rec.get("csv_sha256"):
+        return "{0} does not match the sha256 its summary records".format(name)
+    return None
+
+
+def _version_check(rec, schema):
+    if rec.get("schema") != schema:
+        return "the summary's schema is {0!r}, not {1!r}".format(rec.get("schema"), schema)
+    if rec.get("tool_version") != TOOL_VERSION:
+        return "written by census {0}, this is {1}".format(
+            rec.get("tool_version"), TOOL_VERSION)
+    return None
+
+
+def _listed(names, limit=5):
+    names = sorted(names)
+    return ", ".join(names[:limit]) + (" (+{0} more)".format(len(names) - limit)
+                                       if len(names) > limit else "")
+
+
+def census_staleness(files, inputs):
+    """Why the run's census on disk is not current: empty when it is.
+    Stale when it is absent, from another schema or census version, its CSV
+    is not the one it names, or any input's sha256 differs from the one it
+    recorded (or an input was added or removed)."""
+    path = files.census_path("summary")
+    if not path.is_file():
+        return ["no {0}".format(path.name)]
+    rec, why = _read_record(path)
+    if rec is None:
+        return [why]
+    why = _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir)
+    if why:
+        return [why]
+    recorded = rec.get("inputs") if isinstance(rec.get("inputs"), dict) else {}
+    reasons = []
+    changed = [k for k in inputs if k in recorded and recorded[k] != inputs[k]]
+    added = [k for k in inputs if k not in recorded]
+    removed = [k for k in recorded if k not in inputs]
+    for word, keys in (("changed", changed), ("added", added), ("removed", removed)):
+        if keys:
+            reasons.append("{0} input(s) {1}: {2}".format(len(keys), word, _listed(keys)))
+    return reasons
+
+
+def load_run_census(files):
+    """A run's census as the pair step needs it, read from its FILES: the
+    measured and unmeasured view ids, and per element its source, category
+    and views; per measured view its host-document keys. CensusRefusal when
+    the census is absent, refused, or its CSV is not the one it names."""
+    path = files.census_path("summary")
+    if not path.is_file():
+        raise CensusRefusal("{0} has no census ({1})".format(files.name, path.name))
+    rec, why = _read_record(path)
+    if rec is None:
+        raise CensusRefusal("{0}: {1}".format(files.name, why))
+    why = _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir)
+    if why:
+        raise CensusRefusal("{0}: {1}".format(files.name, why))
+    if rec.get("state") != "value":
+        raise CensusRefusal("the census of {0} is refused: {1}".format(
+            files.name, rec.get("refused")))
+    measured = [str(v) for v in rec.get("measured_view_ids") or []]
+    run = {"run_id": rec.get("run_id"), "as_of_date": rec.get("as_of_date"),
+           "run_dir": str(files.run_dir), "measured": measured,
+           "unmeasured": dict((str(v), {}) for v in rec.get("unmeasured_view_ids") or []),
+           "elements": {}, "views": dict((v, {"host_keys": set()}) for v in measured)}
+    with open(str(files.grid_dir / rec["csv"]), encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            views = [v for v in (row.get("view_ids") or "").split(";") if v]
+            run["elements"][row["element_key"]] = {
+                "source": row["source"], "category": row["category"] or None,
+                "views": views}
+            if row["source"] in HOST_BUCKET:
+                for v in views:
+                    if v in run["views"]:
+                        run["views"][v]["host_keys"].add(row["element_key"])
+    for view in run["views"].values():
+        view["host_keys"] = frozenset(view["host_keys"])
+    return run, rec
+
+
+# --- the pair step ----------------------------------------------------------------------
+
+def predecessors(all_files):
+    """``{run_dir: (state, predecessor RunFiles or None, reason)}``. A run's
+    predecessor is the run with the previous as-of date (run_meta ``date``)
+    in the same model folder (the run folder's parent, ``model_key`` in
+    tools/stage_a_runs_index.py). Never run_id or folder order. Refused by
+    name when the run or the previous date is shared by two runs, or the
+    run has no as-of date; ``no_predecessor`` for the first run."""
+    groups = {}
+    for f in all_files:
+        groups.setdefault(str(f.run_dir.parent), []).append(f)
+    out = {}
+    for folder, members in groups.items():
+        by_date = {}
+        for f in members:
+            if f.as_of_date is not None:
+                by_date.setdefault(f.as_of_date, []).append(f)
+        for f in members:
+            if f.as_of_date is None:
+                out[str(f.run_dir)] = ("refused", None, "{0} has no as-of date".format(f.name))
+                continue
+            same = by_date[f.as_of_date]
+            if len(same) > 1:
+                out[str(f.run_dir)] = ("refused", None, "two runs on as-of date {0} in {1}: "
+                                       "{2}".format(f.as_of_date, folder,
+                                                    _listed(g.name for g in same)))
+                continue
+            earlier = sorted(d for d in by_date if d < f.as_of_date)
+            if not earlier:
+                out[str(f.run_dir)] = ("no_predecessor", None,
+                                       "no run in {0} has an earlier as-of date".format(folder))
+                continue
+            prev = by_date[earlier[-1]]
+            if len(prev) > 1:
+                out[str(f.run_dir)] = ("refused", None, "the previous as-of date {0} has two "
+                                       "runs in {1}: {2}".format(
+                                           earlier[-1], folder, _listed(g.name for g in prev)))
+                continue
+            out[str(f.run_dir)] = ("value", prev[0], None)
+    return out
+
+
+def _summary_sha(files):
+    path = files.census_path("summary")
+    return grid.sha256_file(path) if path.is_file() else None
+
+
+def pair_identity(cur, choice):
+    """What a pair's outputs are a function of: the predecessor chosen (by
+    run_id, folder name and as-of date -- not by absolute path, so a renamed
+    model folder does not make every pair stale) and both census summaries'
+    sha256 (each names its CSV's)."""
+    state, prev, reason = choice
+    return {"state": state, "reason": reason,
+            "predecessor": None if prev is None else {
+                "run_id": prev.run_id, "run_dir_name": prev.name,
+                "as_of_date": prev.as_of_date},
+            "census_summary_sha256": {"cur": _summary_sha(cur),
+                                      "prev": None if prev is None else _summary_sha(prev)}}
+
+
+def pair_staleness(cur, choice):
+    """Why the run's transitions on disk are not current: empty when they are."""
+    path = cur.pair_path("summary")
+    if not path.is_file():
+        return ["no {0}".format(path.name)]
+    rec, why = _read_record(path)
+    if rec is None:
+        return [why]
+    why = _version_check(rec, PAIR_SCHEMA) or _csv_check(rec, cur.grid_dir)
+    if why:
+        return [why]
+    want, have = pair_identity(cur, choice), rec.get("identity") or {}
+    reasons = []
+    if want["predecessor"] != have.get("predecessor"):
+        reasons.append("the predecessor is now {0}, it was {1}".format(
+            (want["predecessor"] or {}).get("run_dir_name"),
+            (have.get("predecessor") or {}).get("run_dir_name")))
+    for side in ("cur", "prev"):
+        recorded = (have.get("census_summary_sha256") or {}).get(side)
+        if want["census_summary_sha256"][side] != recorded:
+            reasons.append("the {0} census changed".format(
+                "run's own" if side == "cur" else "predecessor's"))
+    if (want["state"], want["reason"]) != (have.get("state"), have.get("reason")) \
+            and not reasons:
+        reasons.append("the pair's state is now {0}".format(want["state"]))
+    return reasons
+
+
+def write_pair(cur, choice):
+    """Run ``cur`` against its predecessor, into ``cur``'s grid folder: the
+    transitions CSV (one row per element key on either side), then the
+    summary naming its sha256 and both census files' (written last). No
+    predecessor or a refused pair: a summary saying so and no CSV, never
+    zeros. Read from the census FILES, through ``classify`` and
+    ``host_id_overlap`` -- the functions the series uses."""
+    state, prev, reason = choice
+    identity = pair_identity(cur, choice)
+    cur.grid_dir.mkdir(parents=True, exist_ok=True)
+    csv_path, summary_path = cur.pair_path("csv"), cur.pair_path("summary")
+    _unlink(summary_path)
+    summary = {
+        "schema": PAIR_SCHEMA, "tool_version": TOOL_VERSION,
+        "run_id": cur.run_id, "as_of_date": cur.as_of_date, "run_dir": str(cur.run_dir),
+        "run_dir_name": cur.name, "model_folder": str(cur.run_dir.parent),
+        "predecessor": None if prev is None else {
+            "run_id": prev.run_id, "as_of_date": prev.as_of_date,
+            "run_dir": str(prev.run_dir), "run_dir_name": prev.name},
+        "counts": None, "common_measured_views": None, "host_id_jaccard_common_views": None,
+        "census": {}, "csv": None, "csv_sha256": None,
+    }
+    rows = None
+    if state == "value":
+        try:
+            p_run, p_rec = load_run_census(prev)
+            c_run, c_rec = load_run_census(cur)
+        except CensusRefusal as ex:
+            state, reason = "refused", str(ex)
+        else:
+            for side, files, rec in (("cur", cur, c_rec), ("prev", prev, p_rec)):
+                summary["census"][side] = {
+                    "summary": files.census_summary,
+                    "summary_sha256": identity["census_summary_sha256"][side],
+                    "csv": rec.get("csv"), "csv_sha256": rec.get("csv_sha256")}
+            classes = classify(p_run, c_run)
+            _e, _l, summary["counts"] = transitions(p_run, c_run)
+            summary["common_measured_views"], summary["host_id_jaccard_common_views"] = (
+                host_id_overlap(p_run, c_run))
+            rows = [{"run_id": cur.run_id, "as_of_date": cur.as_of_date,
+                     "prev_run_id": prev.run_id, "prev_as_of_date": prev.as_of_date,
+                     "element_key": key, "source": r["source"], "category": r["category"],
+                     "class": r["word"], "in_prev": r["in_prev"], "in_cur": r["in_cur"],
+                     "deciding_view_ids": ";".join(r["deciding_views"])}
+                    for key, r in sorted(classes.items())]
+    # The identity is what the outputs were computed FROM (the choice); the
+    # state is how it ended (a census refusal found while reading refuses it).
+    summary.update(state=state, reason=reason, identity=identity)
+    if rows is None:
+        _unlink(csv_path)
+    else:
+        summary["csv"] = csv_path.name
+        summary["csv_sha256"] = _write_csv(csv_path, TRANSITION_COLUMNS, rows)
+    _write_json(summary_path, summary)
+    remove_undated(cur, "pair")
+    return summary
+
+
+# --- the incremental driver -------------------------------------------------------------
+
+def find_runs(root):
+    """Every run folder under ``root`` (a model folder, or an export root),
+    found by the runs index's own walk (tools/stage_a_runs_index.discover)."""
+    from tools import stage_a_runs_index as idx
+    found, scan = idx.discover(Path(root), 4)
+    return [Path(run_dir) for run_dir, _meta in found], scan
+
+
+def drive(root, progress=None):
+    """Compute only the per-run censuses and pairs under ``root`` that are
+    missing or stale; returns one action record per census and per pair:
+    ``{"step", "run", "action" (computed | fresh), "state", "why"}``.
+    Censuses come first: a pair's staleness is a function of both census
+    summaries."""
+    say = progress or (lambda line: None)
+    run_dirs, scan = find_runs(root)
+    for s in scan["skipped"]:
+        say("skipped {0}: {1}".format(s["path_rel"], s["reason"]))
+    all_files, actions = [], []
+    for r in run_dirs:
+        f = RunFiles(r)
+        if f.has_capture:
+            all_files.append(f)
+            continue
+        actions.append({"step": "census", "run": f.name, "action": "skipped",
+                        "state": None, "why": "no capture folder"})
+        say("skipped {0}: no capture folder, so no census and no place in the "
+            "series".format(f.name))
+    all_files.sort(key=lambda x: (str(x.run_dir.parent), x.as_of_date or "", x.name))
+    for n, f in enumerate(all_files, 1):
+        started = time.time()
+        adopted = adopt_undated(f)
+        if adopted:
+            say("        renamed {0} -> {1} in {2}".format(adopted, f.census_summary, f.name))
+        upgraded = upgrade_tiff_inputs(f)
+        if upgraded:
+            say("        upgraded {0}: {1}".format(f.name, upgraded))
+        previous = (_read_record(f.census_path("summary"))[0]
+                    if f.census_path("summary").is_file() else None)
+        inputs, stats = census_inputs(f, previous)
+        why = census_staleness(f, inputs)
+        if why:
+            rec = write_run_census(f, inputs, stats)
+            action = "computed"
+        else:
+            rec = _load_json(f.census_path("summary"))
+            action = "upgraded" if upgraded else "fresh"
+        actions.append({"step": "census", "run": f.name, "action": action,
+                        "state": rec.get("state"), "why": "; ".join(why)})
+        say("[{0}/{1}] census {2:<8} {3:.0f}s {4} ({5}){6}".format(
+            n, len(all_files), action, time.time() - started, f.name, rec.get("state"),
+            ": " + "; ".join(why) if why else ""))
+    choices = predecessors(all_files)
+    for f in all_files:
+        choice = choices[str(f.run_dir)]
+        why = pair_staleness(f, choice)
+        if why:
+            rec = write_pair(f, choice)
+            action = "computed"
+        else:
+            rec = _load_json(f.pair_path("summary"))
+            action = "fresh"
+        prev = rec.get("predecessor") or {}
+        actions.append({"step": "pair", "run": f.name, "action": action,
+                        "state": rec.get("state"), "predecessor": prev.get("run_dir_name"),
+                        "why": "; ".join(why)})
+        say("pair   {0:<8} {1} <- {2} ({3}{4}){5}".format(
+            action, f.name, prev.get("run_dir_name") or "-", rec.get("state"),
+            ": " + rec["reason"] if rec.get("reason") else "",
+            ": " + "; ".join(why) if why else ""))
+    return actions
+
+
+def _per_run(run_dirs):
+    """Each run's own census, into its grid folder, computed whether or not
+    it is stale (the run was named). 0 every run measured in full, 1 a view
+    unmeasured, 2 a run refused."""
+    worst = 0
+    for n, run_dir in enumerate(run_dirs, 1):
+        started = time.time()
+        files = RunFiles(run_dir)
+        if not files.has_capture:
+            print("[{0}/{1}] SKIPPED {2}: no capture folder (color_id/ or color_id_buffer/) "
+                  "and no model sidecar".format(n, len(run_dirs), files.run_dir))
+            worst = 2
+            continue
+        rec = write_run_census(files)
+        fig = rec["figures"]
+        if rec["state"] != "value":
+            print("[{0}/{1}] {2:.0f}s REFUSED {3}: {4}".format(
+                n, len(run_dirs), time.time() - started, files.run_dir, rec["refused"]))
+            worst = 2
+        else:
+            print("[{0}/{1}] {2:.0f}s {3} {4}: {5} measured / {6} requested views, {7} "
+                  "distinct elements".format(n, len(run_dirs), time.time() - started,
+                                             rec["as_of_date"], rec["run_id"],
+                                             fig["views_measured"], fig["views_requested"],
+                                             fig["elements_distinct"]))
+            if fig["views_unmeasured"]:
+                worst = max(worst, 1)
+        print("wrote {0}".format(files.census_path("summary")))
+    return worst
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("runs", nargs="+", metavar="run",
+    ap.add_argument("runs", nargs="*", metavar="run",
                     help="a run directory or its capture folder (color_id/ or color_id_buffer/)")
     ap.add_argument("--out", default=None,
-                    help="output directory (default, one run only: its grid/ or analysis_grid/)")
+                    help="the multi-run convenience: every run's elements, the runs CSV "
+                         "and the series CSV in this one folder")
+    ap.add_argument("--root", default=None,
+                    help="a model folder (or an export root): compute only the per-run "
+                         "censuses and pairs that are missing or stale")
     args = ap.parse_args(argv)
-    if len(args.runs) > 1 and not args.out:
-        ap.error("--out is required with more than one run")
+    if args.root:
+        if args.runs or args.out:
+            ap.error("--root takes no run arguments and no --out")
+        if not Path(args.root).is_dir():
+            ap.error("not a directory: {0}".format(args.root))
+        actions = drive(args.root, progress=lambda line: print(line, flush=True))
+        if not actions:
+            print("no run folder under {0}".format(args.root))
+            return 2
+        done = [a for a in actions if a["action"] == "computed"]
+        print("{0} census(es) and {1} pair(s) computed; {2} upgraded; {3} fresh; {4} run(s) "
+              "skipped".format(sum(1 for a in done if a["step"] == "census"),
+                               sum(1 for a in done if a["step"] == "pair"),
+                               sum(1 for a in actions if a["action"] == "upgraded"),
+                               sum(1 for a in actions if a["action"] == "fresh"),
+                               sum(1 for a in actions if a["action"] == "skipped")))
+        refused = [a for a in actions if a["state"] == "refused"]
+        for a in refused:
+            print("REFUSED {0} {1}".format(a["step"], a["run"]))
+        return 1 if refused else 0
+    if not args.runs:
+        ap.error("give run folders, or --root")
     missing = [run for run in args.runs if not Path(run).is_dir()]
     if missing:
         ap.error("not a directory: {0}".format(", ".join(missing)))
     args.runs = [str(Path(run).resolve()) for run in args.runs]
+    if not args.out:
+        return _per_run(args.runs)
     layouts = [rollup.run_layout(run) for run in args.runs]
-    out = Path(args.out) if args.out else layouts[0][3]
+    out = Path(args.out)
     for _s, folder, _r, _g in layouts:
         if rollup._inside(out, folder):
             ap.error("--out {0} is inside the capture folder {1}; the census never "

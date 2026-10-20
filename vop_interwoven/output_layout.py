@@ -6,10 +6,15 @@ Two layouts exist on disk and both are read:
   ``color_id_buffer/``, ``analysis_grid/``, ``<stem>_anno.registered.*``,
   ``grid_rollup.csv``, ``kinds_inventory.csv``.
 * ``v2`` -- new runs: ``run_meta_<d>.json``, ``color_id/``, ``grid/``,
-  ``<stem>_anno.reg.*``, ``grid_rollup_<d>.csv``, ``kinds_inventory_<d>.csv``.
+  ``<stem>_anno.reg.*``, ``grid_rollup_<d>.csv``, ``kinds_inventory_<d>.csv``,
+  ``element_census_<d>.csv``, ``element_transitions_<d>.csv``.
   ``<d>`` is the run's file date (``file_date``): the value every other dated
   file of the run is named by (``views_core_<d>.csv``), so a run's files
   pulled together from several runs do not collide.
+
+The element census and transitions are dated ``_<d>`` in BOTH layouts
+(``census_names``, ``transitions_names``): ``analysis_grid/`` of a v1 run
+holds ``element_census_<d>.csv`` beside an undated ``grid_rollup.csv``.
 
 A run keeps the layout it was created in: a recapture into a v1 run writes v1
 names, and the tools write into a run in its own layout, so no run mixes the
@@ -144,6 +149,37 @@ def inventory_names(layout, d):
     if layout == V1:
         return "kinds_inventory.csv", "kinds_inventory.json"
     return "kinds_inventory_{0}.csv".format(d), "kinds_inventory_{0}.json".format(d)
+
+
+# The census and transitions files are dated in BOTH layouts: they are new in
+# 2026-10, so no v1 reader knows an undated name. The undated names are what
+# the census wrote before (unreleased), kept so it can adopt those files.
+CENSUS_UNDATED = ("element_census.csv", "element_census.summary.json")
+TRANSITIONS_UNDATED = ("element_transitions.csv", "element_transitions.summary.json")
+
+
+def census_file_date(meta, run_dir):
+    """The ``<d>`` of a run's census and transitions names: ``file_date``,
+    else the ``<date>__`` prefix of the run folder's name, else "undated".
+    The census writer and the runs index both name the files by it."""
+    d = file_date(meta)
+    if d:
+        return str(d)
+    parts = split_run_folder(os.path.basename(os.path.normpath(str(run_dir))))
+    return parts[0] if parts else "undated"
+
+
+def census_names(layout, d):
+    """(csv, summary) of the per-run element census (tools/stage_a_element_census),
+    ``element_census_<d>.*`` in either layout."""
+    return "element_census_{0}.csv".format(d), "element_census_{0}.summary.json".format(d)
+
+
+def transitions_names(layout, d):
+    """(csv, summary) of a run's element transitions against its predecessor,
+    ``element_transitions_<d>.*`` in either layout."""
+    return ("element_transitions_{0}.csv".format(d),
+            "element_transitions_{0}.summary.json".format(d))
 
 
 def grid_dir_for_capture(capture_dir):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the Stage A analysis layer end to end, in order.
 
-    python tools/stage_a_analyze.py <run> [<run> ...] [--out DIR]
+    python tools/stage_a_analyze.py <run> [<run> ...] [--out DIR] [--index-root EXPORTS]
 
 Per run:
   1. register   -- register_stage_a_annotation over the run's capture folder
@@ -11,8 +11,24 @@ Then, across all runs:
   4. inventory  -- stage_a_kinds inventory
   5. rollup     -- stage_a_grid_rollup
 Then, per run again:
-  6. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
+  6. census     -- stage_a_element_census on the run alone: element_census_<d>.csv
+                   and .summary.json in the run's grid folder
+Then, once per model folder (each run folder's parent):
+  7. pairs      -- stage_a_element_census --root <model folder>: the transitions of
+                   every run there against its predecessor, computing only what
+                   is missing or stale -- for a new run, its own pair (and the
+                   next run's, when it was backfilled between two). A sibling
+                   whose census is missing or stale is computed too, so the
+                   first analysis of a model folder never run through the
+                   driver costs every run's census.
+Then, per run again:
+  8. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
                    named as views_core is and written beside it
+Then, only with ``--index-root``:
+  9. index      -- stage_a_runs_index --root <export root>, so the BI sees the new
+                   census and transitions. Its exit 1 (some run anywhere under
+                   the root not finalized or without a roll-up) is reported, not
+                   counted: it is a fact about other runs, not this analysis.
 
 Each stage is the tool's own ``main()``, called as it would be from the
 command line: nothing is reimplemented here, and every stage prints its own
@@ -41,13 +57,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import register_stage_a_annotation as reg  # noqa: E402
+from tools import stage_a_element_census as census  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
+from tools import stage_a_runs_index as runs_index  # noqa: E402
 from tools import stage_a_timing_report as timing  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 
-STAGES = ("register", "grid", "derive", "inventory", "rollup", "timing")
+STAGES = ("register", "grid", "derive", "inventory", "rollup", "census", "pairs", "timing")
+# Run only when asked for (--index-root).
+OPTIONAL_STAGES = ("index",)
 
 
 def _stage(name, label, fn, argv, results):
@@ -61,7 +81,7 @@ def _stage(name, label, fn, argv, results):
     return code
 
 
-def analyze(runs, out=None):
+def analyze(runs, out=None, index_root=None):
     """Run every stage in order; returns ``(worst exit code, per-stage
     results)``. Stops at the first stage that exits 2."""
     runs = [Path(r) for r in runs]
@@ -81,9 +101,27 @@ def analyze(runs, out=None):
                            ("rollup", rollup.main, runs + out_args)):
         if _stage(name, "all runs", fn, argv, results) >= 2:
             return 2, results
+    # The census reads the grids and the roll-up's own rows, never what the
+    # inventory or roll-up wrote, so a run it refuses (exit 2) stops nothing.
+    for run, run_dir in zip(runs, run_dirs):
+        _stage("census", str(run), census.main, [run_dir], results)
+    # The pairs need every run of the model folder, not only these: once per
+    # folder, in the order first named.
+    models = []
+    for run_dir in run_dirs:
+        model = Path(run_dir).resolve().parent
+        if model not in models:
+            models.append(model)
+    for model in models:
+        _stage("pairs", str(model), census.main, ["--root", model], results)
     for run, run_dir in zip(runs, run_dirs):
         _stage("timing", str(run), timing.main, [run_dir], results)
-    return max(r["exit"] for r in results), results
+    worst = max(r["exit"] for r in results)
+    if index_root is not None:
+        code = _stage("index", str(index_root), runs_index.main, ["--root", index_root],
+                      results)
+        worst = max(worst, code if code >= 2 else 0)
+    return worst, results
 
 
 def main(argv=None):
@@ -93,8 +131,11 @@ def main(argv=None):
     ap.add_argument("--out", default=None,
                     help="one combined inventory and roll-up of every run, here "
                          "(default: each run's own, in its own grid folder)")
+    ap.add_argument("--index-root", default=None,
+                    help="the export root: rebuild runs_index there once the census "
+                         "and pairs are written (default: not rebuilt)")
     args = ap.parse_args(argv)
-    code, results = analyze(args.runs, args.out)
+    code, results = analyze(args.runs, args.out, args.index_root)
     print("== summary")
     for r in results:
         print("  {0:<10} exit {1}  {2}".format(r["stage"], r["exit"], r["target"]))

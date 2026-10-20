@@ -34,20 +34,44 @@ TOOL = REPO / "tools" / "stage_a_grid_rollup.py"
 
 # --- fixtures ------------------------------------------------------------------
 
-def _run(tmp_path, name="run_a", run_id="RUN_A", commit="c0ffee"):
+def _run(tmp_path, name="run_a", run_id="RUN_A", commit="c0ffee", layout="v1",
+         date=None):
+    """A run folder in ``layout`` (vop_interwoven/output_layout): v1
+    color_id_buffer/ + run_meta.json, v2 color_id/ + run_meta_<date>.json."""
+    from vop_interwoven import output_layout as ol
     run = tmp_path / name
-    (run / "color_id_buffer").mkdir(parents=True)
-    (run / "run_meta.json").write_text(json.dumps(
-        {"schema": "vop.run_meta.v1", "run_id": run_id, "git_commit": commit,
-         "finalized": True, "views_requested": [], "views": [],
-         "config": {"cell_size_paper_in": 0.125}}))
+    (run / ol.CAPTURE_DIR[layout]).mkdir(parents=True)
+    meta = {"schema": "vop.run_meta.v1", "run_id": run_id, "git_commit": commit,
+            "finalized": True, "views_requested": [], "views": [],
+            "config": {"cell_size_paper_in": 0.125}}
+    if date is not None:
+        meta["date"] = date
+    (run / ol.run_meta_name(layout, date)).write_text(json.dumps(meta))
     return run
+
+
+def _run_meta_path(run):
+    from vop_interwoven import output_layout as ol
+    path, why = ol.find_run_meta(run)
+    assert path is not None, why
+    return Path(path)
+
+
+def _capture_dir(run):
+    from vop_interwoven import output_layout as ol
+    v2 = run / ol.CAPTURE_DIR[ol.V2]
+    return v2 if v2.is_dir() else run / ol.CAPTURE_DIR[ol.V1]
+
+
+def _grid_dir(run):
+    from vop_interwoven import output_layout as ol
+    return Path(ol.grid_dir_for_capture(_capture_dir(run)))
 
 
 def _outcome(run, n, status="success", reason="", **meta):
     """Request view ``n`` and record its capture outcome in run_meta.json, as
     run_meta.finalize_run_meta writes it (views_requested holds ints)."""
-    path = run / "run_meta.json"
+    path = _run_meta_path(run)
     doc = json.loads(path.read_text())
     if n not in doc["views_requested"]:
         doc["views_requested"].append(n)
@@ -68,7 +92,7 @@ def _capture(run, n, register=True, gridded=True, model_faults=None,
     stage = run.parent / "stage_{0}_{1}".format(run.name, n)
     stage.mkdir()
     anno_src, model_src, _c = _grid_pair(stage, **(pair_kw or {}))
-    cap = run / "color_id_buffer"
+    cap = _capture_dir(run)
     model_tiff, anno_tiff = cap / "V_{0}.tiff".format(n), cap / "V_{0}_anno.tiff".format(n)
     shutil.copy(str(stage / "V_1.tiff"), str(model_tiff))
     shutil.copy(str(stage / "V_1_anno.tiff"), str(anno_tiff))
@@ -94,7 +118,7 @@ def _capture(run, n, register=True, gridded=True, model_faults=None,
     if register:
         reg.register(anno_path)
     if gridded:
-        grid.grid_view(model_path, run / "analysis_grid")
+        grid.grid_view(model_path, _grid_dir(run))
     return model_path, anno_path
 
 
