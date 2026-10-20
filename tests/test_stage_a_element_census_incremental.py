@@ -505,3 +505,85 @@ def test_an_undated_summary_that_is_not_this_census_is_left_alone(tmp_path):
     actions = census.drive(model)
     assert ("census", a.name) in _computed(actions)
     assert old.is_file() and _census(a)[0]["state"] == "value"
+
+
+# --- 8. review, PR #243 ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("which", ["model", "registered"])
+def test_a_tiff_swapped_under_unchanged_records_makes_the_census_stale(tmp_path, which):
+    """The roll-up's staleness check hashes both TIFFs, so a swapped one
+    changes which views are measured: the census must see it. Control: the
+    untouched runs stay fresh."""
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    name = "V_1.tiff" if which == "model" else "V_1_anno.registered.tiff"
+    tiff = _capture_dir(b) / name
+    data = bytearray(tiff.read_bytes())
+    data[-1] ^= 0xFF
+    tiff.write_bytes(bytes(data))
+    actions = census.drive(model)
+    assert _computed(actions) == [("census", b.name), ("pair", b.name), ("pair", c.name)]
+    why = [x["why"] for x in actions if x["step"] == "census" and x["run"] == b.name][0]
+    assert name in why
+    assert _census(b)[0]["figures"]["views_measured"] == 1          # V_1 now grid_stale
+
+
+def test_a_run_folder_with_no_capture_is_skipped_and_writes_nothing(tmp_path):
+    model = _model(tmp_path)
+    a = _dated_run(model, "2025-01-01", "RUN_A")
+    _view(a, 1)
+    bare = model / "2025-02-01__RUN_BARE"
+    bare.mkdir()
+    (bare / "run_meta.json").write_text(json.dumps(
+        {"run_id": "RUN_BARE", "date": "2025-02-01", "finalized": True,
+         "views_requested": [], "views": []}))
+    c = _dated_run(model, "2025-03-01", "RUN_C")
+    _view(c, 1, eid=8)
+    actions = census.drive(model)
+    assert [(x["run"], x["action"]) for x in actions if x["action"] == "skipped"] == [
+        (bare.name, "skipped")]
+    assert not (model / "analysis_grid").exists() and not (model / "grid").exists()
+    assert sorted(p.name for p in bare.iterdir()) == ["run_meta.json"]
+    assert _pair(c)[0]["predecessor"]["run_id"] == "RUN_A"            # not the bare run
+    assert census.main([str(bare)]) == 2 and not (model / "analysis_grid").exists()
+
+
+def test_a_census_dated_by_its_folder_is_found_by_the_index(tmp_path):
+    """No date and no tag in run_meta: the writer names the files by the
+    folder's date, and the index looks for that name (one function)."""
+    root = tmp_path / "Exports"
+    model = root / "KSRF" / "Model"
+    model.mkdir(parents=True)
+    run = _dated_run(model, "2025-04-05", "RUN_A", layout="v2")
+    _view(run, 1)
+    meta_path = next(run.glob("run_meta_*.json"))
+    meta = json.loads(meta_path.read_text())
+    meta.pop("date")
+    meta_path.write_text(json.dumps(meta))
+    census.drive(model)
+    assert (run / "grid" / "element_census_2025-04-05.summary.json").is_file()
+    row = idx.build_index(root)[0][0]
+    assert (row["census_state"], row["transitions_state"]) == ("value", "no_predecessor")
+    assert ol.census_file_date({"date": "2025-01-01", "run_tag": "PR_9"}, run) == "PR_9"
+    assert ol.census_file_date({}, tmp_path / "no_date_here") == "undated"
+
+
+def test_a_census_summary_that_links_outside_the_run_is_not_read(tmp_path):
+    root = tmp_path / "Exports"
+    model = root / "KSRF" / "Model"
+    model.mkdir(parents=True)
+    a = _dated_run(model, "2025-01-01", "RUN_A")
+    _view(a, 1)
+    b = _dated_run(model, "2025-02-01", "RUN_B")
+    _view(b, 1)
+    census.drive(model)
+    summary = _files(b).census_path("summary")
+    outside = tmp_path / "elsewhere.json"
+    outside.write_text(summary.read_text())
+    summary.unlink()
+    summary.symlink_to(outside)
+    by = dict((r["run_id"], r) for r in idx.build_index(root)[0])
+    assert by["RUN_B"]["census_state"] == "unreadable"
+    assert "resolves outside" in by["RUN_B"]["census_reason"]
+    assert by["RUN_A"]["census_state"] == "value"                     # control

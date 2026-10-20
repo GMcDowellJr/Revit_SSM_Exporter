@@ -887,18 +887,28 @@ def census(run_args, out_dir, progress=None):
 
 class RunFiles(object):
     """Where one run's census and transition files are, in its own layout
-    (``vop_interwoven/output_layout``: v2 names dated by ``file_date``, v1
-    undated), and the identity read from its run_meta."""
+    (``vop_interwoven/output_layout``: grid folder by layout, names dated by
+    ``census_file_date`` in both), and the identity read from its run_meta.
+
+    ``has_capture`` is False for a run folder holding no capture folder and
+    no model sidecar (Stage A off, or nothing exported): ``run_layout`` would
+    take such a folder for a capture folder and its PARENT for the run, so
+    the run is kept as given and nothing is computed or written for it."""
 
     def __init__(self, run_arg):
         self.sidecars, self.folder, self.run_dir, self.grid_dir = rollup.run_layout(run_arg)
+        self.has_capture = bool(self.sidecars) or (
+            Path(self.folder).name in output_layout.CAPTURE_DIR.values())
+        if not self.has_capture:
+            self.folder = self.run_dir = Path(run_arg)
+            self.grid_dir = self.run_dir / output_layout.GRID_DIR[output_layout.V1]
         self.run_dir = Path(self.run_dir).resolve()
         self.grid_dir = Path(self.grid_dir)
         self.meta = dsc.find_run_meta(Path(self.folder) / "run_meta.json") or {}
         self.run_id = self.meta.get("run_id")
         self.as_of_date = as_of_date(self.meta, self.run_dir)
         self.layout = output_layout.layout_of_capture_dir(self.folder)
-        d = output_layout.file_date(self.meta) or self.as_of_date or "undated"
+        d = output_layout.census_file_date(self.meta, self.run_dir)
         self.census_csv, self.census_summary = output_layout.census_names(self.layout, d)
         self.pair_csv, self.pair_summary = output_layout.transitions_names(self.layout, d)
 
@@ -920,15 +930,35 @@ def _rel(path, base):
         return str(path)
 
 
+def _tiffs(sidecar, reg_path):
+    """The model TIFF and the registered annotation TIFF of one view, found
+    by the resolvers the roll-up's staleness check uses
+    (``stage_a_grid_rollup.staleness``), which hashes both: a TIFF swapped
+    under an unchanged record turns the view ``grid_stale`` and so changes
+    the census. One that cannot be resolved is left out (its absence is then
+    a removed input)."""
+    found = []
+    try:
+        found.append(dsc._resolve_tiff_path(sidecar, _load_json(sidecar)))
+    except (OSError, ValueError, AttributeError):
+        pass
+    if Path(reg_path).is_file():
+        try:
+            found.append(grid._resolve_recorded(_load_json(reg_path).get("registered_tiff"),
+                                                Path(reg_path).parent,
+                                                "the registered annotation TIFF"))
+        except (OSError, ValueError, AttributeError, grid.GridRefusal):
+            pass
+    return found
+
+
 def census_inputs(files):
-    """``{path relative to the run: sha256}`` of every file the census reads:
-    the run_meta, the views_core file(s), every model sidecar, each view's
-    registration record and its grid json and npz where present. Hashing
-    them is how a recapture, a re-registration or a re-grid makes a census
-    stale. The TIFFs are not hashed: the census never reads one, and every
-    writer that replaces one rewrites the record that names its hash (the
-    sidecar, the registration record, the grid) -- a DECLARED LIMIT, not a
-    proof: a TIFF swapped by hand under unchanged records is not seen."""
+    """``{path relative to the run: sha256}`` of every file the census reads,
+    itself or through the roll-up's rows: the run_meta, the views_core
+    file(s), every model sidecar and its TIFF, each view's registration
+    record and registered TIFF, and its grid json and npz, where present.
+    Hashing them is how a recapture, a re-registration or a re-grid makes a
+    census stale."""
     paths = set(output_layout.run_meta_candidates(files.run_dir))
     paths |= set(output_layout.run_meta_candidates(files.folder))
     paths |= set(str(p) for p in files.run_dir.glob("views_core_*.csv"))
@@ -936,8 +966,8 @@ def census_inputs(files):
         sidecar = Path(sidecar)
         paths.add(str(sidecar))
         reg_path = rollup.registration_record_path(sidecar)
-        for extra in (reg_path, files.grid_dir / (sidecar.stem + ".grid.json"),
-                      files.grid_dir / (sidecar.stem + ".grid.npz")):
+        for extra in [reg_path, files.grid_dir / (sidecar.stem + ".grid.json"),
+                      files.grid_dir / (sidecar.stem + ".grid.npz")] + _tiffs(sidecar, reg_path):
             if Path(extra).is_file():
                 paths.add(str(extra))
     return dict((_rel(p, files.run_dir), grid.sha256_file(p)) for p in sorted(paths))
@@ -1032,8 +1062,9 @@ def write_run_census(files, inputs=None):
         "measured_view_ids": list(run["measured"]),
         "unmeasured_view_ids": sorted(run["unmeasured"], key=_vid_sort),
         "inputs": inputs,
-        "inputs_rule": "sha256 of the run_meta, views_core, every model sidecar, and each "
-                       "view's registration record, grid json and grid npz present",
+        "inputs_rule": "sha256 of the run_meta, views_core, every model sidecar and its "
+                       "TIFF, and each view's registration record, registered TIFF, grid "
+                       "json and grid npz present",
         "csv": None, "csv_sha256": None,
         "definitions": DEFINITIONS,
     }
@@ -1317,8 +1348,16 @@ def drive(root, progress=None):
     run_dirs, scan = find_runs(root)
     for s in scan["skipped"]:
         say("skipped {0}: {1}".format(s["path_rel"], s["reason"]))
-    all_files = [RunFiles(r) for r in run_dirs]
-    actions = []
+    all_files, actions = [], []
+    for r in run_dirs:
+        f = RunFiles(r)
+        if f.has_capture:
+            all_files.append(f)
+            continue
+        actions.append({"step": "census", "run": f.name, "action": "skipped",
+                        "state": None, "why": "no capture folder"})
+        say("skipped {0}: no capture folder, so no census and no place in the "
+            "series".format(f.name))
     all_files.sort(key=lambda x: (str(x.run_dir.parent), x.as_of_date or "", x.name))
     for n, f in enumerate(all_files, 1):
         started = time.time()
@@ -1367,6 +1406,11 @@ def _per_run(run_dirs):
     for n, run_dir in enumerate(run_dirs, 1):
         started = time.time()
         files = RunFiles(run_dir)
+        if not files.has_capture:
+            print("[{0}/{1}] SKIPPED {2}: no capture folder (color_id/ or color_id_buffer/) "
+                  "and no model sidecar".format(n, len(run_dirs), files.run_dir))
+            worst = 2
+            continue
         rec = write_run_census(files)
         fig = rec["figures"]
         if rec["state"] != "value":
@@ -1406,9 +1450,11 @@ def main(argv=None):
             print("no run folder under {0}".format(args.root))
             return 2
         done = [a for a in actions if a["action"] == "computed"]
-        print("{0} census(es) and {1} pair(s) computed; {2} fresh".format(
+        print("{0} census(es) and {1} pair(s) computed; {2} fresh; {3} run(s) skipped".format(
             sum(1 for a in done if a["step"] == "census"),
-            sum(1 for a in done if a["step"] == "pair"), len(actions) - len(done)))
+            sum(1 for a in done if a["step"] == "pair"),
+            sum(1 for a in actions if a["action"] == "fresh"),
+            sum(1 for a in actions if a["action"] == "skipped")))
         refused = [a for a in actions if a["state"] == "refused"]
         for a in refused:
             print("REFUSED {0} {1}".format(a["step"], a["run"]))

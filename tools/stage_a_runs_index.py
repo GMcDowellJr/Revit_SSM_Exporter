@@ -487,7 +487,8 @@ def census_facts(run_dir, root, meta, prefix):
                                           "_summary_path_rel"))
     layout = output_layout.layout_of_run(run_dir) or output_layout.V1
     names = (output_layout.census_names if prefix == "census"
-             else output_layout.transitions_names)(layout, output_layout.file_date(meta))
+             else output_layout.transitions_names)(
+                 layout, output_layout.census_file_date(meta, run_dir))
     csv_name, summary_name = names
     summary_path = None
     for sub in GRID_DIRS:
@@ -499,6 +500,10 @@ def census_facts(run_dir, root, meta, prefix):
         out[prefix + "_reason"] = "no {0} in {1}/".format(summary_name, "/ or ".join(GRID_DIRS))
         return out
     out[prefix + "_summary_path_rel"] = _rel(summary_path, root)
+    escape = _escapes(summary_path, summary_path.parent)
+    if escape:
+        out[prefix + "_state"], out[prefix + "_reason"] = "unreadable", escape
+        return out
     record, why = _load_json_object(summary_path)
     if record is None:
         out[prefix + "_state"], out[prefix + "_reason"] = "unreadable", why

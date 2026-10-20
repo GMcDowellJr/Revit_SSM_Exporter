@@ -158,6 +158,17 @@ CENSUS_UNDATED = ("element_census.csv", "element_census.summary.json")
 TRANSITIONS_UNDATED = ("element_transitions.csv", "element_transitions.summary.json")
 
 
+def census_file_date(meta, run_dir):
+    """The ``<d>`` of a run's census and transitions names: ``file_date``,
+    else the ``<date>__`` prefix of the run folder's name, else "undated".
+    The census writer and the runs index both name the files by it."""
+    d = file_date(meta)
+    if d:
+        return str(d)
+    parts = split_run_folder(os.path.basename(os.path.normpath(str(run_dir))))
+    return parts[0] if parts else "undated"
+
+
 def census_names(layout, d):
     """(csv, summary) of the per-run element census (tools/stage_a_element_census),
     ``element_census_<d>.*`` in either layout."""

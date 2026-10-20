@@ -350,10 +350,11 @@ elements by source, cells per element, the first-appearance share, the
 views-per-element distribution, the grid's own occupancy model cells summed
 over measured views (the per-view figure); the measured and unmeasured view
 ids; refusals; the tool version; and the sha256 of every input it read
-(`inputs`: run_meta, views_core, every model sidecar, each view's
-registration record, grid json and grid npz), so a recapture makes it stale.
-TIFFs are not hashed (the census never reads one; every writer that replaces
-one rewrites a record that names its hash -- a declared limit).
+(`inputs`: run_meta, views_core, every model sidecar and its TIFF, each
+view's registration record, registered TIFF, grid json and grid npz), so a
+recapture makes it stale. The TIFFs are hashed because the roll-up's
+staleness check, which decides which views are measured, hashes them. A run
+folder with no capture folder is skipped: no census, no place in the series.
 
 **Per pair** (`element_transitions_<d>.csv`): one row per element key on
 either side, with `class`, `in_prev` / `in_cur` and `deciding_view_ids`, the
