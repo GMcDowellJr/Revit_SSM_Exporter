@@ -300,7 +300,7 @@ def _lattice_ceil(value):
 def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
                           fit_direction="horizontal",
                           max_axis_px=MAX_STAGE_A_AXIS_PX,
-                          min_axis_px=64):
+                          min_axis_px=64, fit_px_limit=None):
     """Everything a Stage A export needs, derived from frame B and dpi ONLY.
 
     THE ANALYSIS GRID IS NOT A TERM. The caller passes rectangles in view-local
@@ -340,6 +340,11 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
         fit_direction: "horizontal" or "vertical" -- which axis Revit's
             PixelSize sets.
         max_axis_px: per-axis ceiling, or None for no cap.
+        fit_px_limit: an upper bound on B's fitted axis, on top of the cap
+            (co_sized_request: the request at which the ANNOTATION export
+            also fits the ceiling), or None. It can only lower resolution;
+            ``fit_px_limited`` says whether it did, and ``cap_applied``
+            counts it.
         min_axis_px: floor on B's fitted axis, mirroring the shipped
             ``max(64, ...)``. A floor RAISES resolution, so it can push a
             tiny frame above the requested dpi; achieved_export_dpi records
@@ -371,6 +376,10 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
     # the render crop A.
     cap_result = cap_axes(pre_cap_fit_px, pre_cap_der_px, cap)
     accepted_fit_px = max(floor_px, cap_result["accepted_px"])
+    fit_px_limited = False
+    if fit_px_limit is not None and accepted_fit_px > int(fit_px_limit):
+        accepted_fit_px = max(1, int(fit_px_limit))
+        fit_px_limited = True
 
     # B stays whole and the resolution absorbs the cap: fpp is re-derived from
     # B's own unclipped extent over the pixels it is allowed to have.
@@ -477,7 +486,9 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
     crop_fit_ft = _crop_fit_extent(crop_rect, vertical)
     if crop_fit_ft > 0.0:
         _fit_px_at = lambda fpp: max(1, _lattice_ceil(crop_fit_ft / fpp))
-        if _fit_px_at(accepted_fpp) < floor_px:
+        # A co-sized bound is a ceiling too (co_sized_request), and wins the
+        # same conflict: the floor never raises a request past it.
+        if _fit_px_at(accepted_fpp) < floor_px and not fit_px_limited:
             candidate_fpp = crop_fit_ft / float(floor_px)
             cand_u = _lattice_ceil(frame_u_ft / candidate_fpp)
             cand_v = _lattice_ceil(frame_v_ft / candidate_fpp)
@@ -576,7 +587,8 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
         # steps the fitted axis down. Resolution drops from 150 to 148.5 dpi
         # while this field said no cap applied -- and this field is what the
         # sidecar and the capped-export diagnostic both lead with.
-        "cap_applied": bool(cap_result["cap_applied"] or lattice_corrections > 0),
+        "cap_applied": bool(cap_result["cap_applied"] or lattice_corrections > 0
+                            or fit_px_limited),
         # Which route, for a reader that needs to tell them apart.
         "cap_applied_by_cap_axes": bool(cap_result["cap_applied"]),
         "max_axis_px": cap_result["max_axis_px"],
@@ -586,4 +598,76 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
         # when the floor was not needed and when the ceiling refused it.
         "floor_applied_to_crop": bool(floor_applied_to_crop),
         "lattice_corrections": int(lattice_corrections),
+        # The co-sized bound (fit_px_limit), when it lowered the request.
+        "fit_px_limit": None if fit_px_limit is None else int(fit_px_limit),
+        "fit_px_limited": bool(fit_px_limited),
     }
+
+
+def co_sized_request(model_requested_px, model_accepted_px, anno_attempts,
+                     fit_direction="horizontal", max_axis_px=MAX_STAGE_A_AXIS_PX,
+                     min_axis_px=64):
+    """PURE. The fitted-axis request at which BOTH Stage A passes fit the
+    per-axis ceiling, when the ANNOTATION export's first attempt overran it
+    on its derived axis alone (group A of RUN_2025-02-03_to_2025-11-01_
+    SERIES_SMALL_VIEWS.md: section lines past the crop made it 1.2-61 %
+    taller than the model's, it was halved, and it was refused as
+    ``annotation_lattice_mismatch``).
+
+    The annotation's drawn extent is fixed in feet, so its derived axis
+    scales with the request: at the model's request R it came back D, and
+    cap_axes(R, D + 1, cap) is the largest request at which it fits. D + 1,
+    not D: the measured axis is a whole number of pixels and the true extent
+    may be up to one more (cap_axes' D5 note: Revit floors the derived
+    axis), so D alone could land the second export one pixel over.
+
+    Returns ``{"state": "applies", "fit_px", ...}``, or ``state``
+    ``not_needed`` (the first attempt passed) / ``not_applicable`` with the
+    reason -- only the overrun case is re-sized: the model export accepted
+    off its own request (Revit refusing the PixelSize), a fitted axis that
+    came back wrong, or a failure under the ceiling are not this, and stay
+    the faults they are.
+    """
+    attempts = list(anno_attempts or [])
+    if not attempts:
+        return {"state": "not_applicable", "reason": "no annotation export attempt"}
+    first = attempts[0]
+    if first.get("dim_check") == "pass":
+        return {"state": "not_needed",
+                "reason": "the annotation export's first attempt passed"}
+    requested = int(model_requested_px)
+    if model_accepted_px is None or int(model_accepted_px) != requested:
+        return {"state": "not_applicable",
+                "reason": "the MODEL export was accepted at {0} px for a {1} px request; "
+                          "re-sizing on the annotation's extent does not address "
+                          "that".format(model_accepted_px, requested)}
+    vertical = str(fit_direction or "horizontal").strip().lower() == "vertical"
+    fitted = first.get("actual_h") if vertical else first.get("actual_w")
+    derived = first.get("actual_w") if vertical else first.get("actual_h")
+    if (first.get("requested_px") != requested or first.get("accepted_px") != requested
+            or fitted is None or derived is None):
+        return {"state": "not_applicable",
+                "reason": "the annotation export's first attempt was not the model's "
+                          "request, or its size was not read: {0}".format(first)}
+    if abs(int(fitted) - requested) > 1:
+        return {"state": "not_applicable",
+                "reason": "the annotation export's FITTED axis came back {0} px for a {1} "
+                          "px request".format(fitted, requested)}
+    cap = int(max_axis_px)
+    if int(derived) <= cap:
+        return {"state": "not_applicable",
+                "reason": "the annotation export's derived axis ({0} px) is within the "
+                          "{1} px ceiling; the first attempt failed for another "
+                          "reason".format(derived, cap)}
+    sized = cap_axes(requested, int(derived) + 1, cap)
+    fit_px = int(sized["accepted_px"])
+    if fit_px < int(min_axis_px) or fit_px >= requested:
+        return {"state": "not_applicable",
+                "reason": "the co-sized request {0} px is not usable (floor {1}, model "
+                          "request {2})".format(fit_px, min_axis_px, requested)}
+    return {"state": "applies", "fit_px": fit_px, "model_requested_px": requested,
+            "anno_measured_px": [first.get("actual_w"), first.get("actual_h")],
+            "anno_derived_bound_px": int(derived) + 1,
+            "predicted_anno_derived_px": int(sized["accepted_derived_px"]),
+            "max_axis_px": cap,
+            "coarsening": round(requested / float(fit_px), 6)}

@@ -1,0 +1,560 @@
+{
+  "completed_at": "2026-10-19T14:21:57",
+  "config_hash": "be3a80a1",
+  "config_hash_matches": null,
+  "doc_title": "KSRF_Hosp_Interior_AR_V48_3.7 GB_2025-10-25",
+  "probe": "stage_a_lattice_overrun",
+  "probe_version": "2026-10-19.2",
+  "repo_root": "already importable",
+  "runs": {
+    "annotation_crop_on": {
+      "elapsed_s": 512.5,
+      "run_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Probes\\lattice_overrun\\annotation_crop_on\\2026-10-19__20261019T1413_probe_annotation_crop_on",
+      "run_id": "20261019T1413_probe_annotation_crop_on",
+      "views": [
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 10512,
+              "actual_w": 7476,
+              "dim_check": "mismatch",
+              "requested_px": 7476
+            },
+            {
+              "accepted_px": 3738,
+              "actual_h": 5256,
+              "actual_w": 3738,
+              "dim_check": "pass",
+              "requested_px": 3738
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10512,
+          "anno_over_model_derived_px": 513,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029773811023791945,
+          "model_attempts": [
+            {
+              "accepted_px": 7476,
+              "actual_h": 9999,
+              "actual_w": 7476,
+              "dim_check": "pass",
+              "requested_px": 7476
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 213,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.010416666666666666
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.05925382170935963
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.8196041427388141
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.028484911517723154
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 4148625
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 10345,
+              "actual_w": 9555,
+              "dim_check": "mismatch",
+              "requested_px": 9555
+            },
+            {
+              "accepted_px": 4777,
+              "actual_h": 5172,
+              "actual_w": 4777,
+              "dim_check": "pass",
+              "requested_px": 4777
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10345,
+          "anno_over_model_derived_px": 347,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.029290527693540402,
+          "model_attempts": [
+            {
+              "accepted_px": 9555,
+              "actual_h": 9998,
+              "actual_w": 9555,
+              "dim_check": "pass",
+              "requested_px": 9555
+            }
+          ],
+          "model_derived_px": 9998,
+          "painted_elements": 647,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9468987
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 10121,
+              "actual_w": 9340,
+              "dim_check": "mismatch",
+              "requested_px": 9340
+            },
+            {
+              "accepted_px": 4670,
+              "actual_h": 5060,
+              "actual_w": 4670,
+              "dim_check": "pass",
+              "requested_px": 4670
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10121,
+          "anno_over_model_derived_px": 122,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.030022981402693646,
+          "model_attempts": [
+            {
+              "accepted_px": 9340,
+              "actual_h": 9999,
+              "actual_w": 9340,
+              "dim_check": "pass",
+              "requested_px": 9340
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 373,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.02482835006334918
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.03945459588084508
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9560929
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 13575,
+              "actual_w": 10000,
+              "dim_check": "mismatch",
+              "requested_px": 10000
+            },
+            {
+              "accepted_px": 5000,
+              "actual_h": 6787,
+              "actual_w": 5000,
+              "dim_check": "pass",
+              "requested_px": 5000
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 13575,
+          "anno_over_model_derived_px": 5150,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.034168829226574104,
+          "model_attempts": [
+            {
+              "accepted_px": 10000,
+              "actual_h": 8425,
+              "actual_w": 10000,
+              "dim_check": "pass",
+              "requested_px": 10000
+            }
+          ],
+          "model_derived_px": 8425,
+          "painted_elements": 851,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.025775193798449877
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9594635
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 10305,
+              "actual_w": 9050,
+              "dim_check": "mismatch",
+              "requested_px": 9050
+            },
+            {
+              "accepted_px": 4525,
+              "actual_h": 5152,
+              "actual_w": 4525,
+              "dim_check": "pass",
+              "requested_px": 4525
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10305,
+          "anno_over_model_derived_px": 306,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.031119643887730124,
+          "model_attempts": [
+            {
+              "accepted_px": 9050,
+              "actual_h": 9999,
+              "actual_w": 9050,
+              "dim_check": "pass",
+              "requested_px": 9050
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 517,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9595813
+        },
+        {
+          "anno_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 10273,
+              "actual_w": 5697,
+              "dim_check": "mismatch",
+              "requested_px": 5697
+            },
+            {
+              "accepted_px": 2848,
+              "actual_h": 5135,
+              "actual_w": 2848,
+              "dim_check": "pass",
+              "requested_px": 2848
+            }
+          ],
+          "anno_faults": [
+            "annotation_lattice_mismatch",
+            "view_state_not_restored"
+          ],
+          "anno_first_derived_px": 10273,
+          "anno_over_model_derived_px": 274,
+          "capture_failure_reason": "annotation_lattice_mismatch",
+          "capture_faults": [
+            "view_state_not_restored"
+          ],
+          "capture_status": "annotation_failed",
+          "ceiling_px": 10000,
+          "co_sizing": null,
+          "model_achieved_fpp_ft": 0.03547034573674158,
+          "model_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 9999,
+              "actual_w": 5697,
+              "dim_check": "pass",
+              "requested_px": 5697
+            }
+          ],
+          "model_derived_px": 9999,
+          "painted_elements": 418,
+          "restore_faults": [
+            "view_state_not_restored"
+          ],
+          "state": "overrun",
+          "variant_record": {
+            "before": {
+              "reason": "AttributeError: 'ViewPlan' object has no attribute 'AnnotationCropActive'",
+              "state": "unavailable"
+            },
+            "crop_box_active": {
+              "state": "value",
+              "value": true
+            },
+            "offsets_ft": {
+              "Bottom": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Left": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Right": {
+                "state": "value",
+                "value": 0.08333333333333333
+              },
+              "Top": {
+                "state": "value",
+                "value": 0.08333333333333333
+              }
+            },
+            "read_back": {
+              "state": "value",
+              "value": true
+            },
+            "took_effect": true,
+            "variant": "annotation_crop_on"
+          },
+          "view_id": 9596211
+        }
+      ]
+    }
+  },
+  "schema": "vop.probe.lattice_overrun.v1",
+  "started_at": "2026-10-19T14:13:25",
+  "variants": [
+    "annotation_crop_on"
+  ],
+  "verdict": {
+    "annotation_crop_on": {
+      "content_lost": [],
+      "fits": [],
+      "other": [],
+      "overrun": [
+        4148625,
+        9468987,
+        9560929,
+        9594635,
+        9595813,
+        9596211
+      ],
+      "painted_delta_vs_as_is": {},
+      "restore_faults": {
+        "4148625": [
+          "view_state_not_restored"
+        ],
+        "9468987": [
+          "view_state_not_restored"
+        ],
+        "9560929": [
+          "view_state_not_restored"
+        ],
+        "9594635": [
+          "view_state_not_restored"
+        ],
+        "9595813": [
+          "view_state_not_restored"
+        ],
+        "9596211": [
+          "view_state_not_restored"
+        ]
+      },
+      "views": 6
+    }
+  },
+  "view_ids": [
+    4148625,
+    9468987,
+    9560929,
+    9594635,
+    9595813,
+    9596211
+  ]
+}

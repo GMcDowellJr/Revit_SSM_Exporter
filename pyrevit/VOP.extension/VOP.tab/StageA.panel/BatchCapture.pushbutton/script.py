@@ -194,7 +194,8 @@ def capture(doc, job):
 def recapture(doc, job):
     from vop_interwoven.recapture import run_recapture
     lists = {"runs": [{"run_dir": t["run_dir"], "run_id": t.get("run_id"),
-                       "recapture": t["view_ids"]} for t in job["recapture"]]}
+                       "recapture": t["view_ids"], "reason": t.get("reason")}
+                      for t in job["recapture"]]}
     out = run_recapture(doc, lists, _config(), batch_size=_int_or_none(_settings.get("batch_size")))
     return {"run_dirs": [r["run_dir"] for r in out["runs"] if not r.get("skipped")],
             "refused": out["refused"], "views_processed": out["views_processed"],

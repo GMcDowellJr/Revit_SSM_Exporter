@@ -16,6 +16,10 @@ with this fault. The capture raises it in two places, now one predicate
   ``_set_pixel_size_with_backoff`` produces when Revit rejects the
   PixelSize outright.
 
+The first is what the registered capture now re-sizes
+(``resolution_contract.co_sized_request``, its last test below); the second
+stays a fault.
+
 Each branch is run here through the real functions in the order the
 capture runs them: ``resolution_contract.frame_export_geometry`` sizes
 crop A, the annotation pass requests ``crop_px`` on the fitted axis,
@@ -258,31 +262,38 @@ def test_recorded_numbers_reproduce_the_outcome(view_id, run, model, anno_requir
         assert second[2] <= MAX_STAGE_A_AXIS_PX
 
 
+# The co-sized request of each failing 10-25 plan: RUN_..._SMALL_VIEWS.md
+# §1.4's table, recomputed by production with the measured axis bounded by +1
+# (the true extent may be up to a pixel more than the whole-pixel reading):
+# one pixel under the table on four plans, equal on two.
+CO_SIZED_1025 = {4148625: 7111, 9468987: 9235, 9560929: 9227, 9594635: 7365,
+                 9595813: 8781, 9596211: 5545}
+
+
 @pytest.mark.parametrize("view_id,run,model,anno_required,anno_attempts,fault", RECORDED)
-def test_one_lattice_for_both_passes_is_cap_axes_on_the_measured_annotation_extent(
+def test_one_lattice_for_both_passes_is_the_co_sized_request(
         view_id, run, model, anno_required, anno_attempts, fault):
-    """Question (3), the fix that holds: when the annotation export's first
-    attempt overruns the ceiling, re-size BOTH passes with cap_axes on the
-    model's request and the annotation's MEASURED derived axis, and
-    re-export both at that request. The lattice coarsens by the overrun
-    (3.5 % for LEVEL 1, 61 % for LEVEL 3) and the two passes share it; a
-    view whose annotation export fits the cap (every passing entry) keeps
-    its request unchanged, so nothing that captures today changes. The
-    arithmetic only: the re-export loop is not production (note §1.4)."""
-    from vop_interwoven.resolution_contract import cap_axes
-    first = anno_attempts[0]
-    resized = cap_axes(model[0], first[2], MAX_STAGE_A_AXIS_PX)
+    """The fix (fix(capture)!, stage_a_registered_capture's second attempt):
+    when the annotation export's first attempt overruns the ceiling, BOTH
+    passes are re-exported at ``resolution_contract.co_sized_request`` --
+    PRODUCTION's decision, run here on the eighteen recorded captures. Every
+    passing entry is ``not_needed`` (it keeps its request: nothing that
+    captures today changes); every failing one is re-sized so the annotation
+    lands under the ceiling, coarsening the lattice by the overrun."""
+    from vop_interwoven.resolution_contract import co_sized_request
+    attempts = [{"requested_px": a[0], "accepted_px": a[1], "actual_w": a[1],
+                 "actual_h": a[2],
+                 "dim_check": "pass" if max(a[1], a[2]) <= MAX_STAGE_A_AXIS_PX else "mismatch"}
+                for a in anno_attempts]
+    co = co_sized_request(model[0], model[1], attempts)
     if not fault:
-        assert resized["accepted_px"] == model[0] and resized["cap_applied"] is False
+        assert co["state"] == "not_needed", (view_id, run, co)
         return
-    assert resized["cap_applied"] is True and resized["accepted_px"] < model[0]
-    # Both passes at the resized request: the annotation's derived axis
-    # scales with its fitted one and lands at the ceiling.
-    # cap_axes floors the request, so the derived axis lands 1-2 px under.
-    anno_h = int(resized["accepted_px"] * first[2] / float(first[1]))
-    assert anno_h <= MAX_STAGE_A_AXIS_PX and MAX_STAGE_A_AXIS_PX - anno_h <= 2
+    assert co["state"] == "applies", (view_id, co)
+    assert co["fit_px"] == CO_SIZED_1025[view_id]
+    first = anno_attempts[0]
+    anno_h = int(co["fit_px"] * first[2] / float(first[1]))
+    assert anno_h <= MAX_STAGE_A_AXIS_PX and MAX_STAGE_A_AXIS_PX - anno_h <= 3
     assert cib.annotation_lattice_mismatch_faults(
-        resized["accepted_px"], resized["accepted_px"], "width",
-        resized["accepted_px"], resized["accepted_px"]) == []
-    coarsening = model[0] / float(resized["accepted_px"])
-    assert 1.0 < coarsening < 1.7, (view_id, coarsening)
+        co["fit_px"], co["fit_px"], "width", co["fit_px"], co["fit_px"]) == []
+    assert 1.0 < co["coarsening"] < 1.4, (view_id, co["coarsening"])

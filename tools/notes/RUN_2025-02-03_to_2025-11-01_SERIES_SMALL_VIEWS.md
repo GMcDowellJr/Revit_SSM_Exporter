@@ -268,6 +268,62 @@ change_passing_views_and_is_not_the_fix`).
   10-25 with the overrun and the halving pinned, six passing on 11-01 two
   of them with the annotation off the model's lattice under the cap).
 
+### 1.6 The probe and the fix (2026-10-19, branch `claude/quirky-meitner-d004g1`)
+
+- **Probe** (`f147884`, Analysis-Impact none): `tests/dynamo/
+  probe_stage_a_lattice_overrun.py` runs the six plans through the production
+  registered capture under `as_is`, `section_markers_hidden` and
+  `annotation_crop_on` (a probe-only switch applied after the model pass,
+  inside the group) and, on a build with the fix, `co_sized`. UNVERIFIED in
+  Revit; to be run on the 10-25 archive (tests/dynamo/PROBE_LATTICE_OVERRUN.md).
+- **Fix** (`43c23a3`, `fix(capture)!`): §1.4's co-sizing, made before the
+  probe has run, on these grounds (INFERENCE): hiding the markers removes
+  annotation the capture keeps on purpose, and an annotation crop hides
+  every annotation touching it, inside crop A too; co-sizing hides nothing
+  and changes no view that fits. The probe's `annotation_crop_on` row is
+  what would overturn the choice (RECAPTURE_WALL_TYPES_BP_LATTICE.md §1).
+  The registered capture runs marks..annotation pass as an attempt in a
+  nested group; after an overrun on the derived axis it re-runs it with both
+  passes and the ticks at `co_sized_request` -- `cap_axes(R, D + 1)`, one
+  pixel under §1.4's table on four plans: 7111, 9235, 9227, 7365, 8781,
+  5545. One retry; any other failure is not re-sized.
+- **Recapture** of the 40 view-runs: tools/notes/RECAPTURE_WALL_TYPES_BP_LATTICE.md.
+- **Probe result** (OBSERVED, probe `2026-10-19.1`, 2025-10-25 archive,
+  runs `20261019T1323`..`1349`, record in
+  `tools/notes/data/probe_lattice_overrun_20261019T132321/`):
+
+  | view | `as_is` first anno attempt | `section_markers_hidden` (hidden / past crop) | `co_sized` request, model / anno |
+  |---|---|---|---|
+  | 4148625 | 7476 x 10512, halved, refused | 7476 x 9999 = model (31 / 11) | 7111: 7111 x 9510 / 7111 x 9999 |
+  | 9468987 | 9555 x 10345 | 9555 x 9998 = model (29 / 11) | 9235: 9663 / 9998 |
+  | 9560929 | 9340 x 10121 | 9340 x 9999 = model (36 / 11) | 9227: 9879 / 9998 |
+  | 9594635 | 10000 x 13575 | 10000 x 8448, model 8425 (37 / 11) | 7365: 6205 / 9998 |
+  | 9595813 | 9050 x 10305 | 9050 x 9852, model 9999 (43 / 12) | 8781: 9701 / 9999 |
+  | 9596211 | 5697 x 10273 | 5697 x 9999 = model (30 / 10) | 5545: 9733 / 9999 |
+
+  `as_is` reproduces §1.2 to the pixel. Hiding the Views members brings the
+  annotation export back to the model's size on four plans and to 11-01's
+  figures on LEVEL 3 and LEVEL 4 (8448, 9852): **the section markers are the
+  overrun**, confirmed, at the cost of 29-43 painted elements per plan.
+  `co_sized`: all six `success`, the requests and the annotation's derived
+  axis exactly as predicted, painted counts equal to `as_is`, no restore
+  fault -- the nested group's rollback inside the capture's group held in
+  Revit, both attempts' ticks gone. **`annotation_crop_on` did not run**:
+  Revit 2025's ViewPlan has no `AnnotationCropActive`; the variant wrote a
+  Python attribute that read back True, the six exports came back at the
+  `as_is` size, and the failed before-read made `view_state_not_restored`
+  on all six (nothing in Revit had changed). Probe `2026-10-19.2` writes
+  VIEWER_ANNOTATION_CROP_ACTIVE and refuses a write it cannot read first;
+  its rerun (`20261019T1413`) ran the old capture code still loaded in
+  Dynamo and measured nothing new, so probe `.3` imports production afresh
+  and refuses a stale one. That variant is still unmeasured. The same AttributeError means
+  `revit/annotation.py`'s `getattr(view, 'AnnotationCropActive', False)`
+  has always read False on this host (its parameter fallback only runs on
+  an exception): pre-existing, outside the capture, not changed here.
+  The probe's config hash is `be3a80a1`, the series' `9400eaef`: Config
+  has gained fields since build 1.2.0, so a recaptured `views_core` row
+  carries the new hash under the run's old one.
+
 ## 2. Group B — views below the capture floor
 
 ### 2.1 The rules, and which each view trips

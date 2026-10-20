@@ -99,6 +99,27 @@ def load_run_meta(run_dir):
     return meta
 
 
+def check_run_dir_exists(entry):
+    """RecaptureRefused when a list entry's ``run_dir`` is not a directory.
+
+    ``run_dir`` is the path the run RECORDED (tools/find_recapture_views.py),
+    which a folder rename leaves stale (2026-10-19: KSRF/Hops_Interior_AR
+    renamed Hosp_Interior_AR, every run_meta still naming the old path). Never
+    a silent fallback: the refusal names both paths, and the list is what to
+    correct -- the runs stay as captured."""
+    run_dir = entry.get("run_dir")
+    if run_dir and os.path.isdir(run_dir):
+        return
+    scanned = entry.get("scanned_dir")
+    raise RecaptureRefused(
+        "the run directory {0!r} does not exist{1}; correct run_dir in the recapture "
+        "list (a renamed folder leaves the run's recorded path stale)".format(
+            run_dir, "" if not scanned else
+            " (the finder scanned it at {0!r}{1})".format(
+                scanned, ", which exists" if os.path.isdir(scanned) else ", which does not "
+                                                                         "exist either")))
+
+
 def recapture_plan(meta, view_ids, doc_title):
     """PURE. ``{"run_id", "as_of_date", "view_ids"}`` for a recapture of
     ``view_ids`` into the run ``meta`` describes, or RecaptureRefused:
@@ -285,6 +306,8 @@ def run_recapture(doc, lists, cfg, batch_size=None, reason=RECAPTURE_REASON, run
     time, in chunks of ``batch_size`` views, each chunk one call of
     ``run_vop_pipeline_streaming`` with ``recapture=`` the run's record.
 
+    Each entry's optional ``reason`` is stamped instead of ``reason``.
+
     Returns ``{"runs": [...], "views_processed", "views_failed",
     "annotation_passes_failed", "csv_rows_written", "view_summaries",
     "refused": [...]}``; a run that is refused (wrong document, unknown id,
@@ -305,13 +328,16 @@ def run_recapture(doc, lists, cfg, batch_size=None, reason=RECAPTURE_REASON, run
                                     "views": 0, "skipped": "nothing to recapture"})
             continue
         try:
+            check_run_dir_exists(entry)
             meta = load_run_meta(run_dir)
             plan = recapture_plan(meta, ids, doc_title)
         except RecaptureRefused as ex:
             summary["refused"].append({"run_dir": run_dir, "run_id": entry.get("run_id"),
                                        "reason": str(ex)})
             continue
-        record = recapture_record(meta, plan["view_ids"], reason=reason)
+        # A run entry may name its own reason (a list made for another
+        # defect than the rotated crop, e.g. annotation_lattice_mismatch).
+        record = recapture_record(meta, plan["view_ids"], reason=entry.get("reason") or reason)
         root = os.path.dirname(os.path.normpath(run_dir))
         run_summary = {"run_dir": run_dir, "run_id": plan["run_id"],
                        "captured_at": record["captured_at"], "views": len(plan["view_ids"]),

@@ -406,6 +406,42 @@ def test_run_recapture_continues_each_runs_identity_in_chunks(tmp_path):
     assert refused["run_id"] == "20261001T084840" and "Other.rvt" in refused["reason"]
 
 
+def test_a_run_entry_names_its_own_reason_and_the_default_stays(tmp_path):
+    root = tmp_path / "KSRF"
+    run_a = str(root / "2025-06-21__20261008T093539")
+    _write_meta(run_a)
+    calls = []
+
+    def runner(**kw):
+        calls.append(kw)
+        return {"view_summaries": [_summary(v) for v in kw["view_ids"]]}
+
+    doc = types.SimpleNamespace(Title="KSRF.rvt")
+    cfg = Config(enable_color_id_buffer_stage_a=True)
+    run_recapture(doc, {"runs": [{"run_dir": run_a, "recapture": [930011],
+                                  "reason": "annotation_lattice_mismatch"}]}, cfg, runner=runner)
+    run_recapture(doc, {"runs": [{"run_dir": run_a, "recapture": [930011]}]}, cfg,
+                  runner=runner)
+    assert [c["recapture"]["reason"] for c in calls] == [
+        "annotation_lattice_mismatch", "ticks_outside_crop_loop"]
+
+
+def test_run_recapture_refuses_a_stale_run_dir_naming_both_paths(tmp_path):
+    root = tmp_path / "KSRF"
+    renamed = str(root / "Hosp_Interior_AR" / "2025-10-25__20261012T122748")
+    _write_meta(renamed)
+    stale = renamed.replace("Hosp_Interior_AR", "Hops_Interior_AR")
+    calls = []
+    out = run_recapture(types.SimpleNamespace(Title="KSRF.rvt"),
+                        {"runs": [{"run_dir": stale, "scanned_dir": renamed,
+                                   "recapture": [930011]}]},
+                        Config(enable_color_id_buffer_stage_a=True),
+                        runner=lambda **kw: calls.append(kw))
+    (refused,) = out["refused"]
+    assert stale in refused["reason"] and renamed in refused["reason"]
+    assert "which exists" in refused["reason"] and calls == []
+
+
 def test_run_recapture_refuses_a_run_dir_without_run_meta(tmp_path):
     out = run_recapture(types.SimpleNamespace(Title="KSRF.rvt"),
                         {"runs": [{"run_dir": str(tmp_path), "run_id": "r", "recapture": [1]}]},
