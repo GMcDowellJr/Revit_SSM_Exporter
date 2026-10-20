@@ -18,6 +18,8 @@ a run in its own layout.
 | registered annotation | `<stem>_anno.registered.tiff/.json` | `<stem>_anno.reg.tiff/.json` |
 | roll-up | `grid_rollup.csv` / `.summary.json` | `grid_rollup_<d>.csv` / `.summary.json` |
 | kinds inventory | `kinds_inventory.csv` / `.json` | `kinds_inventory_<d>.csv` / `.json` |
+| element census | `element_census.csv` / `.summary.json` | `element_census_<d>.csv` / `.summary.json` |
+| element transitions | `element_transitions.csv` / `.summary.json` | `element_transitions_<d>.csv` / `.summary.json` |
 | run id | `YYYYMMDDTHHMMSS` | `YYYYMMDDTHHMM` |
 
 `<d>` is the run's file date: the thinrunner's tag when it was given one,
@@ -317,7 +319,9 @@ run's census and one pair, not the whole series.
    v1), names from `vop_interwoven/output_layout.py` (`census_names`):
    `element_census[_<d>].csv`, then `element_census[_<d>].summary.json`
    (written last, naming the CSV's sha256). `stage_a_analyze.py` runs it after
-   the roll-up and kinds inventory.
+   the roll-up and kinds inventory, then the driver (step 3) once per model
+   folder, so an analysed run gets its pair too; `--index-root <Exports>`
+   then rebuilds the runs index.
 2. **Pair**: a run against its predecessor -- the run with the previous as-of
    date (run_meta `date`) in the same model folder (the run folder's parent,
    `model_key` in the runs index); never run_id or folder order. Into the
