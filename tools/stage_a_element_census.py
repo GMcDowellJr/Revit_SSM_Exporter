@@ -82,15 +82,17 @@ OUTPUTS (2.0.0). Three steps, so adding a capture costs one run's census and
 one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
 
   * PER RUN, into the run's grid folder (``grid/`` in v2, ``analysis_grid/``
-    in v1; names ``output_layout.census_names``, v2 dated by ``file_date``):
-    ``element_census[_<d>].csv`` (the per-element columns above, plus
-    ``view_ids``), then ``element_census[_<d>].summary.json`` -- the run
+    in v1; names ``output_layout.census_names``, dated by ``file_date`` in
+    both layouts; an undated census an earlier 2.0.0 wrote is renamed, not
+    recomputed, by the driver):
+    ``element_census_<d>.csv`` (the per-element columns above, plus
+    ``view_ids``), then ``element_census_<d>.summary.json`` -- the run
     figures (the runs-CSV row without the transition columns), the measured
     and unmeasured view ids, refusals, the tool version, the CSV's sha256 and
     the sha256 of every input read (``census_inputs``) -- written LAST
     (CLAUDE.md, defect class 4). A refused run: a summary saying so, no CSV.
   * PAIR, into the later run's grid folder (``transitions_names``):
-    ``element_transitions[_<d>].csv``, one row per element key on either side
+    ``element_transitions_<d>.csv``, one row per element key on either side
     with its class, both sides' presence and the views that decided it, then
     the summary: counts per class (and ``_LINK``), common measured views, the
     host-id Jaccard, the predecessor's run_id / path / as-of date, both census
@@ -110,8 +112,7 @@ one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
 ``--out DIR`` with run arguments is the multi-run convenience, built on the
 same functions: ``<as_of_date>__<run_id>.elements.csv`` per run,
 ``element_census_runs.csv``, ``element_census_series.csv``, then
-``element_census_series.summary.json`` naming every CSV's sha256 (renamed in
-2.0.0 from ``element_census.summary.json``, now the v1 per-run name). The
+``element_census.summary.json`` naming every CSV's sha256 (as in 1.3.0). The
 series is otherwise BI's (tools/notes/ELEMENT_CENSUS_2025-02-03_to_2025-11-01.md
 section 8). An empty CSV cell is "not applicable", never 0. Columns are
 appended, never reordered.
@@ -182,8 +183,7 @@ TOOL_VERSION = "2.0.0"
 ELEMENTS_SUFFIX = ".elements.csv"
 RUNS_CSV = "element_census_runs.csv"
 SERIES_CSV = "element_census_series.csv"
-# 2.0.0: was element_census.summary.json, the v1 per-run summary's name now.
-SUMMARY_NAME = "element_census_series.summary.json"
+SUMMARY_NAME = "element_census.summary.json"
 
 SOURCES = ("HOST", "DWG", "LINK", "unrecorded")
 HOST_BUCKET = ("HOST", "DWG", "unrecorded")
@@ -954,6 +954,57 @@ def _unlink(path):
         Path(path).unlink()
 
 
+def _ours(rec, schema):
+    return isinstance(rec, dict) and rec.get("schema") == schema
+
+
+def remove_undated(files, step):
+    """Remove the undated census (``step`` "census") or transitions files an
+    earlier 2.0.0 wrote into the run's grid folder, now that their dated
+    names are written: only a summary of this tool's own schema, and the CSV
+    it names under the undated name. Anything else of that name is left."""
+    legacy_csv, legacy_summary = (output_layout.CENSUS_UNDATED if step == "census"
+                                  else output_layout.TRANSITIONS_UNDATED)
+    old = files.grid_dir / legacy_summary
+    current = files.census_summary if step == "census" else files.pair_summary
+    if legacy_summary == current or not old.is_file():
+        return False
+    rec, _why = _read_record(old)
+    if not _ours(rec, RUN_SCHEMA if step == "census" else PAIR_SCHEMA):
+        return False
+    old.unlink()
+    if rec.get("csv") == legacy_csv:
+        _unlink(files.grid_dir / legacy_csv)
+    return True
+
+
+def adopt_undated(files):
+    """Rename a run's undated census (an earlier 2.0.0's names) to its dated
+    names rather than recompute it: the CSV first, then the summary, now
+    naming the dated CSV, written to its dated name and the undated one
+    removed (so an interruption leaves an undated summary naming a missing
+    CSV, which is stale and recomputed -- never a dated summary without its
+    CSV). Only a current-version summary of this schema whose CSV is the one
+    it names is adopted. Returns the old summary name, or None. The pairs
+    that recorded the old summary's sha256 are then stale and recomputed."""
+    legacy_csv, legacy_summary = output_layout.CENSUS_UNDATED
+    old, new = files.grid_dir / legacy_summary, files.census_path("summary")
+    if old == new or new.exists() or not old.is_file():
+        return None
+    rec, _why = _read_record(old)
+    if rec is None or _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir):
+        return None
+    if rec.get("state") == "value":
+        if rec.get("csv") != legacy_csv:
+            return None
+        (files.grid_dir / legacy_csv).replace(files.census_path("csv"))
+        rec["csv"] = files.census_csv
+    rec["renamed_from"] = legacy_summary
+    _write_json(new, rec)
+    old.unlink()
+    return legacy_summary
+
+
 def write_run_census(files, inputs=None):
     """The census of one run, into its grid folder: the element CSV, then
     the summary naming its sha256 and the sha256 of every input (written
@@ -992,6 +1043,7 @@ def write_run_census(files, inputs=None):
         summary["csv"] = csv_path.name
         summary["csv_sha256"] = _write_csv(csv_path, ELEMENT_COLUMNS, element_rows(run))
     _write_json(summary_path, summary)
+    remove_undated(files, "census")
     return summary
 
 
@@ -1241,6 +1293,7 @@ def write_pair(cur, choice):
         summary["csv"] = csv_path.name
         summary["csv_sha256"] = _write_csv(csv_path, TRANSITION_COLUMNS, rows)
     _write_json(summary_path, summary)
+    remove_undated(cur, "pair")
     return summary
 
 
@@ -1269,6 +1322,9 @@ def drive(root, progress=None):
     all_files.sort(key=lambda x: (str(x.run_dir.parent), x.as_of_date or "", x.name))
     for n, f in enumerate(all_files, 1):
         started = time.time()
+        adopted = adopt_undated(f)
+        if adopted:
+            say("        renamed {0} -> {1} in {2}".format(adopted, f.census_summary, f.name))
         inputs = census_inputs(f)
         why = census_staleness(f, inputs)
         if why:

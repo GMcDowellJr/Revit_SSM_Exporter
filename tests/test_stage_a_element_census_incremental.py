@@ -305,6 +305,7 @@ def test_the_summaries_name_the_csvs_written(tmp_path):
         assert grid.sha256_file(f.run_dir / rel) == sha, rel
     names = sorted(rec["inputs"])
     assert "run_meta.json" in names and "color_id_buffer/V_1.json" in names
+    assert f.census_csv == "element_census_2025-02-01.csv"
     assert "analysis_grid/V_1.grid.json" in names and "analysis_grid/V_1.grid.npz" in names
     assert "color_id_buffer/V_1_anno.registered.json" in names
 
@@ -339,7 +340,8 @@ def test_a_v1_and_a_v2_run_with_one_content_give_one_row_set(tmp_path):
         assert census.main([str(run)]) == 0
     assert (v2 / "grid" / "element_census_2025-01-01.csv").is_file()
     assert (v2 / "grid" / "element_census_2025-01-01.summary.json").is_file()
-    assert (v1 / "analysis_grid" / "element_census.csv").is_file()
+    assert (v1 / "analysis_grid" / "element_census_2025-01-01.csv").is_file()   # dated in v1 too
+    assert not (v1 / "analysis_grid" / "element_census.csv").exists()
     s1, r1 = _census(v1)
     s2, r2 = _census(v2)
 
@@ -360,7 +362,7 @@ def test_a_mixed_v1_v2_model_folder_pairs_by_date(tmp_path):
     _view(b, 1, eid=8)
     census.drive(model)
     assert (b / "grid" / "element_transitions_2025-02-01.csv").is_file()
-    assert (a / "analysis_grid" / "element_transitions.summary.json").is_file()
+    assert (a / "analysis_grid" / "element_transitions_2025-01-01.summary.json").is_file()
     summary, rows = _pair(b)
     assert summary["predecessor"]["run_id"] == "RUN_A"
     assert (rows["host:{0}".format(EID)]["class"], rows["host:8"]["class"]) == (
@@ -369,7 +371,8 @@ def test_a_mixed_v1_v2_model_folder_pairs_by_date(tmp_path):
 
 def test_the_names_are_the_layouts(tmp_path):
     assert ol.census_names(ol.V1, "x") == (
-        "element_census.csv", "element_census.summary.json")
+        "element_census_x.csv", "element_census_x.summary.json")
+    assert ol.census_names(ol.V2, "x") == ol.census_names(ol.V1, "x")
     assert ol.transitions_names(ol.V2, "2025-07-02") == (
         "element_transitions_2025-07-02.csv", "element_transitions_2025-07-02.summary.json")
 
@@ -387,15 +390,15 @@ def test_the_runs_index_names_each_runs_census_and_transitions(tmp_path):
     c = _dated_run(model, "2025-03-01", "RUN_C")
     _view(c, 1)
     census.drive(model)
-    (c / "analysis_grid" / "element_census.csv").write_text("tampered\n")
+    (c / "analysis_grid" / "element_census_2025-03-01.csv").write_text("tampered\n")
     rows, _j, _s = idx.build_index(root)
     by = dict((r["run_id"], r) for r in rows)
     ra, rb, rc = by["RUN_A"], by["RUN_B"], by["RUN_C"]
     assert (ra["census_state"], ra["census_csv_path_rel"]) == (
-        "value", "KSRF/Model/2025-01-01__RUN_A/analysis_grid/element_census.csv")
+        "value", "KSRF/Model/2025-01-01__RUN_A/analysis_grid/element_census_2025-01-01.csv")
     assert (ra["transitions_state"], ra["transitions_csv_path_rel"]) == ("no_predecessor", "")
     assert ra["transitions_summary_path_rel"].endswith(
-        "analysis_grid/element_transitions.summary.json")
+        "analysis_grid/element_transitions_2025-01-01.summary.json")
     assert (rb["census_state"], rb["transitions_state"]) == ("value", "value")
     assert rb["census_csv_path_rel"].endswith("grid/element_census_2025-02-01.csv")
     assert rb["transitions_csv_path_rel"].endswith("grid/element_transitions_2025-02-01.csv")
@@ -450,3 +453,55 @@ def test_first_last_seen_and_enter_leave_from_the_files_are_the_series_csv(tmp_p
     hows = set(s["first_how"] for s in series.values())
     assert hows >= {"series_start", "created", "new_view"}
     assert "unmeasured" in set(s["last_how"] for s in series.values())
+
+
+# --- 7. undated files an earlier 2.0.0 wrote ----------------------------------------------
+
+def _undate(run):
+    """Put a run's census and transitions back under the undated names an
+    earlier 2.0.0 wrote, the summary naming the undated CSV."""
+    f = _files(run)
+    for (csv_new, sum_new), (csv_old, sum_old) in (
+            ((f.census_csv, f.census_summary), ol.CENSUS_UNDATED),
+            ((f.pair_csv, f.pair_summary), ol.TRANSITIONS_UNDATED)):
+        rec = json.loads((f.grid_dir / sum_new).read_text())
+        if rec.get("csv"):
+            (f.grid_dir / csv_new).rename(f.grid_dir / csv_old)
+            rec["csv"] = csv_old
+        (f.grid_dir / sum_old).write_text(json.dumps(rec))
+        (f.grid_dir / sum_new).unlink()
+
+
+def test_an_undated_census_is_renamed_not_recomputed_and_its_pairs_are(tmp_path):
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    before = dict((r, _census(r)[1]) for r in (a, b, c))
+    for run in (a, b, c):
+        _undate(run)
+    actions = census.drive(model)
+    assert _computed(actions) == [("pair", a.name), ("pair", b.name), ("pair", c.name)]
+    for run in (a, b, c):
+        g = _files(run).grid_dir
+        assert sorted(p.name for p in g.glob("element_*")) == sorted(
+            [_files(run).census_csv, _files(run).census_summary, _files(run).pair_summary]
+            + ([] if run == a else [_files(run).pair_csv]))
+        rec, rows = _census(run)
+        assert rows == before[run] and rec["csv"] == _files(run).census_csv
+        assert rec["csv_sha256"] == grid.sha256_file(_files(run).census_path("csv"))
+        assert rec["renamed_from"] == ol.CENSUS_UNDATED[1]
+    assert _pair(c)[0]["predecessor"]["run_id"] == "RUN_B"
+    assert _computed(census.drive(model)) == []                       # then fresh
+
+
+def test_an_undated_summary_that_is_not_this_census_is_left_alone(tmp_path):
+    """The 1.x series summary had the undated v1 name: not adopted, not
+    removed. Control: the run's own census is computed beside it."""
+    model = _model(tmp_path)
+    a = _dated_run(model, "2025-01-01", "RUN_A")
+    _view(a, 1)
+    old = _grid_dir(a) / ol.CENSUS_UNDATED[1]
+    old.write_text(json.dumps({"schema": census.SCHEMA, "csv_sha256": {}}))
+    actions = census.drive(model)
+    assert ("census", a.name) in _computed(actions)
+    assert old.is_file() and _census(a)[0]["state"] == "value"

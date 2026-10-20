@@ -18,8 +18,8 @@ a run in its own layout.
 | registered annotation | `<stem>_anno.registered.tiff/.json` | `<stem>_anno.reg.tiff/.json` |
 | roll-up | `grid_rollup.csv` / `.summary.json` | `grid_rollup_<d>.csv` / `.summary.json` |
 | kinds inventory | `kinds_inventory.csv` / `.json` | `kinds_inventory_<d>.csv` / `.json` |
-| element census | `element_census.csv` / `.summary.json` | `element_census_<d>.csv` / `.summary.json` |
-| element transitions | `element_transitions.csv` / `.summary.json` | `element_transitions_<d>.csv` / `.summary.json` |
+| element census | `element_census_<d>.csv` / `.summary.json` (dated in v1 too) | `element_census_<d>.csv` / `.summary.json` |
+| element transitions | `element_transitions_<d>.csv` / `.summary.json` (dated in v1 too) | `element_transitions_<d>.csv` / `.summary.json` |
 | run id | `YYYYMMDDTHHMMSS` | `YYYYMMDDTHHMM` |
 
 `<d>` is the run's file date: the thinrunner's tag when it was given one,
@@ -316,8 +316,9 @@ run figure, `link_category_cells_ink`.
 run's census and one pair, not the whole series.
 
 1. **Per run**, into the run's grid folder (`grid/` in v2, `analysis_grid/` in
-   v1), names from `vop_interwoven/output_layout.py` (`census_names`):
-   `element_census[_<d>].csv`, then `element_census[_<d>].summary.json`
+   v1), names from `vop_interwoven/output_layout.py` (`census_names`, dated
+   in both layouts): `element_census_<d>.csv`, then
+   `element_census_<d>.summary.json`
    (written last, naming the CSV's sha256). `stage_a_analyze.py` runs it after
    the roll-up and kinds inventory, then the driver (step 3) once per model
    folder, so an analysed run gets its pair too; `--index-root <Exports>`
@@ -325,15 +326,17 @@ run's census and one pair, not the whole series.
 2. **Pair**: a run against its predecessor -- the run with the previous as-of
    date (run_meta `date`) in the same model folder (the run folder's parent,
    `model_key` in the runs index); never run_id or folder order. Into the
-   run's grid folder (`transitions_names`): `element_transitions[_<d>].csv`,
-   then `element_transitions[_<d>].summary.json`. Read from the two per-run
+   run's grid folder (`transitions_names`): `element_transitions_<d>.csv`,
+   then `element_transitions_<d>.summary.json`. Read from the two per-run
    census FILES, through the same `classify` / `transitions` /
    `host_id_overlap` the series uses.
 3. **Driver**: `--root <model folder>` walks the runs (the runs index's own
    walk) and computes only what is missing or stale, printing what it did and
-   why.
+   why. A census an earlier 2.0.0 wrote under the undated names
+   (`element_census.csv`) is renamed to the dated ones, not recomputed; its
+   pairs are recomputed and the undated transitions files removed.
 
-**Per element** (`element_census[_<d>].csv`): views collected and with
+**Per element** (`element_census_<d>.csv`): views collected and with
 pixels; px, ink px, cells with any pixel, cells with ink, summed over views,
 each through `stage_a_kinds._key_sums` (the roll-up's reader); the first
 appearance (the view where it has the most ink cells, ties to the lowest view
@@ -342,7 +345,7 @@ element and a created one can be matched on category, place and size;
 (2.0.0, appended) `view_ids`, the views it was collected in, `;`-separated in
 view-id order -- what the pair step classifies on.
 
-**Per run** (`element_census[_<d>].summary.json`, `figures`): distinct
+**Per run** (`element_census_<d>.summary.json`, `figures`): distinct
 elements by source, cells per element, the first-appearance share, the
 views-per-element distribution, the grid's own occupancy model cells summed
 over measured views (the per-view figure); the measured and unmeasured view
@@ -352,7 +355,7 @@ registration record, grid json and grid npz), so a recapture makes it stale.
 TIFFs are not hashed (the census never reads one; every writer that replaces
 one rewrites a record that names its hash -- a declared limit).
 
-**Per pair** (`element_transitions[_<d>].csv`): one row per element key on
+**Per pair** (`element_transitions_<d>.csv`): one row per element key on
 either side, with `class`, `in_prev` / `in_cur` and `deciding_view_ids`, the
 views that decided the class (none for `persisted`). An element is
 `persisted` (seen in both), or, from the views it was in on the side that saw
@@ -388,8 +391,10 @@ python tools/stage_a_element_census.py <run> <run> ... --out census/
 The `--out` call is the multi-run convenience, built on the same functions:
 the per-run element CSVs (`<as_of_date>__<run_id>.elements.csv`),
 `element_census_runs.csv` (with the transition columns), and
-`element_census_series.csv`, then `element_census_series.summary.json`
-(2.0.0: renamed from `element_census.summary.json`, now the v1 per-run name).
+`element_census_series.csv`, then `element_census.summary.json` (as in
+1.3.0). It recomputes every run's census in memory each time and never
+reads or writes the per-run files, so it costs the whole series (~45 min for
+44 runs); `--root` on an up-to-date tree only hashes inputs.
 The series is otherwise BI's: see "How BI builds the series" in
 `tools/notes/ELEMENT_CENSUS_2025-02-03_to_2025-11-01.md`. The BI reads every
 census and transitions file through `stage_a_runs_index.py`
@@ -554,8 +559,8 @@ reported in `*_reason`. `n_runs_same_model_as_of` is empty for a run with no
 | consistency | `chk_folder_date_eq_as_of`, `chk_folder_run_id_eq_run_meta`, `chk_rollup_run_id_eq_run_meta` (the summary's run ids are exactly this run's), `chk_kinds_class_map_eq_rollup` | `true` / `false`, empty when not computable |
 | group | `n_runs_same_model_as_of`, `n_config_hash_in_model` (distinct non-empty hashes) | across rows |
 | run_meta | `run_meta_unavailable` (JSON: field -> reason; empty when none) | `run_meta.json` |
-| census (1.3.0, appended) | `census_state` (`value` \| `refused` \| `absent` \| `unreadable` \| `csv_mismatch`), `census_reason`, `census_csv_path_rel` (empty unless the CSV is the one the summary names), `census_summary_path_rel` | `element_census.summary.json` (`element_census_<d>.summary.json` in a v2 run) in the run's grid folder |
-| transitions (1.3.0, appended) | `transitions_state` (as census, plus `no_predecessor`), `transitions_reason`, `transitions_csv_path_rel`, `transitions_summary_path_rel` | `element_transitions[_<d>].summary.json`, same folder |
+| census (1.3.0, appended) | `census_state` (`value` \| `refused` \| `absent` \| `unreadable` \| `csv_mismatch`), `census_reason`, `census_csv_path_rel` (empty unless the CSV is the one the summary names), `census_summary_path_rel` | `element_census_<d>.summary.json` in the run's grid folder, either layout |
+| transitions (1.3.0, appended) | `transitions_state` (as census, plus `no_predecessor`), `transitions_reason`, `transitions_csv_path_rel`, `transitions_summary_path_rel` | `element_transitions_<d>.summary.json`, same folder |
 
 The run_meta keys each identity column is read from:
 

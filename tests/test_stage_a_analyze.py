@@ -43,9 +43,9 @@ def test_one_call_registers_grids_derives_inventories_and_rolls_up(tmp_path):
     assert timing["run_id"] == "RUN_A"
     assert sorted(v["view_name"] for v in timing["views"]) == ["V 1", "V 2"]
     assert (run / "views_timing_2026-10-07.csv").is_file()
-    census_rec = json.loads((out / "element_census.summary.json").read_text())
+    census_rec = json.loads((out / "element_census_2026-10-07.summary.json").read_text())
     assert (census_rec["state"], census_rec["figures"]["views_measured"]) == ("value", 2)
-    assert census_rec["csv_sha256"] == kinds.sha256_file(out / "element_census.csv")
+    assert census_rec["csv_sha256"] == kinds.sha256_file(out / "element_census_2026-10-07.csv")
 
 
 def test_a_refused_view_does_not_stop_the_others(tmp_path):
@@ -115,14 +115,14 @@ def test_a_new_run_gets_its_pair_against_the_run_analysed_before_it(tmp_path):
     a = _run(model, "2026-10-07__RUN_A", "RUN_A")
     _capture(a, 1, register=False, gridded=False)
     assert analyze.main([str(a)]) == 0
-    first = json.loads((a / "analysis_grid" / "element_transitions.summary.json").read_text())
+    first = json.loads((a / "analysis_grid" / "element_transitions_2026-10-07.summary.json").read_text())
     assert (first["state"], first["predecessor"]) == ("no_predecessor", None)
     b = _run(model, "2026-10-14__RUN_B", "RUN_B", date="2026-10-14")
     _capture(b, 1, register=False, gridded=False)
     code, results = analyze.analyze([b])
     assert code == 0
     assert [r["target"] for r in results if r["stage"] == "pairs"] == [str(model.resolve())]
-    pair = json.loads((b / "analysis_grid" / "element_transitions.summary.json").read_text())
+    pair = json.loads((b / "analysis_grid" / "element_transitions_2026-10-14.summary.json").read_text())
     assert (pair["state"], pair["predecessor"]["run_id"]) == ("value", "RUN_A")
     assert pair["counts"]["persisted"] == 1
     assert pair["csv_sha256"] == kinds.sha256_file(b / "analysis_grid" / pair["csv"])

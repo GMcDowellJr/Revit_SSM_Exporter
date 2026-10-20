@@ -11,7 +11,7 @@ Then, across all runs:
   4. inventory  -- stage_a_kinds inventory
   5. rollup     -- stage_a_grid_rollup
 Then, per run again:
-  6. census     -- stage_a_element_census on the run alone: element_census[_<d>].csv
+  6. census     -- stage_a_element_census on the run alone: element_census_<d>.csv
                    and .summary.json in the run's grid folder
 Then, once per model folder (each run folder's parent):
   7. pairs      -- stage_a_element_census --root <model folder>: the transitions of
