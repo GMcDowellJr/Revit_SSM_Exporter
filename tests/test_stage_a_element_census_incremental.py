@@ -675,3 +675,20 @@ def test_declared_limit_a_same_size_tiff_with_its_mtime_restored_is_not_seen(tmp
     tiff.write_bytes(bytes(data))
     os.utime(str(tiff), ns=(st.st_atime_ns, st.st_mtime_ns))
     assert _computed(census.drive(model)) == []
+
+
+def test_a_tiff_that_cannot_be_found_is_an_input_of_its_own(tmp_path):
+    """The resolver's failure is recorded, not discarded: a TIFF that goes
+    missing makes the census stale and the summary says which and why."""
+    model = _model(tmp_path)
+    _a, b, _c = _three(model)
+    census.drive(model)
+    tiff = _capture_dir(b) / "V_1.tiff"
+    tiff.unlink()
+    actions = census.drive(model)
+    assert ("census", b.name) in _computed(actions)
+    rec = _census(b)[0]
+    assert "color_id_buffer/V_1.tiff" not in rec["inputs"]
+    assert "FileNotFoundError" in rec["inputs"]["unresolved: model TIFF of V_1.json"]
+    clean = _census(model / "2025-01-01__RUN_A")[0]                  # control
+    assert not [k for k in clean["inputs"] if k.startswith("unresolved: ")]

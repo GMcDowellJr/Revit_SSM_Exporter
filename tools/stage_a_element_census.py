@@ -947,25 +947,26 @@ def _rel(path, base):
 
 
 def _tiffs(sidecar, reg_path):
-    """The model TIFF and the registered annotation TIFF of one view, found
-    by the resolvers the roll-up's staleness check uses
-    (``stage_a_grid_rollup.staleness``), which hashes both: a TIFF swapped
-    under an unchanged record turns the view ``grid_stale`` and so changes
-    the census. One that cannot be resolved is left out (its absence is then
-    a removed input)."""
-    found = []
+    """``(tiffs, unresolved)`` for one view: the model TIFF and the
+    registered annotation TIFF, found by the resolvers the roll-up's
+    staleness check uses (``stage_a_grid_rollup.staleness``), which hashes
+    both -- a TIFF swapped under an unchanged record turns the view
+    ``grid_stale`` and so changes the census. ``unresolved`` is ``{label:
+    reason}`` for one that cannot be found: recorded as an input of its own,
+    so a TIFF that goes missing or comes back makes the census stale."""
+    found, unresolved = [], {}
     try:
         found.append(dsc._resolve_tiff_path(sidecar, _load_json(sidecar)))
-    except (OSError, ValueError, AttributeError):
-        pass
+    except (OSError, ValueError, AttributeError) as ex:
+        unresolved["model TIFF of " + sidecar.name] = _err(ex)
     if Path(reg_path).is_file():
         try:
             found.append(grid._resolve_recorded(_load_json(reg_path).get("registered_tiff"),
                                                 Path(reg_path).parent,
                                                 "the registered annotation TIFF"))
-        except (OSError, ValueError, AttributeError, grid.GridRefusal):
-            pass
-    return found
+        except (OSError, ValueError, AttributeError, grid.GridRefusal) as ex:
+            unresolved["registered TIFF of " + Path(reg_path).name] = _err(ex)
+    return found, unresolved
 
 
 def _stat(path):
@@ -991,7 +992,7 @@ def census_inputs(files, previous=None):
     always hashed."""
     prev_inputs = (previous or {}).get("inputs") or {}
     prev_stats = (previous or {}).get("input_stats") or {}
-    paths, tiffs = set(), set()
+    paths, tiffs, unresolved = set(), set(), {}
     paths |= set(output_layout.run_meta_candidates(files.run_dir))
     paths |= set(output_layout.run_meta_candidates(files.folder))
     paths |= set(str(p) for p in files.run_dir.glob("views_core_*.csv"))
@@ -1003,7 +1004,9 @@ def census_inputs(files, previous=None):
                       files.grid_dir / (sidecar.stem + ".grid.npz")):
             if Path(extra).is_file():
                 paths.add(str(extra))
-        tiffs |= set(str(t) for t in _tiffs(sidecar, reg_path) if Path(t).is_file())
+        found, missing = _tiffs(sidecar, reg_path)
+        tiffs |= set(str(t) for t in found if Path(t).is_file())
+        unresolved.update(missing)
     inputs, stats = {}, {}
     for p in sorted(paths):
         inputs[_rel(p, files.run_dir)] = grid.sha256_file(p)
@@ -1014,6 +1017,9 @@ def census_inputs(files, previous=None):
             inputs[rel] = prev_inputs[rel]
         else:
             inputs[rel] = grid.sha256_file(p)
+    for label, reason in sorted(unresolved.items()):
+        # Not a path: what was looked for, and why it was not found.
+        inputs["unresolved: " + label] = reason
     return inputs, stats
 
 
