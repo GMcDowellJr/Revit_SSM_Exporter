@@ -94,7 +94,8 @@ one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
   * PAIR, into the later run's grid folder (``transitions_names``):
     ``element_transitions_<d>.csv``, one row per element key on either side
     with its class, both sides' presence and the views that decided it, then
-    the summary: counts per class (and ``_LINK``), common measured views, the
+    the summary: counts per class (and ``_LINK``; from 2.1.0 the
+    replace-in-place split of created / gone), common measured views, the
     host-id Jaccard, the predecessor's run_id / path / as-of date, both census
     files' sha256. The predecessor is the run with the previous as-of date in
     the same model folder (``predecessors``), never run_id or folder order.
@@ -146,6 +147,35 @@ created in the next can be matched on category, place and size (the 44-run
 series: 30-50 % of a week's gone and created match on category and size
 alone, with no position to tell replace-in-place from new modeling).
 
+2.1.0 (pair outputs only; the per-run censuses are unchanged and stay
+current): the pair step pairs replace-in-place ``gone`` / ``created``
+elements (``replace_pairs``), the rule the Power BI summarizer applied in
+Power Query, now fixed per pair because it is a function of the two census
+files ``pair_identity`` hashes. Only ``gone`` and ``created`` rows take part
+(never ``unmeasured_*``, ``new_view``, ``view_dropped``). The key is the
+category plus the bbox extent and centre as the census writes them (the
+values ``_bbox`` rounds to 1e-6 ft; a gone element's from the predecessor's
+census, a created one's from the run's own), compared EXACTLY: no tolerance
+has been measured. An element with no bbox value (``bbox_state`` not
+``value``) or no category is never paired. One-to-one: per key,
+min(n_gone, n_created) are paired, each side taken in ``sorted()`` order of
+element_key (the counts do not depend on that order; which elements are
+paired within a tie does). ``source`` is not in the key, so a LINK element
+can pair with a host one: its ``bbox_3d`` is host-space, as a host
+element's is. The transitions CSV appends ``replaced`` (``true``/``false``
+on created and gone rows, blank otherwise) and ``replaced_with`` (the
+partner's element_key); the pair summary's ``counts`` and the ``--out`` runs
+CSV append ``created_replaced``, ``created_new``, ``gone_replaced``,
+``gone_removed`` and their ``_LINK`` splits (each element under its own
+source), checked by ``check_replace_counts``: new + replaced == created,
+removed + replaced == gone, and created_replaced == gone_replaced -- per
+split up to the pairs that cross LINK / not-LINK, which the summary records
+as ``replace_pairing.cross_source_pairs``. Versions are now per step:
+``CENSUS_VERSION`` (2.0.0) and ``PAIR_VERSION`` (2.1.0), recorded as
+``census_version`` / ``pair_version``; ``_version_check`` compares a summary
+with its own step's (a 2.0.0 summary's ``tool_version`` read as both), so
+this change recomputes every pair and no census.
+
 Exit, ``--root``: 0 nothing refused, 1 a census or pair refused, 2 no run
 found. Runs without ``--out``: 0 every view measured, 1 a view unmeasured, 2
 a run refused. ``--out``: 0 when no run is refused and every requested view
@@ -178,7 +208,14 @@ from vop_interwoven import output_layout  # noqa: E402
 SCHEMA = "vop.stage_a.element_census.v1"
 RUN_SCHEMA = "vop.stage_a.element_census.run.v1"
 PAIR_SCHEMA = "vop.stage_a.element_transitions.v1"
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = "2.1.0"
+# The version of each step's OUTPUTS, which is what makes a file on disk
+# stale (``_version_check``). A change to one step bumps that step's version
+# only: 2.1.0 changed the pair outputs, and the per-run censuses (minutes
+# each from the grids) stay current at 2.0.0. A summary written before these
+# were split records only ``tool_version``, read as the output version.
+CENSUS_VERSION = "2.0.0"
+PAIR_VERSION = "2.1.0"
 
 # The multi-run --out convenience (one folder, every run).
 ELEMENTS_SUFFIX = ".elements.csv"
@@ -194,6 +231,9 @@ ENTER = ("series_start", "created", "unmeasured", "new_view")
 LEAVE = ("series_end", "gone", "unmeasured", "view_dropped")
 TRANSITIONS = ("persisted", "created", "gone", "unmeasured_in", "unmeasured_out",
                "new_view", "view_dropped")
+# 2.1.0: the replace-in-place split of ``created`` and ``gone``
+# (``replace_pairs``), counted with ``_LINK`` splits as ``TRANSITIONS`` are.
+REPLACE_COUNTS = ("created_replaced", "created_new", "gone_replaced", "gone_removed")
 
 ELEMENT_COLUMNS = [
     "run_id", "as_of_date", "element_key", "source", "element_id", "link_inst_id",
@@ -224,16 +264,26 @@ RUN_COLUMNS = (
     + ["anno_cells_views"]
     # 1.3.0: appended. The run's document title, so a series that mixes
     # models (element ids are per model) shows it.
-    + ["doc_title"])
+    + ["doc_title"]
+    # 2.1.0: appended. Pair figures: created / gone split by replace_pairs.
+    + list(REPLACE_COUNTS) + ["{0}_LINK".format(c) for c in REPLACE_COUNTS])
 # The run-level figures a per-run census summary carries: the runs-CSV row
 # without the columns that compare a run with its predecessor.
 PAIR_RUN_COLUMNS = (["prev_as_of_date", "common_measured_views",
                      "host_id_jaccard_common_views"]
-                    + [t for t in TRANSITIONS] + ["{0}_LINK".format(t) for t in TRANSITIONS])
+                    + [t for t in TRANSITIONS] + ["{0}_LINK".format(t) for t in TRANSITIONS]
+                    + list(REPLACE_COUNTS) + ["{0}_LINK".format(c) for c in REPLACE_COUNTS])
 RUN_FIGURE_COLUMNS = [c for c in RUN_COLUMNS if c not in PAIR_RUN_COLUMNS]
+# The element CSV's bbox, in the order ``_bbox`` returns it.
+BBOX_COLUMNS = ("bbox_dx_ft", "bbox_dy_ft", "bbox_dz_ft", "bbox_cx_ft", "bbox_cy_ft",
+                "bbox_cz_ft")
 TRANSITION_COLUMNS = [
     "run_id", "as_of_date", "prev_run_id", "prev_as_of_date", "element_key", "source",
     "category", "class", "in_prev", "in_cur", "deciding_view_ids",
+    # 2.1.0: appended. On created and gone rows: whether replace_pairs paired
+    # the element, and the element_key it was paired with on the other side.
+    # Blank on every other class.
+    "replaced", "replaced_with",
 ]
 SERIES_COLUMNS = [
     "element_key", "source", "category", "first_as_of_date", "first_run_id",
@@ -713,20 +763,112 @@ ENTER_OF = {"unmeasured_in": "unmeasured", "created": "created", "new_view": "ne
 LEAVE_OF = {"unmeasured_out": "unmeasured", "gone": "gone", "view_dropped": "view_dropped"}
 
 
+def _box_key(element):
+    """An element's replace-in-place match key: its category and bbox
+    extent and centre (``dx, dy, dz, cx, cy, cz``) as the census writes them
+    (``_bbox`` rounds to 1e-6 ft), compared exactly. None -- never paired --
+    when its bbox is not available (``bbox_state`` not ``value``) or its
+    category is None. ``source`` is not part of the key."""
+    box = element.get("bbox")
+    if (element.get("bbox_state") != shapes.VALUE or element.get("category") is None
+            or box is None or len(box) != 6 or any(v is None for v in box)):
+        return None
+    return (element["category"],) + tuple(float(v) for v in box)
+
+
+REPLACE_RULE = ("gone and created rows only; key = category + bbox extent (dx, dy, dz) + "
+                "bbox centre (cx, cy, cz) as the census writes them, exact; no bbox value "
+                "or no category: never paired; one-to-one, min(n_gone, n_created) per "
+                "key, each side in sorted() order of element_key; source not in the key")
+
+
+def replace_pairs(prev, cur, classes):
+    """``{gone element_key: created element_key}``: the replace-in-place
+    pairing of one pair of runs, the rule the BI summarizer applied before
+    2.1.0. Only ``gone`` and ``created`` rows of ``classes`` (``classify``)
+    take part: a gone element by its box in ``prev``, a created one by its
+    box in ``cur`` (``_box_key``). Within one key, min(n_gone, n_created) are
+    paired one-to-one, each side taken in ``sorted()`` order of element_key:
+    the i-th gone with the i-th created. The counts do not depend on that
+    order; which elements are paired within a tie does."""
+    sides = {"gone": {}, "created": {}}
+    for key in sorted(classes):
+        word = classes[key]["word"]
+        if word not in sides:
+            continue
+        box = _box_key((prev if word == "gone" else cur)["elements"][key])
+        if box is not None:
+            sides[word].setdefault(box, []).append(key)
+    pairs = {}
+    for box, gone in sides["gone"].items():
+        for g, c in zip(gone, sides["created"].get(box, ())):
+            pairs[g] = c
+    return pairs
+
+
+def replace_counts(classes, pairs):
+    """``(counts, cross)``: ``REPLACE_COUNTS`` and their ``_LINK`` splits,
+    each element counted under its OWN source; and the pairs whose two sides
+    are not both LINK or both not, ``{"gone_LINK": n, "created_LINK": n}`` by
+    the side that is LINK. Checked by ``check_replace_counts``."""
+    sfx = dict((k, "_LINK" if r["source"] == "LINK" else "") for k, r in classes.items())
+    counts = dict(("{0}{1}".format(c, s), 0) for c in REPLACE_COUNTS for s in ("", "_LINK"))
+    created = set(pairs.values())
+    for key, rec in classes.items():
+        if rec["word"] == "created":
+            counts[("created_replaced" if key in created else "created_new") + sfx[key]] += 1
+        elif rec["word"] == "gone":
+            counts[("gone_replaced" if key in pairs else "gone_removed") + sfx[key]] += 1
+    cross = {"gone_LINK": 0, "created_LINK": 0}
+    for g, c in pairs.items():
+        if sfx[g] != sfx[c]:
+            cross["gone_LINK" if sfx[g] else "created_LINK"] += 1
+    return counts, cross
+
+
+def check_replace_counts(counts, cross):
+    """Raise AssertionError unless the replace counts hold their identities,
+    in total and per split (plain = not LINK, as ``TRANSITIONS``):
+    ``created_new + created_replaced == created``, ``gone_removed +
+    gone_replaced == gone``, and ``created_replaced == gone_replaced`` --
+    per split up to the pairs that cross it (``cross``): source is not part
+    of the match key, so a LINK element can pair with a host one, and then
+    the per-split equality does not hold while the total does."""
+    for sfx in ("", "_LINK"):
+        for side in ("created", "gone"):
+            parts = counts[side + ("_new" if side == "created" else "_removed") + sfx] + \
+                counts[side + "_replaced" + sfx]
+            if parts != counts[side + sfx]:
+                raise AssertionError("{0}{1}: the replace split sums to {2}, not {3}".format(
+                    side, sfx, parts, counts[side + sfx]))
+    link_net = cross["created_LINK"] - cross["gone_LINK"]
+    for sfx, net in (("", -link_net), ("_LINK", link_net)):
+        if counts["created_replaced" + sfx] - counts["gone_replaced" + sfx] != net:
+            raise AssertionError("created_replaced{0} {1} and gone_replaced{0} {2} differ "
+                                 "by other than the {3} cross-source pair(s)".format(
+                                     sfx, counts["created_replaced" + sfx],
+                                     counts["gone_replaced" + sfx], net))
+
+
 def transitions(prev, cur):
     """``({key: enter_how}, {key: leave_how}, counts)`` between two adjacent
     runs, from ``classify``. ``enter_how`` is how a key seen in ``cur``
     relates to ``prev``; ``leave_how`` how a key seen in ``prev`` relates to
-    ``cur``."""
+    ``cur``. ``counts`` holds the ``TRANSITIONS`` and, from 2.1.0, the
+    ``REPLACE_COUNTS`` (``replace_pairs``), each with its ``_LINK`` split."""
     counts = dict(("{0}{1}".format(t, sfx), 0) for t in TRANSITIONS for sfx in ("", "_LINK"))
     enter, leave = {}, {}
-    for key, rec in classify(prev, cur).items():
+    classes = classify(prev, cur)
+    for key, rec in classes.items():
         word = rec["word"]
         if word in ENTER_OF:
             enter[key] = ENTER_OF[word]
         elif word in LEAVE_OF:
             leave[key] = LEAVE_OF[word]
         counts[word + ("_LINK" if rec["source"] == "LINK" else "")] += 1
+    replaced, cross = replace_counts(classes, replace_pairs(prev, cur, classes))
+    counts.update(replaced)
+    check_replace_counts(counts, cross)
     return enter, leave, counts
 
 
@@ -1147,6 +1289,7 @@ def write_run_census(files, inputs=None, stats=None):
          "run_dir": run["run_dir"], "refused": run["refused"]}, None)
     summary = {
         "schema": RUN_SCHEMA, "tool_version": TOOL_VERSION,
+        "census_version": CENSUS_VERSION,
         "state": "refused" if run["refused"] else "value", "refused": run["refused"],
         "run_id": run["run_id"], "as_of_date": run["as_of_date"],
         "run_dir": str(files.run_dir), "run_dir_name": files.name, "layout": files.layout,
@@ -1201,11 +1344,19 @@ def _csv_check(rec, folder):
 
 
 def _version_check(rec, schema):
+    """Why a summary is not of ``schema`` and of this census's output
+    version for that step (``CENSUS_VERSION`` for a per-run census,
+    ``PAIR_VERSION`` for a pair), or None. A summary written before the step
+    versions were recorded (2.0.0) carries only ``tool_version``, which was
+    then the version of both outputs."""
     if rec.get("schema") != schema:
         return "the summary's schema is {0!r}, not {1!r}".format(rec.get("schema"), schema)
-    if rec.get("tool_version") != TOOL_VERSION:
-        return "written by census {0}, this is {1}".format(
-            rec.get("tool_version"), TOOL_VERSION)
+    field, want = (("census_version", CENSUS_VERSION) if schema == RUN_SCHEMA
+                   else ("pair_version", PAIR_VERSION))
+    have = rec.get(field, rec.get("tool_version"))
+    if have != want:
+        return "{0} {1}, this census writes {2} (tool {3})".format(
+            field, have, want, TOOL_VERSION)
     return None
 
 
@@ -1242,8 +1393,9 @@ def census_staleness(files, inputs):
 
 def load_run_census(files):
     """A run's census as the pair step needs it, read from its FILES: the
-    measured and unmeasured view ids, and per element its source, category
-    and views; per measured view its host-document keys. CensusRefusal when
+    measured and unmeasured view ids, and per element its source, category,
+    views and bbox (state, then extent and centre as written: what
+    ``replace_pairs`` matches on); per measured view its host-document keys. CensusRefusal when
     the census is absent, refused, or its CSV is not the one it names."""
     path = files.census_path("summary")
     if not path.is_file():
@@ -1267,7 +1419,8 @@ def load_run_census(files):
             views = [v for v in (row.get("view_ids") or "").split(";") if v]
             run["elements"][row["element_key"]] = {
                 "source": row["source"], "category": row["category"] or None,
-                "views": views}
+                "views": views, "bbox_state": row.get("bbox_state") or None,
+                "bbox": tuple(float(row[c]) if row.get(c) else None for c in BBOX_COLUMNS)}
             if row["source"] in HOST_BUCKET:
                 for v in views:
                     if v in run["views"]:
@@ -1380,14 +1533,14 @@ def write_pair(cur, choice):
     csv_path, summary_path = cur.pair_path("csv"), cur.pair_path("summary")
     _unlink(summary_path)
     summary = {
-        "schema": PAIR_SCHEMA, "tool_version": TOOL_VERSION,
+        "schema": PAIR_SCHEMA, "tool_version": TOOL_VERSION, "pair_version": PAIR_VERSION,
         "run_id": cur.run_id, "as_of_date": cur.as_of_date, "run_dir": str(cur.run_dir),
         "run_dir_name": cur.name, "model_folder": str(cur.run_dir.parent),
         "predecessor": None if prev is None else {
             "run_id": prev.run_id, "as_of_date": prev.as_of_date,
             "run_dir": str(prev.run_dir), "run_dir_name": prev.name},
         "counts": None, "common_measured_views": None, "host_id_jaccard_common_views": None,
-        "census": {}, "csv": None, "csv_sha256": None,
+        "replace_pairing": None, "census": {}, "csv": None, "csv_sha256": None,
     }
     rows = None
     if state == "value":
@@ -1406,11 +1559,20 @@ def write_pair(cur, choice):
             _e, _l, summary["counts"] = transitions(p_run, c_run)
             summary["common_measured_views"], summary["host_id_jaccard_common_views"] = (
                 host_id_overlap(p_run, c_run))
+            pairs = replace_pairs(p_run, c_run, classes)
+            partner = dict(pairs)
+            partner.update((c, g) for g, c in pairs.items())
+            _counts, cross = replace_counts(classes, pairs)
+            summary["replace_pairing"] = {
+                "rule": REPLACE_RULE, "pairs": len(pairs), "cross_source_pairs": cross}
             rows = [{"run_id": cur.run_id, "as_of_date": cur.as_of_date,
                      "prev_run_id": prev.run_id, "prev_as_of_date": prev.as_of_date,
                      "element_key": key, "source": r["source"], "category": r["category"],
                      "class": r["word"], "in_prev": r["in_prev"], "in_cur": r["in_cur"],
-                     "deciding_view_ids": ";".join(r["deciding_views"])}
+                     "deciding_view_ids": ";".join(r["deciding_views"]),
+                     "replaced": (key in partner) if r["word"] in ("created", "gone")
+                     else None,
+                     "replaced_with": partner.get(key)}
                     for key, r in sorted(classes.items())]
     # The identity is what the outputs were computed FROM (the choice); the
     # state is how it ended (a census refusal found while reading refuses it).

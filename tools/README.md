@@ -378,11 +378,34 @@ summaries and CSVs. The first run gets a summary with state
 `no_predecessor` and no CSV (not zeros). Two runs on one as-of date in a model
 folder refuse, by name, the pairs of both and of the run after them.
 
+**Replace-in-place (2.1.0, pair outputs only).** The pair step splits
+`created` and `gone` into replaced and new / removed, the pairing BI used to
+compute in Power Query (`replace_pairs`). Only `gone` and `created` rows take
+part. Key: `category` + bbox extent (`dx`, `dy`, `dz`) + bbox centre (`cx`,
+`cy`, `cz`) as the census writes them (rounded to 1e-6 ft), compared
+exactly, no tolerance; an element with no bbox value or no category is never
+paired. One-to-one: per key, min(n_gone, n_created), each side in `sorted()`
+order of `element_key` (the counts do not depend on the order; which
+elements pair within a tie does). `source` is not in the key. The
+transitions CSV appends `replaced` (`true` / `false` on created and gone
+rows, blank otherwise) and `replaced_with` (the partner's `element_key`);
+the summary's `counts` and the `--out` runs CSV append `created_replaced`,
+`created_new`, `gone_replaced`, `gone_removed` and their `_LINK` splits.
+Checked in code (`check_replace_counts`): new + replaced = created, removed +
+replaced = gone, created_replaced = gone_replaced -- per split up to a pair
+that crosses LINK / not-LINK, recorded as
+`replace_pairing.cross_source_pairs`. `reappearances` is not a pair figure
+(it needs every run of the series) and stays in BI and the `--out` series
+CSV.
+
 **Stale** means: a census whose summary is absent, from another schema or
-census version, whose CSV is not the one it names, or any of whose input
-hashes changed (or an input was added or removed); a pair whose predecessor
-is no longer the previous as-of date (a run was backfilled in between), or
-either side's census summary changed.
+census output version (`census_version`, 2.0.0), whose CSV is not the one it names, or any of whose input
+hashes changed (or an input was added or removed); a pair of another pair
+output version (`pair_version`, 2.1.0), whose predecessor is no longer the
+previous as-of date (a run was backfilled in between), or either side's
+census summary changed. The two versions are separate so that a change to
+one step recomputes that step only: 2.1.0 recomputes every pair and no
+census (a summary from 2.0.0 records only `tool_version`, read as both).
 
 **Refusals:** a run the roll-up refuses, a run with no as-of date, and a run
 any of whose gridded views cannot be read element by element -- a grid made
@@ -415,7 +438,8 @@ refused run; 2 every run refused, two runs share an as-of date or a run_id,
 or bad arguments.
 
 Tests: `tests/test_stage_a_element_census.py`,
-`tests/test_stage_a_element_census_incremental.py`.
+`tests/test_stage_a_element_census_incremental.py`,
+`tests/test_stage_a_element_census_replace.py`.
 
 ---
 
