@@ -23,6 +23,8 @@ import time
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from tools import register_stage_a_annotation as reg
 from tools import stage_a_element_census as census
 from tools import stage_a_grid as grid
@@ -391,3 +393,120 @@ def test_threaded_hashing_gives_the_single_thread_result(tmp_path, monkeypatch):
     threaded = census.census_inputs(_files(b))
     monkeypatch.setattr(census, "HASH_WORKERS", 1)
     assert census.census_inputs(_files(b)) == threaded
+
+
+# --- the locator back-fill: a fresh census written before 2.1.1 gains them once -----------------
+
+def _as_2_1_0_census(files):
+    """A census summary as 2.1.0 wrote it: no ``tiff_locators``."""
+    path = files.census_path("summary")
+    rec = json.loads(path.read_text())
+    rec.pop("tiff_locators")
+    census._write_json(path, rec)
+    return rec
+
+
+def _no_recompute(monkeypatch):
+    def _no(*_a, **_k):
+        raise AssertionError("census recomputed")
+    monkeypatch.setattr(census, "census_run", _no)
+
+
+def test_a_fresh_census_without_locators_gains_them_and_nothing_else_changes(
+        tmp_path, monkeypatch):
+    model = _model(tmp_path)
+    runs = _three(model)
+    census.drive(model)
+    old = dict((r.name, _as_2_1_0_census(_files(r))) for r in runs)
+    csvs = dict((r.name, grid.sha256_file(_files(r).census_path("csv"))) for r in runs)
+    pairs = dict((r.name, grid.sha256_file(_files(r).pair_path("summary"))) for r in runs)
+    _no_recompute(monkeypatch)
+    actions = census.drive(model)
+    assert _computed(actions) == []                           # no census, no pair
+    assert [x["locators_added"] for x in actions if x["step"] == "census"] == [True] * 3
+    for r in runs:
+        f = _files(r)
+        new = json.loads(f.census_path("summary").read_text())
+        assert new["tiff_locators"] and new["tiff_locators_added"]["records"] == len(
+            new["tiff_locators"])
+        rest = dict((k, v) for k, v in new.items()
+                    if k not in ("tiff_locators", "tiff_locators_added"))
+        assert rest == old[r.name]                            # every other field as it was
+        assert grid.sha256_file(f.census_path("csv")) == csvs[r.name]
+        assert grid.sha256_file(f.pair_path("summary")) == pairs[r.name]
+        assert census.census_content(f, new) == census.census_content(f, old[r.name])
+        assert not list(f.grid_dir.glob("*.tmp"))
+    # Then stable: nothing written, no record parsed.
+    before = dict((p, p.read_bytes()) for p in model.rglob("element_*"))
+    again = census.drive(model)
+    assert not [x for x in again if x.get("locators_added")]
+    assert dict((p, p.read_bytes()) for p in model.rglob("element_*")) == before
+
+
+def test_control_a_census_that_has_its_locators_is_not_rewritten(tmp_path):
+    model = _model(tmp_path)
+    runs = _three(model)
+    census.drive(model)
+    before = dict((r.name, grid.sha256_file(_files(r).census_path("summary"))) for r in runs)
+    actions = census.drive(model)
+    assert not [x for x in actions if x.get("locators_added")]
+    assert dict((r.name, grid.sha256_file(_files(r).census_path("summary")))
+                for r in runs) == before
+
+
+def test_after_the_backfill_a_fresh_check_parses_no_record(tmp_path, monkeypatch):
+    model = _model(tmp_path)
+    runs = _three(model)
+    census.drive(model)
+    for r in runs:
+        _as_2_1_0_census(_files(r))
+    census.drive(model)                                       # the back-fill
+    parsed = []
+    real = census._load_json
+
+    def _count(path):
+        name = Path(path).name
+        if name.startswith("V_") and name.endswith(".json") and ".grid." not in name:
+            parsed.append(name)
+        return real(path)
+    monkeypatch.setattr(census, "_load_json", _count)
+    census.drive(model)
+    assert parsed == []
+
+
+def test_the_backfill_and_the_pair_version_change_together(tmp_path, monkeypatch):
+    """Greg's tree before 2.1.1: censuses without locators and 2.1.0 pairs.
+    One drive: locators added, every pair recomputed once, no census
+    recomputed, every census CSV byte-unchanged; the next drive writes nothing."""
+    model = _model(tmp_path)
+    runs = _three(model)
+    census.drive(model)
+    for r in runs:
+        _as_2_1_0_census(_files(r))
+        _as_2_1_0(_files(r))
+    csvs = dict((r.name, grid.sha256_file(_files(r).census_path("csv"))) for r in runs)
+    _no_recompute(monkeypatch)
+    actions = census.drive(model)
+    assert _computed(actions) == sorted(("pair", r.name) for r in runs)
+    assert sum(1 for x in actions if x.get("locators_added")) == 3
+    assert dict((r.name, grid.sha256_file(_files(r).census_path("csv"))) for r in runs) == csvs
+    before = dict((p, p.read_bytes()) for p in model.rglob("element_*"))
+    assert _computed(census.drive(model)) == []
+    assert dict((p, p.read_bytes()) for p in model.rglob("element_*")) == before
+
+
+def test_an_interrupted_backfill_leaves_the_old_summary(tmp_path, monkeypatch):
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    f = _files(b)
+    _as_2_1_0_census(f)
+    old = f.census_path("summary").read_bytes()
+
+    def _fail(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(census.os, "replace", _fail)
+    with pytest.raises(OSError):
+        census.drive(model)
+    assert f.census_path("summary").read_bytes() == old
+    assert not list(f.grid_dir.glob("*.tmp"))

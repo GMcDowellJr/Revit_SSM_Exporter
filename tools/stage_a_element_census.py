@@ -198,8 +198,11 @@ reads each census summary once, hashes ``HASH_WORKERS`` files at a time, and
 the census summary records ``tiff_locators`` (each model sidecar's
 ``tiff_path`` and registration record's ``registered_tiff`` under that
 record's sha256), so a later check finds a TIFF without parsing a record
-whose sha256 is unchanged; a summary written before 2.1.1 has none, and its
-records are parsed as before.
+whose sha256 is unchanged. A FRESH census summary written before 2.1.1 has
+none: the driver adds them once (``add_tiff_locators``: that field and a
+``tiff_locators_added`` note, nothing else; the CSV and every field a pair
+reads are unchanged, so no pair reruns), from the records the check just
+parsed.
 
 Exit, ``--root``: 0 nothing refused, 1 a census or pair refused, 2 no run
 folder found. A skipped run is not a refusal: a root whose runs are all
@@ -1367,6 +1370,34 @@ def upgrade_tiff_inputs(files):
     return "{0} TIFF hashes added; every view's status as recorded".format(len(stats))
 
 
+def add_tiff_locators(files, rec, locators):
+    """Record ``locators`` (``census_inputs``' ``locators_out``) in a FRESH
+    census summary that lacks them -- one written before 2.1.1 -- instead of
+    leaving every later check to parse its records again. ``rec`` is the
+    summary as read from disk; only ``tiff_locators`` (and the note
+    ``tiff_locators_added``) are added, so no field a pair reads
+    (``PAIR_READS``) and not the CSV changes. Written to a temporary file
+    beside it and moved over it, so an interruption leaves the old summary,
+    never a truncated one. Returns the summary as written, or None when the
+    summary already holds exactly these locators (nothing written)."""
+    want = dict(sorted(locators.items()))
+    if not want or rec.get("tiff_locators") == want:
+        return None
+    out = dict(rec, tiff_locators=want,
+               tiff_locators_added={"records": len(want), "census_version": CENSUS_VERSION,
+                                    "tool_version": TOOL_VERSION,
+                                    "rule": "added to a fresh census: every input's "
+                                            "sha256 as recorded"})
+    path = files.census_path("summary")
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        _write_json(tmp, out)
+        os.replace(str(tmp), str(path))
+    finally:
+        _unlink(tmp)
+    return out
+
+
 def write_run_census(files, inputs=None, stats=None, locators=None):
     """The census of one run, into its grid folder: the element CSV, then
     the summary naming its sha256 and the sha256 of every input (written
@@ -1826,15 +1857,22 @@ def drive(root, progress=None):
         locators = {}
         inputs, stats = census_inputs(f, previous, locators_out=locators)
         why = census_staleness(f, inputs, previous)
+        added = None
         if why:
             rec = write_run_census(f, inputs, stats, locators)
             action = "computed"
         else:
             rec = previous
             action = "upgraded" if upgraded else "fresh"
+            added = add_tiff_locators(f, rec, locators)
+            if added is not None:
+                rec = added
+                say("        added tiff_locators to {0}: {1} record(s)".format(
+                    f.name, len(added["tiff_locators"])))
         contents[str(f.run_dir)] = census_content(f, rec)
         actions.append({"step": "census", "run": f.name, "action": action,
-                        "state": rec.get("state"), "why": "; ".join(why)})
+                        "state": rec.get("state"), "why": "; ".join(why),
+                        "locators_added": added is not None})
         say("[{0}/{1}] census {2:<8} {3:.0f}s {4} ({5}){6}".format(
             n, len(all_files), action, time.time() - started, f.name, rec.get("state"),
             ": " + "; ".join(why) if why else ""))
@@ -1912,11 +1950,13 @@ def main(argv=None):
             return 2
         done = [a for a in actions if a["action"] == "computed"]
         print("{0} census(es) and {1} pair(s) computed; {2} upgraded; {3} fresh; {4} run(s) "
-              "skipped".format(sum(1 for a in done if a["step"] == "census"),
-                               sum(1 for a in done if a["step"] == "pair"),
-                               sum(1 for a in actions if a["action"] == "upgraded"),
-                               sum(1 for a in actions if a["action"] == "fresh"),
-                               sum(1 for a in actions if a["action"] == "skipped")))
+              "skipped; tiff_locators added to {5} census(es)".format(
+                  sum(1 for a in done if a["step"] == "census"),
+                  sum(1 for a in done if a["step"] == "pair"),
+                  sum(1 for a in actions if a["action"] == "upgraded"),
+                  sum(1 for a in actions if a["action"] == "fresh"),
+                  sum(1 for a in actions if a["action"] == "skipped"),
+                  sum(1 for a in actions if a.get("locators_added"))))
         refused = [a for a in actions if a["state"] == "refused"]
         for a in refused:
             print("REFUSED {0} {1}".format(a["step"], a["run"]))

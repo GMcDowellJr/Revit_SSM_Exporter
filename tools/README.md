@@ -368,6 +368,12 @@ a run none of whose model sidecars has a `<stem>.grid.json` in its grid
 folder; it prints `skipped <run>: <reason>`, names any census or transitions
 file already there and leaves it. The next run pairs with the latest earlier
 run that was not skipped.
+A census summary records `tiff_locators` (2.1.1): each model sidecar's
+`tiff_path` and registration record's `registered_tiff`, under that record's
+sha256, so a fresh check does not parse a record whose sha256 is unchanged.
+A fresh census written before 2.1.1 gains them once, in place
+(`added tiff_locators to <run>`); nothing else in the summary changes, and no
+census or pair is recomputed for it.
 
 **Per pair** (`element_transitions_<d>.csv`): one row per element key on
 either side, with `class`, `in_prev` / `in_cur` and `deciding_view_ids`, the
