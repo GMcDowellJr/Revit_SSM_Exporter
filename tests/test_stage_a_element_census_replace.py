@@ -421,7 +421,8 @@ def test_a_pair_version_change_recomputes_the_pairs_and_no_census(tmp_path):
     assert summary["pair_version"] == census.PAIR_VERSION
     assert "created_replaced" in summary["counts"]
     assert rows["host:40"]["replaced_with"] == "host:100"
-    assert summary["identity"]["census_summary_sha256"]["cur"] == before[b.name]
+    assert summary["census"]["cur"]["summary_sha256"] == before[b.name]
+    assert summary["identity"]["census_content"]["cur"] == census.census_content(f_b)
     assert f_b.pair_path("csv").exists()
 
 
