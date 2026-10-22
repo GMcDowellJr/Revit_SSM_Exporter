@@ -143,3 +143,87 @@ def test_index_root_rebuilds_the_runs_index_with_the_census(tmp_path):
         ("RUN_A", "value", "no_predecessor")]
     code, results = analyze.analyze([run])                           # control: not asked
     assert "index" not in [r["stage"] for r in results]
+
+
+def _products(root):
+    """sha256 of every file under ``root``; a census summary with its
+    input_stats mtimes zeroed (census freshness: a rebuilt fixture's files
+    are new, so their mtimes differ while nothing else does)."""
+    import hashlib
+    out = {}
+    for f in sorted(p for p in root.rglob("*") if p.is_file()):
+        data = f.read_bytes()
+        if f.name.startswith("element_census_") and f.name.endswith(".summary.json"):
+            doc = json.loads(data)
+            doc["input_stats"] = dict((k, [v[0], 0]) for k, v in
+                                      (doc.get("input_stats") or {}).items())
+            data = json.dumps(doc, sort_keys=True).encode()
+        out[str(f.relative_to(root))] = hashlib.sha256(data).hexdigest()
+    return out
+
+
+def test_workers_give_the_serial_runs_files_exit_code_and_summary(tmp_path, capsys):
+    """The same two-run fixture, rebuilt at the same path, analysed with
+    --workers 1 and --workers 2: every file byte-identical, the same exit
+    code, the same summary lines apart from their timings. A refused view
+    (no annotation ticks) is in it, so a refusal travels through the pool."""
+    import re
+    import shutil
+
+    def _fixture():
+        shutil.rmtree(str(tmp_path / "Model"), ignore_errors=True)
+        model = tmp_path / "Model"
+        model.mkdir()
+        a = _run(model, "2026-10-07__RUN_A", "RUN_A")
+        for n in (1, 2):
+            _capture(a, n, register=False, gridded=False, drop_anno_marks=(n == 2))
+        b = _run(model, "2026-10-14__RUN_B", "RUN_B", date="2026-10-14")
+        _capture(b, 1, register=False, gridded=False)
+        # The capture harness stages each pair beside the runs; not products.
+        for stage in model.glob("stage_*"):
+            shutil.rmtree(str(stage))
+        return a, b
+
+    def _summary(text):
+        lines = text.split("== summary", 1)[1].splitlines()
+        return [re.sub(r"\s+\(\d+\.\d s\)$", "", line) for line in lines
+                if not line.strip().startswith("total")]
+
+    got = {}
+    for workers in (1, 2):
+        a, b = _fixture()
+        code = analyze.main([str(a), str(b), "--workers", str(workers)])
+        got[workers] = (code, _products(tmp_path / "Model"),
+                        _summary(capsys.readouterr().out))
+    assert got[1][0] == got[2][0] == 1
+    assert got[1][1] == got[2][1] and len(got[1][1]) > 20
+    assert got[1][2] == got[2][2]
+
+
+def test_the_ec_readers_decompress_only_the_ec_members(tmp_path, monkeypatch):
+    """Inventory, the roll-up's row_keys and the census per-view reader read
+    only the element x cell rows of a grid npz, so only ``ec_*`` members are
+    decompressed (np.load reads a member when indexed). The control: derive,
+    under the same watch, reads the dense arrays too -- the watch sees them."""
+    import numpy as np
+    from tools import stage_a_element_census as census
+    from tools import stage_a_grid_rollup as rollup
+    run = _run(tmp_path)
+    _capture(run, 1, register=False, gridded=False)
+    assert analyze.analyze([run], workers=1)[0] == 0
+    out = run / "analysis_grid"
+    grid_json = out / "V_1.grid.json"
+    read = []
+    real = np.lib.npyio.NpzFile.__getitem__
+
+    def watched(self, key):
+        read.append(key)
+        return real(self, key)
+    monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", watched)
+    kinds.inventory([out], kinds.load_class_map()[0])
+    assert isinstance(rollup.row_keys(grid_json), list)
+    census.view_census(run / "color_id_buffer" / "V_1.json", grid_json)
+    assert read and all(k.startswith("ec_") for k in read), sorted(set(read))
+    del read[:]
+    kinds.derive_view(grid_json, kinds.load_class_map())          # control
+    assert any(not k.startswith("ec_") for k in read)

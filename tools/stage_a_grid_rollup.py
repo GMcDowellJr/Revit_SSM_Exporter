@@ -629,7 +629,7 @@ def row_keys(grid_json):
     annotation class, px, ink_px)``, or the reason the accounting cannot be
     read (a grid made before A1, an npz that does not match its record)."""
     try:
-        rec, arr = kinds.load_grid(grid_json)
+        rec, arr = kinds.load_grid(grid_json, members=kinds.ec_only)
     except kinds.KindsRefusal as ex:
         return str(ex)
     keys = rec["ec_keys"]
