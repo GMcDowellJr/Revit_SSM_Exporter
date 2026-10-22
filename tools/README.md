@@ -196,6 +196,10 @@ when the transform would mirror an axis. It never falls back to the model's
 recorded lattice. Losses (ink off the model image, uncovered model pixels,
 colours that did not survive the resample) are counted in the record.
 
+The record is a function of its inputs (1.0.1, 2026-10-22: no `elapsed_ms`):
+registering an unchanged capture again writes the same record and TIFF bytes,
+so the grid and the element census see no change.
+
 **Usage:**
 ```bash
 python tools/register_stage_a_annotation.py path/to/View_123_anno.json
@@ -362,6 +366,20 @@ upgraded in place, not recomputed, when every input it recorded is unchanged
 and every view's roll-up status is the one it recorded; its pairs are then
 recomputed. A run
 folder with no capture folder is skipped: no census, no place in the series.
+From 2.1.1 the driver also skips, before writing anything (no file, no
+folder), a run whose run_meta is absent, unreadable or not `finalized`, and
+a run none of whose model sidecars has a `<stem>.grid.json` in its grid
+folder; it prints `skipped <run>: <reason>`, names any census or transitions
+file already there and leaves it. The next run pairs with the latest earlier
+run that was not skipped.
+A census summary records `tiff_locators` (2.1.1): each model sidecar's
+`tiff_path` and registration record's `registered_tiff`, under that record's
+sha256, so a fresh check does not parse a record whose sha256 is unchanged.
+A fresh census written before 2.1.1 gains them once, in place
+(`added tiff_locators to <run>`); nothing else in the summary changes, and no
+census or pair is recomputed for it.
+A run folder whose run_meta cannot be read or is ambiguous, or whose name is
+not `<date>__<run_id>`, is skipped the same way (2.1.2).
 
 **Per pair** (`element_transitions_<d>.csv`): one row per element key on
 either side, with `class`, `in_prev` / `in_cur` and `deciding_view_ids`, the
@@ -374,7 +392,9 @@ there). `gone` = not drawn in any view that drew it before; deleted from the
 model is an inference. The summary carries the counts per class (and
 `_LINK`), common measured views, the host-id Jaccard over them, the
 predecessor's run_id, path and as-of date, and the sha256 of both census
-summaries and CSVs. The first run gets a summary with state
+CSVs (from 2.1.2 not of the census summaries: a pair kept fresh across a
+census rewrite could not keep that hash true; its `identity.census_content`
+says what it was computed from). The first run gets a summary with state
 `no_predecessor` and no CSV (not zeros). Two runs on one as-of date in a model
 folder refuse, by name, the pairs of both and of the run after them.
 
@@ -402,10 +422,15 @@ CSV.
 census output version (`census_version`, 2.0.0), whose CSV is not the one it names, or any of whose input
 hashes changed (or an input was added or removed); a pair of another pair
 output version (`pair_version`, 2.1.0), whose predecessor is no longer the
-previous as-of date (a run was backfilled in between), or either side's
-census summary changed. The two versions are separate so that a change to
-one step recomputes that step only: 2.1.0 recomputes every pair and no
-census (a summary from 2.0.0 records only `tool_version`, read as both).
+previous as-of date (a run was backfilled in between), or what it reads of
+either side's census changed: the census CSV's sha256 and the summary fields
+the pair reads (`PAIR_READS`: schema, census version, state, refusal,
+run_id, as-of date, measured / unmeasured view ids, CSV name and sha256) --
+from 2.1.1, not the whole summary, whose input hashes and TIFF modified times
+change when a census is rewritten onto the same CSV. The two versions are
+separate so that a change to one step recomputes that step only: 2.1.0 and
+2.1.1 each recompute every pair and no census (a summary from 2.0.0 records
+only `tool_version`, read as both).
 
 **Refusals:** a run the roll-up refuses, a run with no as-of date, and a run
 any of whose gridded views cannot be read element by element -- a grid made

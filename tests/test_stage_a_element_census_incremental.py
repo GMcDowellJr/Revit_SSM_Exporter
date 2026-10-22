@@ -127,8 +127,9 @@ def test_the_pair_steps_classes_are_transitions_on_the_same_two_runs(tmp_path):
         assert rb_row[k] == str(v), k
     assert summary["predecessor"]["run_id"] == "RUN_A"
     assert set(summary["census"]) == {"cur", "prev"}
-    assert summary["census"]["prev"]["summary_sha256"] == grid.sha256_file(
-        _files(a).census_path("summary"))
+    assert summary["census"]["prev"]["csv_sha256"] == grid.sha256_file(
+        _files(a).census_path("csv"))
+    assert "summary_sha256" not in summary["census"]["prev"]          # 2.1.2
 
 
 def test_the_first_run_says_it_has_no_predecessor_and_writes_no_csv(tmp_path):
@@ -164,12 +165,16 @@ def test_a_clean_tree_recomputes_nothing(tmp_path):
     assert dict((p, p.read_bytes()) for p in model.rglob("element_*")) == before
 
 
-def _recapture(run, n=1):
+def _recapture(run, n=1, category=None):
     """A view's capture rewritten and the run re-gridded, as a recapture and
-    stage_a_analyze leave it."""
+    stage_a_analyze leave it. ``category``: the recapture also changes the
+    category its element is recorded under (one element row changes)."""
     model_path = _capture_dir(run) / "V_{0}.json".format(n)
     side = json.loads(model_path.read_text())
     side["recapture"] = {"captured_at": "later"}
+    if category is not None:
+        for entry in side["near_face_w_map"]["host"].values():
+            entry["category"] = category
     model_path.write_text(json.dumps(side))
     reg.register(model_path.with_name("V_{0}_anno.json".format(n)))
     grid.grid_view(model_path, _grid_dir(run))
@@ -179,12 +184,26 @@ def test_recapturing_a_middle_run_recomputes_its_census_and_the_two_pairs_around
     model = _model(tmp_path)
     a, b, c = _three(model)
     census.drive(model)
-    _recapture(b)
+    _recapture(b, category="Doors")
     actions = census.drive(model)
     assert _computed(actions) == [("census", b.name), ("pair", b.name), ("pair", c.name)]
     why = [x["why"] for x in actions if x["step"] == "census" and x["run"] == b.name][0]
     assert "changed" in why and "V_1.json" in why
     assert _census(b)[0]["figures"]["views_measured"] == 2       # still gridded
+    assert _census(b)[1]["host:8"]["category"] == "Doors"
+
+
+def test_a_recapture_that_changes_no_element_recomputes_the_census_and_no_pair(tmp_path):
+    """2.1.1: the pairs read the census CSV and the view ids, which a
+    recapture with the same elements leaves as they were (E3, 2026-10-21)."""
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    csv_before = grid.sha256_file(_files(b).census_path("csv"))
+    _recapture(b)
+    actions = census.drive(model)
+    assert _computed(actions) == [("census", b.name)]
+    assert grid.sha256_file(_files(b).census_path("csv")) == csv_before
 
 
 def test_backfilling_a_date_recomputes_the_new_run_and_the_pair_after_it(tmp_path):
@@ -283,7 +302,7 @@ def test_a_failed_csv_write_leaves_no_summary_of_the_previous_one(tmp_path, monk
             raise OSError("disk full")
         return real(path, columns, rows)
     monkeypatch.setattr(census, "_write_csv", _fail)
-    _recapture(b)
+    _recapture(b, category="Doors")          # an element row changes: both steps rerun
     with pytest.raises(OSError):
         census.drive(model)
     assert not summary.exists()
@@ -320,7 +339,11 @@ def test_a_refused_census_records_why_in_the_file_and_a_clean_one_records_none(t
     meta = json.loads(meta_path.read_text())
     meta["finalized"] = False
     meta_path.write_text(json.dumps(meta))
+    # The driver skips an unfinalized run (out_of_scope); the writer, called
+    # directly, still records the refusal in the file.
     census.drive(model)
+    assert not _files(bad).census_path("summary").exists()
+    census.write_run_census(_files(bad))
     rec_bad, _r = _census(bad)
     rec_good, _r = _census(good)
     assert rec_bad["state"] == "refused" and "finalized" in rec_bad["refused"]
@@ -615,7 +638,8 @@ def test_a_census_recorded_without_tiffs_is_upgraded_not_recomputed(tmp_path, mo
     actions = census.drive(model)
     assert [(x["run"], x["action"]) for x in actions if x["step"] == "census"] == [
         (a.name, "upgraded"), (b.name, "upgraded"), (c.name, "upgraded")]
-    assert _computed(actions) == [("pair", a.name), ("pair", b.name), ("pair", c.name)]
+    # 2.1.1: adding TIFF inputs changes no field a pair reads, so no pair reruns.
+    assert _computed(actions) == []
     for run in (a, b, c):
         rec, rows = _census(run)
         assert rows == before[run] and rec["inputs_include_tiffs"] is True

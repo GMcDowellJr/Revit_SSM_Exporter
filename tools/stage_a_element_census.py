@@ -97,8 +97,8 @@ one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
     the summary: counts per class (and ``_LINK``; from 2.1.0 the
     replace-in-place split of created / gone), common measured views, the
     host-id Jaccard, the predecessor's run_id / path / as-of date, both census
-    files' sha256. The predecessor is the run with the previous as-of date in
-    the same model folder (``predecessors``), never run_id or folder order.
+    CSVs' sha256 (2.1.2: not the census summaries'). The predecessor is the
+    run with the previous as-of date in the same model folder (``predecessors``), never run_id or folder order.
     The pair is read from the two census FILES through ``classify``,
     ``transitions`` and ``host_id_overlap``, the functions the series uses.
     The first run: a ``no_predecessor`` summary and no CSV, never zeros. Two
@@ -107,8 +107,16 @@ one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
     (``stage_a_runs_index.discover``) and computes only what is missing or
     stale (``census_staleness``: an input hash, the schema, the version or
     the CSV changed; ``pair_staleness``: the predecessor is no longer the
-    previous as-of date, or either census changed), printing what it did and
-    why.
+    previous as-of date, or what the pair reads of either census changed),
+    printing what it did and why. From 2.1.1 it first SKIPS a run that is
+    out of scope (``out_of_scope``: run_meta absent, unreadable or not
+    finalized; or none of its model sidecars has a ``<stem>.grid.json`` in
+    its grid folder): nothing is written into it and no folder is made; a
+    ``skipped`` record and one line ``skipped <run>: <reason>`` name any
+    census or transitions file already there, which is left in place. A
+    skipped run is not in the series: the next run pairs with the latest
+    earlier run in scope. The writers (``write_run_census``, ``write_pair``)
+    still write a refused summary when called directly.
 
 ``--out DIR`` with run arguments is the multi-run convenience, built on the
 same functions: ``<as_of_date>__<run_id>.elements.csv`` per run,
@@ -176,17 +184,51 @@ as ``replace_pairing.cross_source_pairs``. Versions are now per step:
 with its own step's (a 2.0.0 summary's ``tool_version`` read as both), so
 this change recomputes every pair and no census.
 
+2.1.1 (pair identity and driver only; the per-run census outputs are
+unchanged, so CENSUS_VERSION stays 2.0.0 and no census is recomputed): a
+pair's identity (``pair_identity``) is what it reads of each census
+(``census_content``): the CSV's recorded sha256 and the sha256 of a
+canonical JSON of the summary fields ``PAIR_READS``, not the sha256 of the
+whole summary -- whose ``inputs`` and ``input_stats`` (TIFF modified times)
+change whenever a census is rewritten onto the same CSV (stage_a_analyze
+step 6 rewrites the named run's; a re-registration rewrites every
+registration record's ``elapsed_ms``). PAIR_VERSION 2.1.1 recomputes every
+pair once under the new identity. The driver skips runs out of scope (above),
+reads each census summary once, hashes ``HASH_WORKERS`` files at a time, and
+the census summary records ``tiff_locators`` (each model sidecar's
+``tiff_path`` and registration record's ``registered_tiff`` under that
+record's sha256), so a later check finds a TIFF without parsing a record
+whose sha256 is unchanged. A FRESH census summary written before 2.1.1 has
+none: the driver adds them once (``add_tiff_locators``: that field and a
+``tiff_locators_added`` note, nothing else; the CSV and every field a pair
+reads are unchanged, so no pair reruns), from the records the check just
+parsed.
+
+2.1.2 (review, PR #245; pair outputs only): the pair summary's
+``census.<side>`` no longer records ``summary_sha256``. A pair kept fresh
+across a census rewritten onto the same content (2.1.1) left that hash naming
+a summary no longer on disk; what the pair was computed from is
+``identity.census_content``, and the CSV it read is ``csv_sha256``.
+PAIR_VERSION 2.1.2 recomputes every pair once, so no pair keeps the field. A
+run folder the walk finds but cannot index (run_meta unreadable or
+ambiguous, or a folder name that is not ``<date>__<run_id>``) is a
+``skipped`` action like any run out of scope, naming the census and
+transitions files already in it; the driver writes nothing into it.
+
 Exit, ``--root``: 0 nothing refused, 1 a census or pair refused, 2 no run
-found. Runs without ``--out``: 0 every view measured, 1 a view unmeasured, 2
-a run refused. ``--out``: 0 when no run is refused and every requested view
-is measured; 1 for an unmeasured view or a refused run; 2 when every run is
-refused, two runs share an as-of date, or on bad arguments (a run that is not
-a directory).
+folder found. A skipped run is not a refusal: a root whose runs are all
+skipped (an unindexable run folder included) exits 0. Runs without
+``--out``: 0 every view measured, 1 a view unmeasured, 2 a run refused.
+``--out``: 0 when no run is refused and every requested view is measured; 1
+for an unmeasured view or a refused run; 2 when every run is refused, two
+runs share an as-of date, or on bad arguments (a run that is not a
+directory).
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -208,14 +250,27 @@ from vop_interwoven import output_layout  # noqa: E402
 SCHEMA = "vop.stage_a.element_census.v1"
 RUN_SCHEMA = "vop.stage_a.element_census.run.v1"
 PAIR_SCHEMA = "vop.stage_a.element_transitions.v1"
-TOOL_VERSION = "2.1.0"
+TOOL_VERSION = "2.1.2"
 # The version of each step's OUTPUTS, which is what makes a file on disk
 # stale (``_version_check``). A change to one step bumps that step's version
 # only: 2.1.0 changed the pair outputs, and the per-run censuses (minutes
 # each from the grids) stay current at 2.0.0. A summary written before these
 # were split records only ``tool_version``, read as the output version.
+# 2.1.1: the pair's identity is the census CONTENT it reads
+# (``census_content``), so every pair is judged once under it. 2.1.2: the
+# pair summary no longer records each census summary's sha256, which a pair
+# kept fresh across a census rewrite could not keep true.
 CENSUS_VERSION = "2.0.0"
-PAIR_VERSION = "2.1.0"
+PAIR_VERSION = "2.1.2"
+# The census summary fields the pair step reads (``load_run_census``): the
+# checks it makes before reading (schema, output version, state, the CSV it
+# names and that CSV's sha256), the refusal it reports, and the run's view
+# ids and identity. Nothing else in the summary reaches a pair output.
+PAIR_READS = ("schema", "census_version", "state", "refused", "run_id", "as_of_date",
+              "measured_view_ids", "unmeasured_view_ids", "csv", "csv_sha256")
+# Files hashed at once by ``census_inputs``: hashlib releases the GIL on large
+# buffers, so reads and hashes overlap. A pool bound, not a tolerance.
+HASH_WORKERS = 4
 
 # The multi-run --out convenience (one folder, every run).
 ELEMENTS_SUFFIX = ".elements.csv"
@@ -1088,27 +1143,47 @@ def _rel(path, base):
         return str(path)
 
 
-def _tiffs(sidecar, reg_path):
-    """``(tiffs, unresolved)`` for one view: the model TIFF and the
+def _tiffs(sidecar, reg_path, located=None):
+    """``(tiffs, unresolved, locators)`` for one view: the model TIFF and the
     registered annotation TIFF, found by the resolvers the roll-up's
     staleness check uses (``stage_a_grid_rollup.staleness``), which hashes
     both -- a TIFF swapped under an unchanged record turns the view
     ``grid_stale`` and so changes the census. ``unresolved`` is ``{label:
     reason}`` for one that cannot be found: recorded as an input of its own,
-    so a TIFF that goes missing or comes back makes the census stale."""
-    found, unresolved = [], {}
+    so a TIFF that goes missing or comes back makes the census stale.
+
+    ``located`` is ``{record path: (sha256 now, recorded locator or None)}``:
+    a record whose sha256 now equals the one its locator was read under is
+    not parsed again -- the resolvers read only the path field the locator
+    holds, and that field is a function of the bytes the sha256 names.
+    ``locators`` is what was read here, ``{record path: {"sha256", "field",
+    "value"}}``, for the census summary to record (``tiff_locators``)."""
+    located = located or {}
+    found, unresolved, locators = [], {}, {}
+
+    def _field(path, field):
+        sha, prior = located.get(str(path), (None, None))
+        if (sha is not None and isinstance(prior, dict) and prior.get("sha256") == sha
+                and prior.get("field") == field):
+            return prior.get("value")
+        rec = _load_json(path)
+        value = rec.get(field)            # AttributeError: not an object
+        if sha is not None:
+            locators[str(path)] = {"sha256": sha, "field": field, "value": value}
+        return value
     try:
-        found.append(dsc._resolve_tiff_path(sidecar, _load_json(sidecar)))
+        recorded = _field(sidecar, "tiff_path")
+        found.append(dsc._resolve_tiff_path(sidecar, {"tiff_path": recorded}))
     except (OSError, ValueError, AttributeError) as ex:
         unresolved["model TIFF of " + sidecar.name] = _err(ex)
     if Path(reg_path).is_file():
         try:
-            found.append(grid._resolve_recorded(_load_json(reg_path).get("registered_tiff"),
+            found.append(grid._resolve_recorded(_field(reg_path, "registered_tiff"),
                                                 Path(reg_path).parent,
                                                 "the registered annotation TIFF"))
         except (OSError, ValueError, AttributeError, grid.GridRefusal) as ex:
             unresolved["registered TIFF of " + Path(reg_path).name] = _err(ex)
-    return found, unresolved
+    return found, unresolved, locators
 
 
 def _stat(path):
@@ -1116,7 +1191,18 @@ def _stat(path):
     return [st.st_size, st.st_mtime_ns]
 
 
-def census_inputs(files, previous=None):
+def _hash_all(paths):
+    """``{path: sha256}`` of ``paths``, ``HASH_WORKERS`` at a time, through
+    ``grid.sha256_file``. The result is keyed, so its order is the caller's."""
+    paths = sorted(set(paths))
+    if len(paths) < 2:
+        return dict((p, grid.sha256_file(p)) for p in paths)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=HASH_WORKERS) as pool:
+        return dict(zip(paths, pool.map(lambda p: grid.sha256_file(p), paths)))
+
+
+def census_inputs(files, previous=None, locators_out=None):
     """``(inputs, stats)``. ``inputs`` is ``{path relative to the run:
     sha256}`` of every file the census reads, itself or through the
     roll-up's rows: the run_meta, the views_core file(s), every model sidecar
@@ -1131,13 +1217,21 @@ def census_inputs(files, previous=None):
     that replaces one gives it a new modified time. DECLARED LIMIT: a TIFF
     replaced by one of the same size with its modified time restored (a copy
     that preserves timestamps) is not seen. The JSON records and the npz are
-    always hashed."""
+    always hashed.
+
+    2.1.1: the JSON records and npz are hashed ``HASH_WORKERS`` at a time,
+    and a model sidecar or registration record whose sha256 equals the one
+    ``previous`` recorded in ``tiff_locators`` is not parsed again to find
+    its TIFF (``_tiffs``). ``locators_out``, a dict, receives the locators
+    read, keyed by path relative to the run, for ``write_run_census``."""
     prev_inputs = (previous or {}).get("inputs") or {}
     prev_stats = (previous or {}).get("input_stats") or {}
+    prev_locators = (previous or {}).get("tiff_locators") or {}
     paths, tiffs, unresolved = set(), set(), {}
     paths |= set(output_layout.run_meta_candidates(files.run_dir))
     paths |= set(output_layout.run_meta_candidates(files.folder))
     paths |= set(str(p) for p in files.run_dir.glob("views_core_*.csv"))
+    views = []
     for sidecar in files.sidecars:
         sidecar = Path(sidecar)
         paths.add(str(sidecar))
@@ -1146,19 +1240,38 @@ def census_inputs(files, previous=None):
                       files.grid_dir / (sidecar.stem + ".grid.npz")):
             if Path(extra).is_file():
                 paths.add(str(extra))
-        found, missing = _tiffs(sidecar, reg_path)
-        tiffs |= set(str(t) for t in found if Path(t).is_file())
-        unresolved.update(missing)
+        views.append((sidecar, reg_path))
+    hashed = _hash_all(paths)
     inputs, stats = {}, {}
     for p in sorted(paths):
-        inputs[_rel(p, files.run_dir)] = grid.sha256_file(p)
+        inputs[_rel(p, files.run_dir)] = hashed[p]
+    for sidecar, reg_path in views:
+        located = {}
+        for record in (sidecar, reg_path):
+            if str(record) in hashed:
+                located[str(record)] = (hashed[str(record)],
+                                        prev_locators.get(_rel(record, files.run_dir)))
+        found, missing, read = _tiffs(sidecar, reg_path, located)
+        tiffs |= set(str(t) for t in found if Path(t).is_file())
+        unresolved.update(missing)
+        if locators_out is not None:
+            for path, loc in read.items():
+                locators_out[_rel(path, files.run_dir)] = loc
+            for path, (sha, prior) in located.items():
+                rel = _rel(path, files.run_dir)
+                if rel not in locators_out and isinstance(prior, dict) and \
+                        prior.get("sha256") == sha:
+                    locators_out[rel] = prior
+    to_hash = []
     for p in sorted(tiffs):
         rel = _rel(p, files.run_dir)
         stats[rel] = _stat(p)
         if prev_stats.get(rel) == stats[rel] and rel in prev_inputs:
             inputs[rel] = prev_inputs[rel]
         else:
-            inputs[rel] = grid.sha256_file(p)
+            to_hash.append(p)
+    for p, sha in _hash_all(to_hash).items():
+        inputs[_rel(p, files.run_dir)] = sha
     for label, reason in sorted(unresolved.items()):
         # Not a path: what was looked for, and why it was not found.
         inputs["unresolved: " + label] = reason
@@ -1271,13 +1384,44 @@ def upgrade_tiff_inputs(files):
     return "{0} TIFF hashes added; every view's status as recorded".format(len(stats))
 
 
-def write_run_census(files, inputs=None, stats=None):
+def add_tiff_locators(files, rec, locators):
+    """Record ``locators`` (``census_inputs``' ``locators_out``) in a FRESH
+    census summary that lacks them -- one written before 2.1.1 -- instead of
+    leaving every later check to parse its records again. ``rec`` is the
+    summary as read from disk; only ``tiff_locators`` (and the note
+    ``tiff_locators_added``) are added, so no field a pair reads
+    (``PAIR_READS``) and not the CSV changes. Written to a temporary file
+    beside it and moved over it, so an interruption leaves the old summary,
+    never a truncated one. Returns the summary as written, or None when the
+    summary already holds exactly these locators (nothing written)."""
+    want = dict(sorted(locators.items()))
+    if not want or rec.get("tiff_locators") == want:
+        return None
+    out = dict(rec, tiff_locators=want,
+               tiff_locators_added={"records": len(want), "census_version": CENSUS_VERSION,
+                                    "tool_version": TOOL_VERSION,
+                                    "rule": "added to a fresh census: every input's "
+                                            "sha256 as recorded"})
+    path = files.census_path("summary")
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        _write_json(tmp, out)
+        os.replace(str(tmp), str(path))
+    finally:
+        _unlink(tmp)
+    return out
+
+
+def write_run_census(files, inputs=None, stats=None, locators=None):
     """The census of one run, into its grid folder: the element CSV, then
     the summary naming its sha256 and the sha256 of every input (written
     last; CLAUDE.md, defect class 4). A refused run gets a summary saying so
-    and no CSV. Returns the summary as written."""
+    and no CSV. Returns the summary as written. ``locators`` (from
+    ``census_inputs``) is recorded as ``tiff_locators``: not an input, and
+    not read by the pair step."""
     if inputs is None:
-        inputs, stats = census_inputs(files)
+        locators = {}
+        inputs, stats = census_inputs(files, locators_out=locators)
     run = census_run(files.run_dir)
     files.grid_dir.mkdir(parents=True, exist_ok=True)
     csv_path, summary_path = files.census_path("csv"), files.census_path("summary")
@@ -1308,6 +1452,10 @@ def write_run_census(files, inputs=None, stats=None):
         "csv": None, "csv_sha256": None,
         "definitions": DEFINITIONS,
     }
+    if locators:
+        # 2.1.1: the path field each record's TIFF was found by, under the
+        # record's sha256, so a later check need not parse the record again.
+        summary["tiff_locators"] = dict(sorted(locators.items()))
     if run["refused"]:
         _unlink(csv_path)
     else:
@@ -1366,17 +1514,19 @@ def _listed(names, limit=5):
                                        if len(names) > limit else "")
 
 
-def census_staleness(files, inputs):
+def census_staleness(files, inputs, rec=None):
     """Why the run's census on disk is not current: empty when it is.
     Stale when it is absent, from another schema or census version, its CSV
     is not the one it names, or any input's sha256 differs from the one it
-    recorded (or an input was added or removed)."""
+    recorded (or an input was added or removed). ``rec`` is the summary
+    already read from disk, else it is read here."""
     path = files.census_path("summary")
     if not path.is_file():
         return ["no {0}".format(path.name)]
-    rec, why = _read_record(path)
     if rec is None:
-        return [why]
+        rec, why = _read_record(path)
+        if rec is None:
+            return [why]
     why = _version_check(rec, RUN_SCHEMA) or _csv_check(rec, files.grid_dir)
     if why:
         return [why]
@@ -1473,26 +1623,63 @@ def predecessors(all_files):
     return out
 
 
-def _summary_sha(files):
+def census_content(files, rec=None):
+    """What the pair step reads from one run's census (``load_run_census``),
+    as ``{"csv_sha256", "read_fields_sha256"}``: the census CSV's sha256 as
+    its summary records it (``_csv_check`` holds the file to it before any
+    pair reads it), and the sha256 of a canonical JSON of the summary fields
+    ``PAIR_READS`` -- not of the whole summary, whose ``inputs``,
+    ``input_stats`` and figures no pair output reads. ``census_version`` is
+    the one ``_version_check`` reads (``tool_version`` in a 2.0.0 summary).
+    ``rec`` is the summary already read, else it is read here. None when
+    there is no summary; ``{"unreadable_sha256"}`` when it is not a JSON
+    object (the pair step refuses it, and a different such file is a
+    different input)."""
     path = files.census_path("summary")
-    return grid.sha256_file(path) if path.is_file() else None
+    if rec is None:
+        if not path.is_file():
+            return None
+        rec, _why = _read_record(path)
+        if rec is None:
+            return {"unreadable_sha256": grid.sha256_file(path)}
+    fields = dict((k, rec.get(k)) for k in PAIR_READS)
+    fields["census_version"] = rec.get("census_version", rec.get("tool_version"))
+    blob = json.dumps(_plain(fields), sort_keys=True, separators=(",", ":"))
+    return {"csv_sha256": rec.get("csv_sha256"),
+            "read_fields_sha256": hashlib.sha256(blob.encode("utf-8")).hexdigest()}
 
 
-def pair_identity(cur, choice):
+CONTENT_RULE = ("each side: the census CSV's sha256 as its summary records it, and the "
+                "sha256 of the canonical JSON (sorted keys, no spaces) of the summary "
+                "fields {0}".format(", ".join(PAIR_READS)))
+
+
+def pair_identity(cur, choice, contents=None):
     """What a pair's outputs are a function of: the predecessor chosen (by
     run_id, folder name and as-of date -- not by absolute path, so a renamed
-    model folder does not make every pair stale) and both census summaries'
-    sha256 (each names its CSV's)."""
+    model folder does not make every pair stale) and what the pair reads of
+    each census (``census_content``; 2.1.1 -- before, the sha256 of each
+    whole census summary, which changed whenever a census was rewritten,
+    with new TIFF modified times, onto the same CSV). ``contents`` is
+    ``{run_dir: census_content}`` already read (the driver's, one read per
+    census); a run not in it is read here."""
     state, prev, reason = choice
+    contents = contents if contents is not None else {}
+
+    def _content(files):
+        key = str(files.run_dir)
+        if key not in contents:
+            contents[key] = census_content(files)
+        return contents[key]
     return {"state": state, "reason": reason,
             "predecessor": None if prev is None else {
                 "run_id": prev.run_id, "run_dir_name": prev.name,
                 "as_of_date": prev.as_of_date},
-            "census_summary_sha256": {"cur": _summary_sha(cur),
-                                      "prev": None if prev is None else _summary_sha(prev)}}
+            "census_content": {"cur": _content(cur),
+                               "prev": None if prev is None else _content(prev)}}
 
 
-def pair_staleness(cur, choice):
+def pair_staleness(cur, choice, contents=None):
     """Why the run's transitions on disk are not current: empty when they are."""
     path = cur.pair_path("summary")
     if not path.is_file():
@@ -1503,15 +1690,15 @@ def pair_staleness(cur, choice):
     why = _version_check(rec, PAIR_SCHEMA) or _csv_check(rec, cur.grid_dir)
     if why:
         return [why]
-    want, have = pair_identity(cur, choice), rec.get("identity") or {}
+    want, have = pair_identity(cur, choice, contents), rec.get("identity") or {}
     reasons = []
     if want["predecessor"] != have.get("predecessor"):
         reasons.append("the predecessor is now {0}, it was {1}".format(
             (want["predecessor"] or {}).get("run_dir_name"),
             (have.get("predecessor") or {}).get("run_dir_name")))
     for side in ("cur", "prev"):
-        recorded = (have.get("census_summary_sha256") or {}).get(side)
-        if want["census_summary_sha256"][side] != recorded:
+        recorded = (have.get("census_content") or {}).get(side)
+        if want["census_content"][side] != recorded:
             reasons.append("the {0} census changed".format(
                 "run's own" if side == "cur" else "predecessor's"))
     if (want["state"], want["reason"]) != (have.get("state"), have.get("reason")) \
@@ -1520,15 +1707,15 @@ def pair_staleness(cur, choice):
     return reasons
 
 
-def write_pair(cur, choice):
+def write_pair(cur, choice, contents=None):
     """Run ``cur`` against its predecessor, into ``cur``'s grid folder: the
     transitions CSV (one row per element key on either side), then the
-    summary naming its sha256 and both census files' (written last). No
+    summary naming its sha256 and both census CSVs' (written last). No
     predecessor or a refused pair: a summary saying so and no CSV, never
     zeros. Read from the census FILES, through ``classify`` and
     ``host_id_overlap`` -- the functions the series uses."""
     state, prev, reason = choice
-    identity = pair_identity(cur, choice)
+    identity = pair_identity(cur, choice, contents)
     cur.grid_dir.mkdir(parents=True, exist_ok=True)
     csv_path, summary_path = cur.pair_path("csv"), cur.pair_path("summary")
     _unlink(summary_path)
@@ -1553,7 +1740,6 @@ def write_pair(cur, choice):
             for side, files, rec in (("cur", cur, c_rec), ("prev", prev, p_rec)):
                 summary["census"][side] = {
                     "summary": files.census_summary,
-                    "summary_sha256": identity["census_summary_sha256"][side],
                     "csv": rec.get("csv"), "csv_sha256": rec.get("csv_sha256")}
             classes = classify(p_run, c_run)
             _e, _l, summary["counts"] = transitions(p_run, c_run)
@@ -1576,7 +1762,8 @@ def write_pair(cur, choice):
                     for key, r in sorted(classes.items())]
     # The identity is what the outputs were computed FROM (the choice); the
     # state is how it ended (a census refusal found while reading refuses it).
-    summary.update(state=state, reason=reason, identity=identity)
+    summary.update(state=state, reason=reason, identity=identity,
+                   identity_rule=CONTENT_RULE)
     if rows is None:
         _unlink(csv_path)
     else:
@@ -1597,27 +1784,98 @@ def find_runs(root):
     return [Path(run_dir) for run_dir, _meta in found], scan
 
 
+def _left_in_place(files):
+    """The census and transitions files already in a run's grid folder, by
+    name (dated and undated), which the driver leaves as they are."""
+    names = set([files.census_csv, files.census_summary, files.pair_csv,
+                 files.pair_summary])
+    names |= set(output_layout.CENSUS_UNDATED) | set(output_layout.TRANSITIONS_UNDATED)
+    return sorted(n for n in names if (files.grid_dir / n).is_file())
+
+
+def _left_in_folder(run_dir):
+    """The census and transitions files in a run folder's grid folders, by
+    name, for a run whose run_meta cannot be read (so no ``RunFiles``)."""
+    names = set()
+    for sub in output_layout.GRID_DIR.values():
+        folder = Path(run_dir) / sub
+        if folder.is_dir():
+            prefixes = ("element_census", "element_transitions")
+            names |= set(p.name for p in folder.iterdir()
+                         if p.is_file() and p.name.startswith(prefixes))
+    return sorted(names)
+
+
+def out_of_scope(files):
+    """Why the driver leaves a run alone, or None. A run is out of scope
+    when (a) its run_meta is absent or unreadable (``RunFiles.meta``, found
+    by ``find_run_meta``) or its ``finalized`` is not true -- a capture
+    still being written -- or (b) no requested view can have been gridded:
+    none of its model sidecars has a ``<stem>.grid.json`` in its grid
+    folder. Decided from what is on disk before anything is written."""
+    if not files.meta:
+        return "no run_meta.json could be read (absent, unreadable, or two in one folder)"
+    if files.meta.get("finalized") is not True:
+        return "run_meta.json finalized is {0!r}, not true (a capture still being " \
+               "written, or interrupted)".format(files.meta.get("finalized"))
+    stems = [Path(s).stem for s in files.sidecars]
+    found = sum(1 for st in stems if (files.grid_dir / (st + ".grid.json")).is_file())
+    if not found:
+        return "not gridded: 0 of {0} model sidecar(s) have a <stem>.grid.json in {1}{2}".format(
+            len(stems), files.grid_dir, "" if files.grid_dir.is_dir() else
+            " (the folder does not exist)")
+    return None
+
+
 def drive(root, progress=None):
     """Compute only the per-run censuses and pairs under ``root`` that are
     missing or stale; returns one action record per census and per pair:
-    ``{"step", "run", "action" (computed | fresh), "state", "why"}``.
-    Censuses come first: a pair's staleness is a function of both census
-    summaries."""
+    ``{"step", "run", "action" (computed | upgraded | fresh | skipped),
+    "state", "why"}``. Censuses come first: a pair's staleness is a function
+    of both censuses.
+
+    A run with no capture folder, or out of scope (``out_of_scope``: not
+    finalized, or not gridded), is SKIPPED before anything is written for
+    it: no census, no pair, no folder; one ``skipped`` record and one line,
+    naming any census or transitions file already there (left in place).
+    A skipped run is not in the series: the next run pairs with the latest
+    earlier run that is not skipped (``predecessors`` is given only the runs
+    in scope), and its pair records which run that was."""
     say = progress or (lambda line: None)
     run_dirs, scan = find_runs(root)
-    for s in scan["skipped"]:
-        say("skipped {0}: {1}".format(s["path_rel"], s["reason"]))
     all_files, actions = [], []
+    for s in scan["skipped"]:
+        folder = Path(root) / s["path_rel"]
+        if not output_layout.run_meta_candidates(folder):
+            say("skipped {0}: {1}".format(s["path_rel"], s["reason"]))
+            continue
+        # A run folder the walk could not index (run_meta unreadable or
+        # ambiguous, or a folder name that is not <date>__<run_id>): skipped
+        # like any run out of scope, with what is already in it named.
+        left = _left_in_folder(folder)
+        actions.append({"step": "census", "run": folder.name, "action": "skipped",
+                        "state": None, "why": s["reason"], "left_in_place": left})
+        say("skipped {0}: {1}{2}".format(folder.name, s["reason"], "; left in place: " +
+                                         ", ".join(left) if left else ""))
     for r in run_dirs:
         f = RunFiles(r)
-        if f.has_capture:
-            all_files.append(f)
+        if not f.has_capture:
+            actions.append({"step": "census", "run": f.name, "action": "skipped",
+                            "state": None, "why": "no capture folder"})
+            say("skipped {0}: no capture folder, so no census and no place in the "
+                "series".format(f.name))
             continue
-        actions.append({"step": "census", "run": f.name, "action": "skipped",
-                        "state": None, "why": "no capture folder"})
-        say("skipped {0}: no capture folder, so no census and no place in the "
-            "series".format(f.name))
+        reason = out_of_scope(f)
+        if reason:
+            left = _left_in_place(f)
+            actions.append({"step": "census", "run": f.name, "action": "skipped",
+                            "state": None, "why": reason, "left_in_place": left})
+            say("skipped {0}: {1}{2}".format(f.name, reason, "; left in place: " +
+                                             ", ".join(left) if left else ""))
+            continue
+        all_files.append(f)
     all_files.sort(key=lambda x: (str(x.run_dir.parent), x.as_of_date or "", x.name))
+    contents = {}
     for n, f in enumerate(all_files, 1):
         started = time.time()
         adopted = adopt_undated(f)
@@ -1628,25 +1886,34 @@ def drive(root, progress=None):
             say("        upgraded {0}: {1}".format(f.name, upgraded))
         previous = (_read_record(f.census_path("summary"))[0]
                     if f.census_path("summary").is_file() else None)
-        inputs, stats = census_inputs(f, previous)
-        why = census_staleness(f, inputs)
+        locators = {}
+        inputs, stats = census_inputs(f, previous, locators_out=locators)
+        why = census_staleness(f, inputs, previous)
+        added = None
         if why:
-            rec = write_run_census(f, inputs, stats)
+            rec = write_run_census(f, inputs, stats, locators)
             action = "computed"
         else:
-            rec = _load_json(f.census_path("summary"))
+            rec = previous
             action = "upgraded" if upgraded else "fresh"
+            added = add_tiff_locators(f, rec, locators)
+            if added is not None:
+                rec = added
+                say("        added tiff_locators to {0}: {1} record(s)".format(
+                    f.name, len(added["tiff_locators"])))
+        contents[str(f.run_dir)] = census_content(f, rec)
         actions.append({"step": "census", "run": f.name, "action": action,
-                        "state": rec.get("state"), "why": "; ".join(why)})
+                        "state": rec.get("state"), "why": "; ".join(why),
+                        "locators_added": added is not None})
         say("[{0}/{1}] census {2:<8} {3:.0f}s {4} ({5}){6}".format(
             n, len(all_files), action, time.time() - started, f.name, rec.get("state"),
             ": " + "; ".join(why) if why else ""))
     choices = predecessors(all_files)
     for f in all_files:
         choice = choices[str(f.run_dir)]
-        why = pair_staleness(f, choice)
+        why = pair_staleness(f, choice, contents)
         if why:
-            rec = write_pair(f, choice)
+            rec = write_pair(f, choice, contents)
             action = "computed"
         else:
             rec = _load_json(f.pair_path("summary"))
@@ -1715,11 +1982,13 @@ def main(argv=None):
             return 2
         done = [a for a in actions if a["action"] == "computed"]
         print("{0} census(es) and {1} pair(s) computed; {2} upgraded; {3} fresh; {4} run(s) "
-              "skipped".format(sum(1 for a in done if a["step"] == "census"),
-                               sum(1 for a in done if a["step"] == "pair"),
-                               sum(1 for a in actions if a["action"] == "upgraded"),
-                               sum(1 for a in actions if a["action"] == "fresh"),
-                               sum(1 for a in actions if a["action"] == "skipped")))
+              "skipped; tiff_locators added to {5} census(es)".format(
+                  sum(1 for a in done if a["step"] == "census"),
+                  sum(1 for a in done if a["step"] == "pair"),
+                  sum(1 for a in actions if a["action"] == "upgraded"),
+                  sum(1 for a in actions if a["action"] == "fresh"),
+                  sum(1 for a in actions if a["action"] == "skipped"),
+                  sum(1 for a in actions if a.get("locators_added"))))
         refused = [a for a in actions if a["state"] == "refused"]
         for a in refused:
             print("REFUSED {0} {1}".format(a["step"], a["run"]))

@@ -20,7 +20,11 @@ Then, once per model folder (each run folder's parent):
                    next run's, when it was backfilled between two). A sibling
                    whose census is missing or stale is computed too, so the
                    first analysis of a model folder never run through the
-                   driver costs every run's census.
+                   driver costs every run's census. A sibling not finalized,
+                   or with no grid record, is skipped and nothing is written
+                   into it (census 2.1.1). Step 6 rewrites the named run's
+                   census every time; its pairs are recomputed only when
+                   what they read of it (the CSV, the view ids) changed.
 Then, per run again:
   8. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
                    named as views_core is and written beside it
