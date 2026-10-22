@@ -143,3 +143,43 @@ def test_index_root_rebuilds_the_runs_index_with_the_census(tmp_path):
         ("RUN_A", "value", "no_predecessor")]
     code, results = analyze.analyze([run])                           # control: not asked
     assert "index" not in [r["stage"] for r in results]
+
+
+def test_the_pairs_stage_checks_only_the_analysed_run_and_its_neighbours(tmp_path,
+                                                                         monkeypatch):
+    """Three runs already analysed; analysing a fourth hashes only its own
+    census and its predecessor's, not the first two runs' (Greg's
+    2025-10-25 analysis spent 58.7 s re-proving 48 other runs fresh)."""
+    from tools import stage_a_element_census as census
+    model = tmp_path / "Exports" / "KSRF" / "Model"
+    model.mkdir(parents=True)
+    runs = []
+    for date, run_id in (("2026-10-07", "RUN_A"), ("2026-10-14", "RUN_B"),
+                         ("2026-10-21", "RUN_C")):
+        run = _run(model, "{0}__{1}".format(date, run_id), run_id, date=date)
+        _capture(run, 1, register=False, gridded=False)
+        runs.append(run)
+    assert analyze.analyze(runs)[0] == 0
+    new = _run(model, "2026-10-28__RUN_D", "RUN_D", date="2026-10-28")
+    _capture(new, 1, register=False, gridded=False)
+    seen = []
+    real_drive = census.drive
+
+    def watched(root, progress=None, focus=None):
+        seen.append(focus)
+        return real_drive(root, progress, focus)
+    monkeypatch.setattr(census, "drive", watched)
+    hashed = []
+    real_inputs = census.census_inputs
+
+    def watched_inputs(files, *a, **kw):
+        hashed.append(files.name)
+        return real_inputs(files, *a, **kw)
+    monkeypatch.setattr(census, "census_inputs", watched_inputs)
+    code, results = analyze.analyze([new])
+    assert code == 0
+    assert [[str(p) for p in f] for f in seen] == [[str(new.resolve())]]
+    assert sorted(set(hashed)) == sorted([runs[-1].name, new.name])
+    pair = json.loads((new / "analysis_grid" /
+                       "element_transitions_2026-10-28.summary.json").read_text())
+    assert pair["predecessor"]["run_id"] == "RUN_C"

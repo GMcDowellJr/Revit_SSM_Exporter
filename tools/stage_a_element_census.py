@@ -117,6 +117,19 @@ one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
     skipped run is not in the series: the next run pairs with the latest
     earlier run in scope. The writers (``write_run_census``, ``write_pair``)
     still write a refused summary when called directly.
+  * ``--focus <run> ...`` with ``--root`` (2026-10-22): only the named runs'
+    censuses and pairs and their neighbours' are checked -- a run R's
+    census, its predecessor's (R's pair reads it; computed if missing) and
+    its successor's, and the pairs R <- predecessor and successor <- R
+    (``focus_set``). The series and every predecessor are still worked out
+    over the whole root (run_meta and grid listings; nothing hashed), so a
+    focused run pairs exactly as in a full sweep. Every other run is left
+    unchecked and gets no action record. ``stage_a_analyze.py`` focuses on
+    the runs it analysed: Greg's 2025-10-25 analysis spent 58.7 s of 581.7 s
+    re-proving 48 other runs fresh, a cost that grew with every run kept.
+    DECLARED LIMIT: a run whose files changed outside the analysis driver
+    (by hand, or another tool) stays stale until it is analysed again or
+    ``--root`` runs without ``--focus``.
 
 ``--out DIR`` with run arguments is the multi-run convenience, built on the
 same functions: ``<as_of_date>__<run_id>.elements.csv`` per run,
@@ -127,6 +140,7 @@ section 8). An empty CSV cell is "not applicable", never 0. Columns are
 appended, never reordered.
 
     python tools/stage_a_element_census.py --root <model folder>
+    python tools/stage_a_element_census.py --root <model folder> --focus <run> [<run> ...]
     python tools/stage_a_element_census.py <run> [<run> ...]           # each run's census
     python tools/stage_a_element_census.py <run> [<run> ...] --out DIR
 
@@ -216,7 +230,7 @@ ambiguous, or a folder name that is not ``<date>__<run_id>``) is a
 transitions files already in it; the driver writes nothing into it.
 
 Exit, ``--root``: 0 nothing refused, 1 a census or pair refused, 2 no run
-folder found. A skipped run is not a refusal: a root whose runs are all
+folder found, or a ``--focus`` run that is not under the root. A skipped run is not a refusal: a root whose runs are all
 skipped (an unindexable run folder included) exits 0. Runs without
 ``--out``: 0 every view measured, 1 a view unmeasured, 2 a run refused.
 ``--out``: 0 when no run is refused and every requested view is measured; 1
@@ -1827,7 +1841,32 @@ def out_of_scope(files):
     return None
 
 
-def drive(root, progress=None):
+def focus_set(all_files, choices, focus):
+    """``(census runs, pair runs)``, each a set of run_dir strings, for the
+    runs in ``focus``: a focused run R's census, its predecessor P's and its
+    successor S's (the run whose predecessor is R), and the pairs R <- P and
+    S <- R. Nothing else in the folder reads or is read by them. ``choices``
+    is ``predecessors(all_files)``, over EVERY run in scope, so P and S are
+    the series' own."""
+    focus = set(focus)
+    successor = {}
+    for f in all_files:
+        _state, prev, _why = choices[str(f.run_dir)]
+        if prev is not None:
+            successor.setdefault(str(prev.run_dir), []).append(str(f.run_dir))
+    censuses, pairs = set(), set()
+    for f in all_files:
+        key = str(f.run_dir)
+        if key not in focus:
+            continue
+        _state, prev, _why = choices[key]
+        after = successor.get(key, [])
+        censuses |= {key} | set(after) | ({str(prev.run_dir)} if prev is not None else set())
+        pairs |= {key} | set(after)
+    return censuses, pairs
+
+
+def drive(root, progress=None, focus=None):
     """Compute only the per-run censuses and pairs under ``root`` that are
     missing or stale; returns one action record per census and per pair:
     ``{"step", "run", "action" (computed | upgraded | fresh | skipped),
@@ -1840,7 +1879,14 @@ def drive(root, progress=None):
     naming any census or transitions file already there (left in place).
     A skipped run is not in the series: the next run pairs with the latest
     earlier run that is not skipped (``predecessors`` is given only the runs
-    in scope), and its pair records which run that was."""
+    in scope), and its pair records which run that was.
+
+    ``focus`` (run folders, from ``--focus``): only those runs' censuses and
+    pairs and their neighbours' (``focus_set``) are checked; the series and
+    every predecessor are still worked out over all of ``root``, which reads
+    run_meta and lists grid records but hashes nothing. A run outside it gets
+    no action record: it is neither checked nor written. None: every run.
+    A focused run not found under ``root`` raises CensusRefusal."""
     say = progress or (lambda line: None)
     run_dirs, scan = find_runs(root)
     all_files, actions = [], []
@@ -1875,8 +1921,24 @@ def drive(root, progress=None):
             continue
         all_files.append(f)
     all_files.sort(key=lambda x: (str(x.run_dir.parent), x.as_of_date or "", x.name))
+    choices = predecessors(all_files)
+    census_runs = pair_runs = None
+    if focus is not None:
+        wanted = set(str(Path(r).resolve()) for r in focus)
+        known = set(str(Path(f.run_dir).resolve()) for f in all_files) | set(
+            str((Path(root) / s["path_rel"]).resolve()) for s in scan["skipped"]) | set(
+            str(Path(r).resolve()) for r in run_dirs)
+        unknown = sorted(wanted - known)
+        if unknown:
+            raise CensusRefusal("--focus names no run under {0}: {1}".format(
+                root, ", ".join(unknown)))
+        resolved = dict((str(Path(f.run_dir).resolve()), str(f.run_dir)) for f in all_files)
+        census_runs, pair_runs = focus_set(all_files, choices,
+                                           [resolved[w] for w in wanted if w in resolved])
+    checked = [f for f in all_files
+               if census_runs is None or str(f.run_dir) in census_runs]
     contents = {}
-    for n, f in enumerate(all_files, 1):
+    for n, f in enumerate(checked, 1):
         started = time.time()
         adopted = adopt_undated(f)
         if adopted:
@@ -1906,10 +1968,11 @@ def drive(root, progress=None):
                         "state": rec.get("state"), "why": "; ".join(why),
                         "locators_added": added is not None})
         say("[{0}/{1}] census {2:<8} {3:.0f}s {4} ({5}){6}".format(
-            n, len(all_files), action, time.time() - started, f.name, rec.get("state"),
+            n, len(checked), action, time.time() - started, f.name, rec.get("state"),
             ": " + "; ".join(why) if why else ""))
-    choices = predecessors(all_files)
     for f in all_files:
+        if pair_runs is not None and str(f.run_dir) not in pair_runs:
+            continue
         choice = choices[str(f.run_dir)]
         why = pair_staleness(f, choice, contents)
         if why:
@@ -1970,13 +2033,24 @@ def main(argv=None):
     ap.add_argument("--root", default=None,
                     help="a model folder (or an export root): compute only the per-run "
                          "censuses and pairs that are missing or stale")
+    ap.add_argument("--focus", nargs="+", default=None, metavar="run",
+                    help="with --root: check only these runs' censuses and pairs and "
+                         "their neighbours' (predecessor and successor), not every run "
+                         "under the root")
     args = ap.parse_args(argv)
+    if args.focus and not args.root:
+        ap.error("--focus takes --root")
     if args.root:
         if args.runs or args.out:
             ap.error("--root takes no run arguments and no --out")
         if not Path(args.root).is_dir():
             ap.error("not a directory: {0}".format(args.root))
-        actions = drive(args.root, progress=lambda line: print(line, flush=True))
+        try:
+            actions = drive(args.root, progress=lambda line: print(line, flush=True),
+                            focus=args.focus)
+        except CensusRefusal as ex:
+            print("REFUSED: {0}".format(ex))
+            return 2
         if not actions:
             print("no run folder under {0}".format(args.root))
             return 2

@@ -14,17 +14,21 @@ Then, per run again:
   6. census     -- stage_a_element_census on the run alone: element_census_<d>.csv
                    and .summary.json in the run's grid folder
 Then, once per model folder (each run folder's parent):
-  7. pairs      -- stage_a_element_census --root <model folder>: the transitions of
-                   every run there against its predecessor, computing only what
-                   is missing or stale -- for a new run, its own pair (and the
-                   next run's, when it was backfilled between two). A sibling
-                   whose census is missing or stale is computed too, so the
-                   first analysis of a model folder never run through the
-                   driver costs every run's census. A sibling not finalized,
-                   or with no grid record, is skipped and nothing is written
-                   into it (census 2.1.1). Step 6 rewrites the named run's
-                   census every time; its pairs are recomputed only when
-                   what they read of it (the CSV, the view ids) changed.
+  7. pairs      -- stage_a_element_census --root <model folder> --focus <runs>:
+                   the analysed runs' pairs against their predecessors, and
+                   their successors' pairs against them (a run backfilled
+                   between two), computing only what is missing or stale.
+                   Only those runs' censuses are checked -- the analysed
+                   run's, its predecessor's (computed if missing) and its
+                   successor's -- never every run in the folder: the series
+                   and the predecessors are still worked out over the whole
+                   folder, which hashes nothing. A run outside them is not
+                   checked; `--root` alone is the full sweep. A sibling not
+                   finalized, or with no grid record, is skipped and nothing
+                   is written into it (census 2.1.1). Step 6 rewrites the
+                   named run's census every time; its pairs are recomputed
+                   only when what they read of it (the CSV, the view ids)
+                   changed.
 Then, per run again:
   8. timing     -- stage_a_timing_report: views_timing_<date or override>.csv / .json,
                    named as views_core is and written beside it
@@ -109,15 +113,15 @@ def analyze(runs, out=None, index_root=None):
     # inventory or roll-up wrote, so a run it refuses (exit 2) stops nothing.
     for run, run_dir in zip(runs, run_dirs):
         _stage("census", str(run), census.main, [run_dir], results)
-    # The pairs need every run of the model folder, not only these: once per
-    # folder, in the order first named.
-    models = []
+    # Once per model folder, in the order first named: the folder gives the
+    # series, the analysed runs in it are the focus.
+    models = {}
     for run_dir in run_dirs:
-        model = Path(run_dir).resolve().parent
-        if model not in models:
-            models.append(model)
-    for model in models:
-        _stage("pairs", str(model), census.main, ["--root", model], results)
+        run_dir = Path(run_dir).resolve()
+        models.setdefault(run_dir.parent, []).append(run_dir)
+    for model, focused in models.items():
+        _stage("pairs", str(model), census.main,
+               ["--root", model, "--focus"] + focused, results)
     for run, run_dir in zip(runs, run_dirs):
         _stage("timing", str(run), timing.main, [run_dir], results)
     worst = max(r["exit"] for r in results)

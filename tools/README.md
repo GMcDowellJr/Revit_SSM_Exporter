@@ -325,8 +325,8 @@ run's census and one pair, not the whole series.
    `element_census_<d>.summary.json`
    (written last, naming the CSV's sha256). `stage_a_analyze.py` runs it after
    the roll-up and kinds inventory, then the driver (step 3) once per model
-   folder, so an analysed run gets its pair too; `--index-root <Exports>`
-   then rebuilds the runs index.
+   folder, focused on the runs it analysed (`--focus`), so an analysed run
+   gets its pair too; `--index-root <Exports>` then rebuilds the runs index.
 2. **Pair**: a run against its predecessor -- the run with the previous as-of
    date (run_meta `date`) in the same model folder (the run folder's parent,
    `model_key` in the runs index); never run_id or folder order. Into the
@@ -339,6 +339,13 @@ run's census and one pair, not the whole series.
    why. A census an earlier 2.0.0 wrote under the undated names
    (`element_census.csv`) is renamed to the dated ones, not recomputed; its
    pairs are recomputed and the undated transitions files removed.
+   `--focus <run> ...` limits it to those runs and their neighbours: each
+   run's census, its predecessor's (computed if missing) and its
+   successor's, and the pairs run <- predecessor and successor <- run. The
+   series is still worked out over the whole folder (nothing hashed), so a
+   focused run pairs as in a full sweep; no other run is checked. A run
+   whose files changed outside the analysis driver stays stale until it is
+   analysed again or `--root` runs without `--focus` (the full sweep).
 
 **Per element** (`element_census_<d>.csv`): views collected and with
 pixels; px, ink px, cells with any pixel, cells with ink, summed over views,
