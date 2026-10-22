@@ -49,6 +49,7 @@ import json
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from tools import npz_write  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
@@ -161,8 +163,12 @@ def residual_at_measured_ticks(mapping, ticks):
     return worst
 
 
-def choose_mapping(sidecar, rgb, crop_uv):
+def choose_mapping(sidecar, rgb, crop_uv, located=None):
     """``(mapping, basis_record)``: the mapping closer to the measured ticks.
+
+    ``located``: registration_marks.locate_recorded_marks for this image, so
+    the ticks the fit measures are the ones the decode subtracts, located
+    once (grid_view).
 
     Both mappings are scored the same way: the largest distance between where
     each puts a tick's centre line and where the fit MEASURED it
@@ -180,7 +186,8 @@ def choose_mapping(sidecar, rgb, crop_uv):
                               "reason": refusal or "the capture records no ticks"}
     else:
         fit = rm.fit_recorded_marks(rgb, payload,
-                                    reserved_colours=rm.palette_colours(sidecar))
+                                    reserved_colours=rm.palette_colours(sidecar),
+                                    located=located)
         if fit.get("status") != "value":
             record["tick_fit"] = {"status": "unavailable", "reason": fit.get("reason")}
             fit = None
@@ -409,8 +416,9 @@ def lattice_origin(crop_min_uv, cell_ft):
     return out
 
 
-def build_spec(sidecar, rgb, run_config, lattice=None):
-    """The GridSpec for one view, or raises GridRefusal."""
+def build_spec(sidecar, rgb, run_config, lattice=None, located=None):
+    """The GridSpec for one view, or raises GridRefusal. ``located``: as
+    choose_mapping takes it."""
     frame = frame_record(sidecar)
     scale = frame.get("view_scale")
     crop = frame.get("crop_uv")
@@ -424,7 +432,7 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
     if not crop or len(crop) != 4:
         raise GridRefusal("the frame record carries no crop_uv")
     cell_ft = float(cell_in) * float(scale) / 12.0
-    mapping, basis = choose_mapping(sidecar, rgb, crop)
+    mapping, basis = choose_mapping(sidecar, rgb, crop, located)
     px_u = abs(mapping["a_u"]) * cell_ft
     px_v = abs(mapping["a_v"]) * cell_ft
     px_per_cell = min(px_u, px_v)
@@ -484,18 +492,26 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
 # --- counting ----------------------------------------------------------------
 
 def _accumulate(spec, counts, channel_masks, model_cols, model_rows):
-    """Add each channel mask's pixels to its per-cell count."""
+    """Add each channel mask's pixels to its per-cell count.
+
+    A chunk of pixel rows falls in a contiguous band of cell rows, so each
+    bincount is sized to that band and added into its slice of the counts:
+    the same sums as a bincount over every cell, without allocating and
+    adding a whole-grid array per chunk per channel -- a cost that grew with
+    the cell count, i.e. as 1 / (px per cell)^2 for one image size."""
+    w = spec["cells_w"]
     i = cells_of_columns(spec, model_cols) - spec["i_range"][0]
     j = cells_of_rows(spec, model_rows) - spec["j_range"][0]
-    flat = (j[:, None] * spec["cells_w"] + i[None, :]).ravel()
-    n = spec["cells_w"] * spec["cells_h"]
+    lo, hi = int(j.min()), int(j.max()) + 1
+    if lo < 0 or hi > spec["cells_h"]:
+        # A whole-grid bincount raised on these too (a negative index, or a
+        # result longer than the counts).
+        raise ValueError("pixel rows map to cell rows [{0}, {1}) outside the grid's "
+                         "[0, {2})".format(lo, hi, spec["cells_h"]))
+    flat = ((j - lo)[:, None] * w + i[None, :]).ravel()
+    n = (hi - lo) * w
     for name, mask in channel_masks.items():
-        counts[name] += np.bincount(flat[mask.ravel()], minlength=n)
-
-
-def _pack(rgb):
-    return (rgb[..., 0].astype(np.int64) << 16) | (rgb[..., 1].astype(np.int64) << 8) \
-        | rgb[..., 2].astype(np.int64)
+        counts[name][lo * w:hi * w] += np.bincount(flat[mask.ravel()], minlength=n)
 
 
 def _colour_set(colour_map):
@@ -521,19 +537,43 @@ def model_channel_masks(sidecar, rgb):
     return model_pixels(sidecar, rgb)[0]
 
 
-def model_pixels(sidecar, rgb):
+def decoded_id_in(packed, colour_map, ids):
+    """``np.isin(decode_ids(colour_map) ids, ids)`` ON EVERY ELEMENT PIXEL
+    (decoded id != 0), from the packed colours, through a bool table over the
+    2**24 colours: a pixel's decoded id is in ``ids`` exactly when its
+    colour's (last-named, as _build_lookup) id is. A background pixel is
+    False here, where isin would say True if ``ids`` held 0; both callers AND
+    this with ``element``, so they cannot tell the two apart.
+    The table is bounded by the colour space, never by the id range (Revit
+    2024+ ElementIds are 64-bit), and replaces a full-image isin.
+    tests/test_stage_a_grid_element_cell.py composes the two."""
+    wanted = set(int(i) for i in ids)
+    last = {}
+    for elem_id_str, rgb in colour_map.items():
+        r, g, b = (int(c) for c in rgb)
+        last[(r << 16) | (g << 8) | b] = int(elem_id_str)
+    lut = np.zeros(256 * 256 * 256, dtype=bool)
+    hits = [c for c, eid in last.items() if eid in wanted]
+    if hits:
+        lut[np.array(hits, dtype=np.int64)] = True
+    return lut[packed]
+
+
+def model_pixels(sidecar, rgb, packed=None):
     """``(masks, id_array, packed, decode_map)``: model_channel_masks' masks,
     with the decoded element id of every pixel (0 = none), the packed colours
-    and the decode map they came from (the ticks' ids removed)."""
-    decode_map, _block, mark_mask = dsc._registration_mark_exclusion(rgb, sidecar)
-    id_array, _stats = dsc.decode_ids(rgb, decode_map)
-    packed = _pack(rgb)
+    and the decode map they came from (the ticks' ids removed). ``packed``:
+    registration_marks.pack_pixels(rgb), when the caller has it."""
+    packed = rm.pack_pixels(rgb) if packed is None else packed
+    decode_map, _block, mark_mask = dsc._registration_mark_exclusion(
+        rgb, sidecar, with_fit=False, packed=packed)
+    id_array, _stats = dsc.decode_ids(rgb, decode_map, packed=packed, with_stats=False)
     host_map = (sidecar.get("near_face_w_map") or {}).get("host") or {}
     dwg_ids = np.array(sorted(int(k) for k, e in host_map.items()
                               if isinstance(e, dict) and e.get("source") == "DWG"),
                        dtype=np.int64)
     element = id_array != dsc.BACKGROUND_ELEMENT_ID
-    dwg = element & np.isin(id_array, dwg_ids)
+    dwg = element & decoded_id_in(packed, decode_map, dwg_ids)
     rest = ~element
     tick = rest & mark_mask if mark_mask is not None else np.zeros_like(rest)
     rest = rest & ~tick
@@ -574,13 +614,17 @@ def assign_black(black, bbox_map, excluded_ids, spec, canvas_origin,
 
     ``return_ids``: also return, third, the element id each black pixel was
     assigned to (int64, ``black.shape``, 0 where none) -- the ``best_id``
-    already computed, for the element x cell accounting. The mask and the
-    record are the same either way."""
+    already computed, for the element x cell accounting. ``"assigned"``:
+    only the assigned pixels' ids, 1-D in row-major order -- what
+    ``ids[mask]`` would give -- without a canvas-sized int64 array. The mask
+    and the record are the same either way."""
     ys, xs = np.nonzero(black)
     record = {"total": int(len(xs)), "pad_px": pad, "rule": "smallest containing "
               "annotation bbox"}
     mask = np.zeros(black.shape, dtype=bool)
-    ids_out = np.zeros(black.shape, dtype=np.int64) if return_ids else None
+    sparse_ids = return_ids == "assigned"
+    ids_out = (np.zeros(0, dtype=np.int64) if sparse_ids
+               else np.zeros(black.shape, dtype=np.int64) if return_ids else None)
     if not len(xs):
         record.update(assigned=0, ambiguous=0, unassigned=0, by_element={})
         return (mask, record, ids_out) if return_ids else (mask, record)
@@ -611,7 +655,10 @@ def assign_black(black, bbox_map, excluded_ids, spec, canvas_origin,
         best_id[better] = eid
     assigned = hits > 0
     mask[ys[assigned], xs[assigned]] = True
-    if return_ids:
+    if sparse_ids:
+        # np.nonzero is row-major, so this is ids_out[mask]'s order.
+        ids_out = best_id[assigned]
+    elif return_ids:
         ids_out[ys[assigned], xs[assigned]] = best_id[assigned]
     ids, counts = np.unique(best_id[assigned], return_counts=True)
     if not_ids:
@@ -632,17 +679,20 @@ def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin
     return anno_pixels(anno_sidecar, rgb, excluded_ids, spec, canvas_origin)[:2]
 
 
-def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)):
+def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0),
+                return_packed=False, black_ids_assigned=False):
     """``(masks, info, ids, black_ids, colour_map)``: anno_channel_masks'
     masks and info, with each pixel's decoded element id and each black
     pixel's assigned element id (0 = none), and the colour map decoded (the
-    excluded ids removed)."""
+    excluded ids removed). ``return_packed``: the packed colours too, sixth.
+    ``black_ids_assigned``: ``black_ids`` is only the black_assigned pixels'
+    ids, 1-D row-major (assign_black's ``return_ids="assigned"``)."""
     excluded = set(int(e) for e in excluded_ids or ())
     colour_map = dict((k, v) for k, v in (anno_sidecar.get("color_assignment_map") or {}).items()
                       if int(k) not in excluded)
-    packed = _pack(rgb)
+    packed = rm.pack_pixels(rgb)
     if colour_map:
-        ids, _stats = dsc.decode_ids(rgb, colour_map)
+        ids, _stats = dsc.decode_ids(rgb, colour_map, packed=packed, with_stats=False)
     else:
         ids = np.zeros(packed.shape, dtype=np.int32)
     element = ids != dsc.BACKGROUND_ELEMENT_ID
@@ -652,16 +702,18 @@ def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)
     fr_ids = sorted(int(k) for k, e in bbox_map.items()
                     if isinstance(e, dict) and e.get("element_class") in FILLED_REGION_CLASSES
                     and int(k) not in excluded)
-    filled = element & np.isin(ids, np.array(fr_ids, dtype=np.int64))
+    filled = element & decoded_id_in(packed, colour_map, fr_ids)
     rest = ~element
     white = rest & (packed == 0xFFFFFF)
     black = rest & (packed == 0)
     if spec is not None:
         black_assigned, black_record, black_ids = assign_black(
-            black, bbox_map, excluded, spec, canvas_origin, return_ids=True)
+            black, bbox_map, excluded, spec, canvas_origin,
+            return_ids="assigned" if black_ids_assigned else True)
     else:
         black_assigned = np.zeros_like(black)
-        black_ids = np.zeros(black.shape, dtype=np.int64)
+        black_ids = (np.zeros(0, dtype=np.int64) if black_ids_assigned
+                     else np.zeros(black.shape, dtype=np.int64))
         black_record = {"total": int(black.sum()), "assigned": 0,
                         "reason": "no grid mapping to place the bboxes"}
     masks = {"element": element, "element_ink": element & ink_mask(packed),
@@ -676,6 +728,8 @@ def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)
         info["filled_region"]["reason"] = (
             "this capture records no element_class, so filled regions cannot be "
             "told from detail components and are counted by ink")
+    if return_packed:
+        return masks, info, ids, black_ids, colour_map, packed
     return masks, info, ids, black_ids, colour_map
 
 
@@ -861,6 +915,67 @@ def _key_index(values, table, base):
     return out
 
 
+# A KEY INDEX is a position in a view's ec_keys -- not an ElementId -- so it
+# is bounded by the key count, which is at most the decode map's colours
+# (2**24), the linked categories and the black-only annotation elements.
+# Per-pixel key arrays are int32 (half the memory of int64 on the largest
+# arrays the grid holds); a key count int32 cannot hold is REFUSED, never
+# wrapped (narrow_key_index). ElementIds themselves stay int64 throughout.
+KEY_INDEX_DTYPE = np.int32
+
+
+def narrow_key_index(values, n_keys):
+    """``values`` (key indices in [-1, n_keys)) as KEY_INDEX_DTYPE, or
+    GridRefusal when ``n_keys`` or a value does not fit: never wrapped."""
+    limit = np.iinfo(KEY_INDEX_DTYPE).max
+    values = np.asarray(values)
+    if n_keys > limit or (values.size and (int(values.max()) > limit
+                                          or int(values.min()) < -1)):
+        raise GridRefusal("{0} element x cell keys (largest index {1}) do not fit "
+                          "{2}; refused rather than wrapped".format(
+                              n_keys, int(values.max()) if values.size else None,
+                              np.dtype(KEY_INDEX_DTYPE).name))
+    return values.astype(KEY_INDEX_DTYPE, copy=False)
+
+
+def colour_key_index(packed, colours, keys):
+    """``keys[k]`` at each pixel whose packed colour is ``colours[k]``, -1
+    elsewhere, by one gather through a 2**24 table. A colour listed twice
+    takes its LAST key, as _build_lookup's dict walk does. KEY_INDEX_DTYPE:
+    the keys are narrowed (narrow_key_index) before the table is filled."""
+    keys = np.asarray(keys, dtype=np.int64)
+    lut = np.full(256 * 256 * 256, -1, dtype=KEY_INDEX_DTYPE)
+    colours = np.asarray(colours, dtype=np.int64)
+    if len(colours):
+        # The last occurrence of each colour: first in the reversed list.
+        uniq, first = np.unique(colours[::-1], return_index=True)
+        lut[uniq] = narrow_key_index(keys[::-1][first],
+                                     int(keys.max()) + 1 if len(keys) else 0)
+    return lut[packed]
+
+
+def decoded_key_index(packed, colour_map, table, base):
+    """``_key_index(decode_ids(colour_map) ids, table, base)`` from the packed
+    colours in ONE gather (colour_key_index): the same values -- -1 where the
+    colour decodes to no id in ``table`` -- as KEY_INDEX_DTYPE, without the
+    id array's int64 copy and a full-image searchsorted.
+    tests/test_stage_a_grid_element_cell.py composes the two."""
+    colours, ids = [], []
+    for elem_id_str, rgb in colour_map.items():
+        r, g, b = (int(c) for c in rgb)
+        colours.append((r << 16) | (g << 8) | b)
+        ids.append(int(elem_id_str))
+    ids = np.asarray(ids, dtype=np.int64)
+    table = np.asarray(table, dtype=np.int64)
+    keys = np.full(len(ids), -1, dtype=np.int64)
+    if len(table) and len(ids):
+        pos = np.searchsorted(table, ids)
+        hit = pos < len(table)
+        hit[hit] = table[pos[hit]] == ids[hit]
+        keys[hit] = pos[hit] + base
+    return colour_key_index(packed, colours, keys)
+
+
 def _sparse(spec, keys, mask, col_offset=0, row_offset=0, step=512):
     """``(codes, counts)`` of the pixels where ``mask`` holds, by
     ``key * n_cells + cell``, each code once, ascending."""
@@ -873,7 +988,9 @@ def _sparse(spec, keys, mask, col_offset=0, row_offset=0, step=512):
         j = cells_of_rows(spec, np.arange(r0, r1) + row_offset) - spec["j_range"][0]
         flat = j[:, None] * spec["cells_w"] + i[None, :]
         m = mask[r0:r1]
-        code = keys[r0:r1][m] * n + flat[m]
+        # int64 before the multiply: a key index times the cell count can
+        # pass int32 (KEY_INDEX_DTYPE) long before either factor does.
+        code = keys[r0:r1][m].astype(np.int64) * n + flat[m]
         if len(code):
             c, k = np.unique(code, return_counts=True)
             parts_c.append(c)
@@ -882,8 +999,26 @@ def _sparse(spec, keys, mask, col_offset=0, row_offset=0, step=512):
         return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
     codes = np.concatenate(parts_c)
     counts = np.concatenate(parts_n)
-    uniq, inv = np.unique(codes, return_inverse=True)
-    return uniq, np.bincount(inv, weights=counts).astype(np.int64)
+    # Each chunk's codes are sorted and unique, so a stable sort only merges
+    # runs; equal codes are then summed. np.unique(codes, return_inverse)
+    # plus a float bincount gave the same codes and the same sums.
+    order = np.argsort(codes, kind="stable")
+    codes, counts = codes[order], counts[order]
+    starts = np.flatnonzero(np.concatenate([[True], codes[1:] != codes[:-1]]))
+    return codes[starts], np.add.reduceat(counts, starts).astype(np.int64)
+
+
+def sorted_union(arrays):
+    """PURE. ``np.unique(np.concatenate(arrays))`` for arrays that are each
+    sorted: a stable sort merges their runs (near-linear), then repeats are
+    dropped. numpy 2's hash-based np.unique took 27.7 s on 18 M such codes
+    where this takes 0.25 s; the result is the same sorted unique array."""
+    if not arrays:
+        return np.zeros(0, dtype=np.int64)
+    merged = np.sort(np.concatenate(arrays), kind="stable")
+    if not len(merged):
+        return merged
+    return merged[np.concatenate([[True], merged[1:] != merged[:-1]])]
 
 
 def merge_sparse(spec, parts):
@@ -891,9 +1026,9 @@ def merge_sparse(spec, parts):
     field holds, zeros where a field has none."""
     n = spec["cells_w"] * spec["cells_h"]
     all_codes = [c for c, _k in parts.values() if len(c)]
-    codes = (np.unique(np.concatenate(all_codes)) if all_codes
-             else np.zeros(0, dtype=np.int64))
-    out = {"ec_key": (codes // n).astype(np.int32)}
+    codes = sorted_union(all_codes)
+    out = {"ec_key": narrow_key_index(codes // n, int(codes.max() // n) + 1
+                                      if len(codes) else 0)}
     flat = codes % n
     out["ec_i"] = (flat % spec["cells_w"] + spec["i_range"][0]).astype(np.int32)
     out["ec_j"] = (flat // spec["cells_w"] + spec["j_range"][0]).astype(np.int32)
@@ -911,11 +1046,42 @@ def merge_sparse(spec, parts):
 def ec_dense(spec, ec, rows, field):
     """PURE. ``field`` summed over the ec_ rows selected by the boolean
     ``rows``, as a dense (cells_h, cells_w) array."""
-    out = np.zeros((spec["cells_h"], spec["cells_w"]), dtype=np.int64)
-    np.add.at(out, (ec["ec_j"][rows] - spec["j_range"][0],
-                    ec["ec_i"][rows] - spec["i_range"][0]),
-              ec[field][rows].astype(np.int64))
-    return out
+    return dense_sum(ec["ec_j"][rows].astype(np.int64) - spec["j_range"][0],
+                     ec["ec_i"][rows].astype(np.int64) - spec["i_range"][0],
+                     ec[field][rows], (spec["cells_h"], spec["cells_w"]))
+
+
+def dense_sum(jj, ii, values, shape):
+    """PURE. ``values`` summed into a ``shape`` int64 array at ``(jj, ii)``:
+    what ``np.add.at(out, (jj, ii), values)`` gives on a zero ``out``, by one
+    np.bincount. Exact: the weights are whole numbers and every sum is a pixel
+    count (< 2**53, float64's exact-integer range), checked. An index outside
+    ``shape`` raises IndexError, as np.add.at does -- including a negative
+    one, which np.add.at would wrap (the ec_ rows are built inside the grid,
+    merge_sparse, so none is)."""
+    flat, inside = cell_flat(jj, ii, shape)
+    if not inside.all():
+        raise IndexError("cell index outside the {0} x {1} grid".format(*shape))
+    return dense_sum_flat(flat, values, shape)
+
+
+def cell_flat(jj, ii, shape):
+    """PURE. ``(jj * w + ii, inside)``: each row's flat cell index and whether
+    its (jj, ii) lies in ``shape`` -- for a caller that selects many subsets
+    of one set of rows (stage_a_kinds.class_arrays) and checks each."""
+    h, w = shape
+    jj = np.asarray(jj, dtype=np.int64)
+    ii = np.asarray(ii, dtype=np.int64)
+    return jj * w + ii, (jj >= 0) & (jj < h) & (ii >= 0) & (ii < w)
+
+
+def dense_sum_flat(flat, values, shape):
+    """dense_sum on flat cell indices already shown inside ``shape``."""
+    h, w = shape
+    sums = np.bincount(flat, weights=values, minlength=h * w)
+    if len(sums) and sums.max() >= 2 ** 53:
+        raise OverflowError("a cell sum exceeds float64's exact-integer range")
+    return sums.astype(np.int64).reshape(h, w)
 
 
 def ec_invariants(spec, ec, keys, arrays):
@@ -981,30 +1147,43 @@ def ec_invariants(spec, ec, keys, arrays):
     return out
 
 
+# The channel masks element_cell_accounting reads; grid_view frees the rest
+# once they are counted.
+ACCOUNTING_MODEL_MASKS = ("host", "dwg", "link", "host_ink", "dwg_ink", "link_ink")
+ACCOUNTING_ANNO_MASKS = ("element", "element_ink", "black_assigned")
+
+
+def _keep_masks(masks, names):
+    """Drop, in place, every mask not in ``names``."""
+    for name in [k for k in masks if k not in names]:
+        del masks[name]
+
+
 def element_cell_accounting(spec, model, anno=None):
     """``(ec arrays, keys, info)``.
 
-    ``model``: ``{"sidecar", "ids", "packed", "decode_map", "masks", "cover"}``
-    -- the model image's decoded ids, packed colours and channel masks, and
-    ``cover`` (element | black_assigned on the model image's window, or None
-    with no registered annotation).
-    ``anno``: ``{"sidecar", "ids", "black_ids", "colour_map", "masks",
-    "origin", "black_by_element"}`` for the registered canvas, or None."""
+    ``model``: ``{"sidecar", "packed", "decode_map", "masks", "cover"}``
+    -- the model image's packed colours and channel masks, and ``cover``
+    (element | black_assigned on the model image's window, or None with no
+    registered annotation).
+    ``anno``: ``{"sidecar", "packed", "black_ids_assigned", "colour_map",
+    "masks", "origin", "black_by_element"}`` for the registered canvas, or
+    None; ``black_ids_assigned`` is the assigned element id of each
+    black_assigned pixel, in row-major order (``black_ids[black_assigned]``).
+    Per-pixel keys are KEY_INDEX_DTYPE."""
     keys, elem_ids, link_colours = model_keys(model["sidecar"], model["decode_map"])
     masks = model["masks"]
     n_elem = len(elem_ids)
-    mkey = _key_index(model["ids"].astype(np.int64), elem_ids, 0)
+    mkey = decoded_key_index(model["packed"], model["decode_map"], elem_ids, 0)
     mkey[~(masks["host"] | masks["dwg"])] = -1
-    lkey = _key_index(model["packed"], np.sort(link_colours), 0)
-    if len(link_colours):
-        # Back from colour order to the keys' (name) order.
-        order = np.argsort(link_colours)
-        remap = np.full(len(link_colours), -1, dtype=np.int64)
-        remap[np.arange(len(link_colours))] = order + n_elem
-        lkey = np.where(lkey >= 0, remap[np.clip(lkey, 0, None)], -1)
+    # Link category k (model_keys' name order; its colours are distinct) is
+    # key n_elem + k. Merged in place: where a link key holds, it wins.
+    lkey = colour_key_index(model["packed"], link_colours,
+                            n_elem + np.arange(len(link_colours)))
     lkey[~masks["link"]] = -1
-    mkey = np.where(lkey >= 0, lkey, mkey)
-    del lkey
+    linked = lkey >= 0
+    mkey[linked] = lkey[linked]
+    del lkey, linked
     model_ink = masks["host_ink"] | masks["dwg_ink"] | masks["link_ink"]
     keyed = mkey >= 0
     parts = {"ec_px": _sparse(spec, mkey, keyed),
@@ -1027,18 +1206,24 @@ def element_cell_accounting(spec, model, anno=None):
                         1 for k in akeys if k["element_class"] is None))
         am = anno["masks"]
         ox, oy = anno["origin"]
-        akey = _key_index(anno["ids"].astype(np.int64), a_ids, base)
+        akey = decoded_key_index(anno["packed"], anno["colour_map"], a_ids, base)
         akey[~am["element"]] = -1
-        bkey = _key_index(anno["black_ids"], a_ids, base)
-        bkey[~am["black_assigned"]] = -1
+        # Searched only where a black pixel was assigned: everywhere else the
+        # key is -1 whatever the search would have found.
+        bkey = np.full(am["black_assigned"].shape, -1, dtype=KEY_INDEX_DTYPE)
+        bkey[am["black_assigned"]] = narrow_key_index(
+            _key_index(np.asarray(anno["black_ids_assigned"], dtype=np.int64),
+                       a_ids, base), len(keys))
         anno_parts = {"ec_px": _sparse(spec, akey, akey >= 0, ox, oy),
                       "ec_ink_px": _sparse(spec, akey, (akey >= 0) & am["element_ink"],
                                            ox, oy),
                       "ec_black_px": _sparse(spec, bkey, bkey >= 0, ox, oy)}
         # Each covered canvas pixel has ONE annotation owner: its element, or
         # the element its black pixel was assigned to.
-        owner = np.where(akey >= 0, akey, bkey)
-        del akey, bkey
+        owner = akey
+        unowned = owner < 0
+        owner[unowned] = bkey[unowned]
+        del akey, bkey, unowned
         h, w = model_ink.shape
         window = owner[-oy:-oy + h, -ox:-ox + w]
         anno_parts["ec_model_ink_under_px"] = _sparse(spec, window,
@@ -1185,6 +1370,12 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         tiff = dsc._resolve_tiff_path(model_sidecar_path, sidecar)
         record["model_tiff_sha256"] = sha256_file(tiff)
         rgb = dsc._load_rgb_array(tiff)
+        # One pack and one tick locate per image, shared by the mapping fit
+        # and the decode's mark subtraction (identical calls before).
+        packed = rm.pack_pixels(rgb)
+        payload, _why = rm.recorded_marks(sidecar)
+        located = (rm.locate_recorded_marks(rgb, payload, rm.palette_colours(sidecar),
+                                            packed) if payload is not None else None)
         reg_path = Path(output_layout.registered_paths(
             model_sidecar_path.with_name(stem + "_anno.json"))[1])
         registered = _load_json(reg_path) if reg_path.exists() else None
@@ -1200,15 +1391,20 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 anno_sidecar_path = _check_registration_sources(
                     registered, reg_path, model_sidecar_path,
                     record["model_tiff_sha256"])
-        spec = build_spec(sidecar, rgb, run_config, lattice=lattice)
-        model_masks, model_ids, model_packed, decode_map = model_pixels(sidecar, rgb)
+        spec = build_spec(sidecar, rgb, run_config, lattice=lattice, located=located)
+        model_masks, model_ids, model_packed, decode_map = model_pixels(sidecar, rgb,
+                                                                        packed=packed)
+        # Freed at their last use (G2): the decoded ids (the keys come from
+        # the packed colours), the pixels, then the counted-only channels.
+        del packed, located, model_ids
         h, w = rgb.shape[:2]
         del rgb
         arrays = dict(("model_" + k, v) for k, v in count_cells(spec, model_masks).items())
+        _keep_masks(model_masks, ACCOUNTING_MODEL_MASKS)
         arrays["crop_a_px"] = count_cells(spec, {"crop_a_px": crop_a_pixel_mask(
             spec, spec["crop_uv"], w, h)})["crop_a_px"]
         model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
-        model_in = {"sidecar": sidecar, "ids": model_ids, "packed": model_packed,
+        model_in = {"sidecar": sidecar, "packed": model_packed,
                     "decode_map": decode_map, "masks": model_masks, "cover": None}
         anno_in = None
         if registered is not None:
@@ -1235,10 +1431,15 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                                   "mapping to place the annotation bboxes")
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
-            anno_masks, anno_info, anno_ids, black_ids, anno_colours = anno_pixels(
-                anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
-                spec=dict(spec, mapping=placement), canvas_origin=(ox, oy))
-            del anno_rgb
+            anno_masks, anno_info, anno_ids, black_ids, anno_colours, anno_packed = \
+                anno_pixels(anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
+                            spec=dict(spec, mapping=placement), canvas_origin=(ox, oy),
+                            return_packed=True, black_ids_assigned=True)
+            del anno_rgb, anno_ids
+            # The accounting reads each black pixel's id only where it was
+            # assigned: that 1-D selection, never a canvas of int64.
+            black_ids_assigned = black_ids
+            del black_ids
             arrays.update(("anno_" + k, v) for k, v in count_cells(
                 spec, anno_masks, col_offset=ox, row_offset=oy).items())
             # NOT BINARY: the two captures share one lattice, so how much of
@@ -1251,11 +1452,14 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 "model_ink_under_anno": model_ink & cover,
                 "model_ink_under_filled_region": model_ink & filled}))
             model_in["cover"] = cover
-            anno_in = {"sidecar": anno_sidecar, "ids": anno_ids, "black_ids": black_ids,
+            del filled
+            _keep_masks(anno_masks, ACCOUNTING_ANNO_MASKS)
+            anno_in = {"sidecar": anno_sidecar, "packed": anno_packed,
+                       "black_ids_assigned": black_ids_assigned,
                        "colour_map": anno_colours, "masks": anno_masks,
                        "origin": (ox, oy),
                        "black_by_element": anno_info["black"].get("by_element") or {}}
-            del filled
+            del anno_packed, black_ids_assigned, anno_masks
             record["black"] = anno_info["black"]
             record["filled_region"] = anno_info["filled_region"]
             ink_px = int(model_ink.sum())
@@ -1274,12 +1478,12 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         # A1: the element x cell accounting, checked against the dense
         # channels BEFORE anything is written; a mismatch refuses the view.
         ec, ec_keys, ec_info = element_cell_accounting(spec, model_in, anno_in)
-        del model_in, anno_in, model_masks, model_ids, model_packed
+        del model_in, anno_in, model_masks, model_packed, model_ink
         ec_info["invariants"] = ec_invariants(spec, ec, ec_keys, arrays)
         arrays["inside_crop_a"] = inside_crop_a(spec)
         arrays["occupancy"] = occupancy(arrays)
         npz_path = out_dir / (stem + ".grid.npz")
-        np.savez_compressed(npz_path, **dict(arrays, **ec))
+        npz_write.savez_compressed(npz_path, dict(arrays, **ec))
         png_path = out_dir / (stem + ".grid.png")
         render_png(spec, arrays, png_path, px_per_cell=png_px_per_cell)
         record.update({
@@ -1328,43 +1532,67 @@ def model_sidecars(folder):
                   if _MODEL_SIDECAR_NAME.search(p.name)), folder
 
 
+def grid_job(path, out, run_meta, png_px_per_cell):
+    """One view of main(): ``(exit code, line, size entry or None)``, the
+    size entry ``(ec_rows, npz bytes, keys, stem)`` for the closing table. A
+    module-level function of picklable arguments that prints nothing
+    (tools/stage_a_jobs.py)."""
+    start = time.perf_counter()
+    rec = grid_view(path, out, run_meta=run_meta, png_px_per_cell=png_px_per_cell)
+    seconds = time.perf_counter() - start
+    if rec["status"] != "value":
+        return 1, "REFUSED {0}: {1}  {2:.2f}s".format(path.name, rec.get("reason"),
+                                                     seconds), None
+    g = rec["grid"]
+    line = ("{0:<40} {1:>5} x {2:<5} cells  {3:5.2f} px/cell  basis {4:<12} "
+            "unc {5}  {6}  {7:.2f}s".format(
+                path.stem[:40], g["cells_w"], g["cells_h"],
+                min(g["px_per_cell_u"], g["px_per_cell_v"]), g["uv_basis"]["chosen"],
+                "-" if g["uv_basis"]["uncertainty_px"] is None else
+                "{0:.2f}px".format(g["uv_basis"]["uncertainty_px"]),
+                ",".join(g["flags"]), seconds))
+    return 0, line, (rec["ec_rows"], rec["npz_bytes"], len(rec["ec_keys"]), path.stem)
+
+
+def _finish(results):
+    sizes = [r[2] for r in results if r[2] is not None]
+    lines = []
+    if sizes:
+        # No size threshold: the numbers are printed for a person to judge.
+        lines.append("largest element x cell tables (ec_rows, npz bytes, keys), of {0} "
+                     "gridded views:".format(len(sizes)))
+        for rows, size, keys, stem in sorted(sizes, reverse=True)[:5]:
+            lines.append("  {0:>10} rows  {1:>12} bytes  {2:>7} keys  {3}".format(
+                rows, size, keys, stem))
+    return lines, max([r[0] for r in results] or [0])
+
+
+def plan(run, out=None, png_px_per_cell=4):
+    """main()'s work as a stage_a_jobs.Plan: one grid_job per model sidecar,
+    then the largest element x cell tables from the gathered results."""
+    from tools import stage_a_jobs
+    paths, folder = model_sidecars(run)
+    if not paths:
+        return stage_a_jobs.Plan(lines=["no model sidecars under {0}".format(folder)],
+                                 early=2)
+    out = Path(out) if out else Path(output_layout.grid_dir_for_capture(folder))
+    # Every sidecar is in ``folder``, so find_run_meta finds the same record
+    # for each: read it once, not once per view.
+    run_meta = dsc.find_run_meta(paths[0])
+    return stage_a_jobs.Plan(
+        jobs=[stage_a_jobs.Job(grid_job, (path, out, run_meta, png_px_per_cell))
+              for path in paths], finish=_finish)
+
+
 def main(argv=None):
+    from tools import stage_a_jobs
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run", help="a run directory or its color_id_buffer/")
     ap.add_argument("--out", default=None,
                     help="output directory (default: <run>/analysis_grid)")
     ap.add_argument("--png-px-per-cell", type=int, default=4)
     args = ap.parse_args(argv)
-    paths, folder = model_sidecars(args.run)
-    if not paths:
-        print("no model sidecars under {0}".format(folder))
-        return 2
-    out = Path(args.out) if args.out else Path(output_layout.grid_dir_for_capture(folder))
-    worst = 0
-    sizes = []
-    for path in paths:
-        rec = grid_view(path, out, png_px_per_cell=args.png_px_per_cell)
-        if rec["status"] != "value":
-            worst = 1
-            print("REFUSED {0}: {1}".format(path.name, rec.get("reason")))
-            continue
-        sizes.append((rec["ec_rows"], rec["npz_bytes"], len(rec["ec_keys"]), path.stem))
-        g = rec["grid"]
-        print("{0:<40} {1:>5} x {2:<5} cells  {3:5.2f} px/cell  basis {4:<12} "
-              "unc {5}  {6}".format(
-                  path.stem[:40], g["cells_w"], g["cells_h"],
-                  min(g["px_per_cell_u"], g["px_per_cell_v"]), g["uv_basis"]["chosen"],
-                  "-" if g["uv_basis"]["uncertainty_px"] is None else
-                  "{0:.2f}px".format(g["uv_basis"]["uncertainty_px"]),
-                  ",".join(g["flags"])))
-    if sizes:
-        # No size threshold: the numbers are printed for a person to judge.
-        print("largest element x cell tables (ec_rows, npz bytes, keys), of {0} "
-              "gridded views:".format(len(sizes)))
-        for rows, size, keys, stem in sorted(sizes, reverse=True)[:5]:
-            print("  {0:>10} rows  {1:>12} bytes  {2:>7} keys  {3}".format(
-                rows, size, keys, stem))
-    return worst
+    return stage_a_jobs.run_serial(plan(args.run, args.out, args.png_px_per_cell))
 
 
 if __name__ == "__main__":

@@ -251,15 +251,25 @@ def _build_lookup(color_assignment_map: dict[str, list[int]]) -> np.ndarray:
     return lookup
 
 
-def decode_ids(rgb_array: np.ndarray, color_assignment_map: dict[str, list[int]]) -> tuple[np.ndarray, dict[str, Any]]:
-    """Vectorized exact-match RGB -> element-id decode. Returns (id_array, stats)."""
+def decode_ids(rgb_array: np.ndarray, color_assignment_map: dict[str, list[int]],
+               packed: np.ndarray | None = None,
+               with_stats: bool = True) -> tuple[np.ndarray, dict[str, Any] | None]:
+    """Vectorized exact-match RGB -> element-id decode. Returns (id_array, stats).
+
+    ``packed``: the image's packed colours (registration_marks.pack_pixels,
+    the same int32 expression), when the caller already has them.
+    ``with_stats=False``: stats is None -- for a caller that discards them
+    (the grid); they cost a full-image np.unique and np.isin."""
     lookup = _build_lookup(color_assignment_map)
-    packed = (
-        rgb_array[:, :, 0].astype(np.int32) << 16
-        | rgb_array[:, :, 1].astype(np.int32) << 8
-        | rgb_array[:, :, 2].astype(np.int32)
-    )
+    if packed is None:
+        packed = (
+            rgb_array[:, :, 0].astype(np.int32) << 16
+            | rgb_array[:, :, 1].astype(np.int32) << 8
+            | rgb_array[:, :, 2].astype(np.int32)
+        )
     id_array = lookup[packed]
+    if not with_stats:
+        return id_array, None
 
     assigned_colors = {
         (int(rgb[0]) << 16) | (int(rgb[1]) << 8) | int(rgb[2])
@@ -1131,8 +1141,14 @@ def build_decoded_document(
     return doc
 
 
-def _registration_mark_exclusion(rgb, sidecar):
+def _registration_mark_exclusion(rgb, sidecar, with_fit=True, packed=None):
     """``(decode colour map, registration_marks block, mark mask or None)``.
+
+    The marks are located ONCE (registration_marks.locate_recorded_marks)
+    for both the fit and the mask. ``with_fit=False``: the fit is not made
+    and a subtracted block carries no fit fields -- for a caller that
+    discards the block (the grid fits the same ticks itself). ``packed``:
+    the image's pack_pixels, when the caller has it.
 
     A registered capture (``Config.color_id_buffer_registered_capture``) drew
     twelve ticks into this image and recorded them under
@@ -1162,8 +1178,14 @@ def _registration_mark_exclusion(rgb, sidecar):
     mark_ids = sorted(str(int(m["id"])) for m in payload["marks"]
                       if m.get("id") is not None)
     palette = _registration_marks.palette_colours(sidecar)
+    located = _registration_marks.locate_recorded_marks(rgb, payload, palette, packed)
+    decode_map = dict((k, v) for k, v in colour_map.items() if k not in set(mark_ids))
+    mask = _registration_marks.mark_ink_mask(rgb, payload, palette, located=located)
+    if not with_fit:
+        return decode_map, {"status": "subtracted", "pass": payload.get("pass")}, mask
     fit = _registration_marks.fit_recorded_marks(rgb, payload,
-                                                 reserved_colours=palette)
+                                                 reserved_colours=palette,
+                                                 located=located)
     block = {
         "status": "subtracted", "pass": payload.get("pass"),
         "excluded_element_ids": [int(k) for k in mark_ids if k in colour_map],
@@ -1178,8 +1200,7 @@ def _registration_mark_exclusion(rgb, sidecar):
         "px_per_ft_v": fit.get("px_per_ft_v"),
         "capture_faults": list(payload.get("faults") or []),
     }
-    decode_map = dict((k, v) for k, v in colour_map.items() if k not in set(mark_ids))
-    return decode_map, block, _registration_marks.mark_ink_mask(rgb, payload, palette)
+    return decode_map, block, mask
 
 
 def reconstruct_areal_tuple(decoded_doc: dict[str, Any], elem_id: int) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:

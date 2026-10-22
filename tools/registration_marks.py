@@ -342,11 +342,12 @@ def _take(ys, xs, weights, pieces):
 
 
 def _locate(pixels, marks, colour_by_id=None, shared_colour=None,
-            blends=False, reserved_colours=()):
+            blends=False, reserved_colours=(), packed=None):
     """``locate_mark_pixels``, plus every pixel it attributed to a mark --
-    assigned to a tick or not -- as ``(ys, xs)``: what is subtracted."""
+    assigned to a tick or not -- as ``(ys, xs)``: what is subtracted.
+    ``packed``: ``pack_pixels(pixels)``, when the caller already has it."""
     found, missing = {}, []
-    packed = pack_pixels(pixels)
+    packed = pack_pixels(pixels) if packed is None else packed
     ink_ys, ink_xs = [], []
     if shared_colour is None:
         by_mark = dict((m["key"], (colour_by_id or {}).get(int(m["id"])))
@@ -462,18 +463,26 @@ def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None,
 
 
 def fit_marks_in_pixels(pixels, marks, colour_by_id=None, shared_colour=None,
-                        identify_by_id=None, blends=False, reserved_colours=()):
+                        identify_by_id=None, blends=False, reserved_colours=(),
+                        located=None):
     """UV -> pixel from the ticks' CENTRE LINES, per axis, with residuals.
 
     Also an ENDPOINT fit (tick ends against their UV span), reported beside it
     and never in its place: an end is where line caps and anti-aliasing live.
+
+    ``located``: the ``_locate`` result for exactly these arguments
+    (locate_recorded_marks), so a caller that also subtracts the marks
+    locates them once.
     """
     marks = [m for m in marks or [] if m.get("key")]
     if not marks:
         return {"status": "not_applicable", "reason": "no registration marks"}
-    found, missing, stats = locate_mark_pixels(pixels, marks, colour_by_id,
-                                               shared_colour, blends,
-                                               reserved_colours)
+    if located is not None:
+        found, missing, stats = located[0], located[1], located[2]
+    else:
+        found, missing, stats = locate_mark_pixels(pixels, marks, colour_by_id,
+                                                   shared_colour, blends,
+                                                   reserved_colours)
     ticks = []
     centre = {"horizontal": ([], []), "vertical": ([], [])}
     ends = {"horizontal": ([], []), "vertical": ([], [])}
@@ -725,20 +734,23 @@ def mark_colours(payload):
     return by_id, None, None
 
 
-def mark_ink_mask(pixels, payload, reserved_colours=()):
+def mark_ink_mask(pixels, payload, reserved_colours=(), located=None):
     """Every pixel attributed to a mark, as a boolean mask -- what is
     SUBTRACTED. Exactly the pixels the fit locates (anti-aliased fringes
     included, stray look-alike fringes elsewhere in the image not), plus any
     piece of the model's reserved colour that fit no tick. Not the ticks'
     pixel rects: a rect would also erase any element ink crossing a tick.
+    ``located``: locate_recorded_marks' result for these arguments.
     """
     by_id, shared, _refusal = mark_colours(payload)
     mask = np.zeros(pixels.shape[:2], dtype=bool)
     if shared is None and not by_id:
         return mask
-    _found, _missing, _stats, (ink_ys, ink_xs) = _locate(
-        pixels, payload.get("marks") or [], colour_by_id=by_id,
-        shared_colour=shared, blends=True, reserved_colours=reserved_colours)
+    if located is None:
+        located = _locate(pixels, payload.get("marks") or [], colour_by_id=by_id,
+                          shared_colour=shared, blends=True,
+                          reserved_colours=reserved_colours)
+    _found, _missing, _stats, (ink_ys, ink_xs) = located
     for ys, xs in zip(ink_ys, ink_xs):
         mask[ys, xs] = True
     return mask
@@ -758,15 +770,34 @@ def palette_colours(sidecar):
     return colours
 
 
-def fit_recorded_marks(pixels, payload, identify_by_id=None, reserved_colours=()):
+def fit_recorded_marks(pixels, payload, identify_by_id=None, reserved_colours=(),
+                       located=None):
     """The fit for a production capture, from its own ``registration_marks``,
-    anti-aliased fringes included (weighted by coverage)."""
+    anti-aliased fringes included (weighted by coverage). ``located``:
+    locate_recorded_marks' result for these arguments."""
     by_id, shared, refusal = mark_colours(payload)
     if refusal:
         return {"status": "unavailable", "reason": refusal}
     return fit_marks_in_pixels(pixels, payload.get("marks"), colour_by_id=by_id,
                                shared_colour=shared, identify_by_id=identify_by_id,
-                               blends=True, reserved_colours=reserved_colours)
+                               blends=True, reserved_colours=reserved_colours,
+                               located=located)
+
+
+def locate_recorded_marks(pixels, payload, reserved_colours=(), packed=None):
+    """The ONE ``_locate`` that fit_recorded_marks and mark_ink_mask would
+    each make on this capture -- same marks, colours, blends and reserved
+    colours -- for a caller that needs both, or None where the two calls
+    would not be the same one: a colour record mark_colours refuses, no tick
+    colour at all, no marks, or a mark with no key (the fit drops it, the
+    mask does not). On None each locates for itself, as before."""
+    by_id, shared, refusal = mark_colours(payload)
+    marks = payload.get("marks") or []
+    if (refusal or (shared is None and not by_id) or not marks
+            or any(not m.get("key") for m in marks)):
+        return None
+    return _locate(pixels, marks, colour_by_id=by_id, shared_colour=shared,
+                   blends=True, reserved_colours=reserved_colours, packed=packed)
 
 
 def marks_identity_refusal(first, second):

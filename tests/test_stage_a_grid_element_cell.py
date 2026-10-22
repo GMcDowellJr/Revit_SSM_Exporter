@@ -25,6 +25,8 @@ from PIL import Image
 from tests import test_register_stage_a_annotation as fixture
 from tests.test_stage_a_grid import _bbox_entry, _run_meta, _view, _write_pair
 from tools import register_stage_a_annotation as reg
+from tools import decode_stage_a_color_id as dsc
+from tools import registration_marks as rm
 from tools import stage_a_grid as grid
 
 M = fixture.M
@@ -304,3 +306,156 @@ def test_assign_black_ids_match_its_record_and_leave_mask_and_record_unchanged()
     got = dict((str(i), int((ids == i).sum())) for i in np.unique(ids[ids > 0]))
     assert got == record["by_element"]
     assert ((ids > 0) == mask).all()
+
+
+def test_the_colour_to_key_table_is_the_decode_then_the_key_search():
+    """CLAUDE.md defect class 1: decoded_key_index replaced decode_ids
+    followed by _key_index; the two are composed here over generated colour
+    maps -- a colour named twice (last id wins), an id 0, an id absent from
+    the key table, a negative id, a base offset -- and must agree on every
+    pixel."""
+    rng = np.random.default_rng(7)
+    for trial in range(25):
+        colours = [tuple(int(c) for c in rng.integers(0, 256, 3)) for _ in range(30)]
+        ids = [int(v) for v in rng.integers(-5, 60, 30)]
+        cmap = dict((str(i), list(c)) for i, c in zip(ids, colours))
+        # A colour named twice, under two ids.
+        cmap[str(1000 + trial)] = list(colours[0])
+        table = np.array(sorted(set(int(k) for k in cmap if int(k) != 0
+                                    and rng.random() < 0.8)), dtype=np.int64)
+        pixels = np.array(colours + [(255, 255, 255), (0, 0, 0), (1, 2, 3)],
+                          dtype=np.uint8)[rng.integers(0, 33, (40, 50))]
+        packed = rm.pack_pixels(pixels)
+        ids_now, _stats = dsc.decode_ids(pixels, cmap)
+        base = int(rng.integers(0, 9))
+        want = grid._key_index(ids_now.astype(np.int64), table, base)
+        got = grid.decoded_key_index(packed, cmap, table, base)
+        assert got.dtype == grid.KEY_INDEX_DTYPE and np.array_equal(got, want), trial
+
+
+def test_the_link_key_table_is_the_sorted_search_and_remap_it_replaced():
+    """The link keys were _key_index over the sorted colours, remapped back to
+    the keys' name order; colour_key_index must give the same keys."""
+    rng = np.random.default_rng(11)
+    for trial in range(25):
+        n_elem = int(rng.integers(0, 50))
+        link = np.array(sorted(set(int(v) for v in rng.integers(0, 2 ** 24, 6))),
+                        dtype=np.int64)
+        rng.shuffle(link)                      # name order is not colour order
+        packed = np.concatenate([link, rng.integers(0, 2 ** 24, 10)])[
+            rng.integers(0, len(link) + 10, (30, 40))].astype(np.int32)
+        old = grid._key_index(packed, np.sort(link), 0)
+        order = np.argsort(link)
+        remap = np.full(len(link), -1, dtype=np.int64)
+        remap[np.arange(len(link))] = order + n_elem
+        old = np.where(old >= 0, remap[np.clip(old, 0, None)], -1)
+        new = grid.colour_key_index(packed, link, n_elem + np.arange(len(link)))
+        assert np.array_equal(old, new), trial
+
+
+def test_the_sorted_union_is_np_unique_of_the_concatenation():
+    rng = np.random.default_rng(5)
+    for trial in range(30):
+        parts = [np.unique(rng.integers(-50, 400, int(rng.integers(0, 60))))
+                 for _ in range(int(rng.integers(0, 5)))]
+        want = (np.unique(np.concatenate(parts)) if parts
+                else np.zeros(0, dtype=np.int64))
+        got = grid.sorted_union(parts)
+        assert got.dtype == want.dtype and np.array_equal(got, want), trial
+
+
+def test_sparse_counts_every_key_cell_pair_once_across_chunks():
+    """_sparse combines per-chunk counts by a stable sort and reduceat; the
+    reference is one np.unique over every masked pixel's code, chunk-free."""
+    rng = np.random.default_rng(9)
+    spec = {"mapping": {"a_u": 2.56, "b_u": 0.3, "a_v": -2.56, "b_v": 70.0},
+            "origin_uv": [0.0, 0.0], "cell_ft": 1.0}
+    h, w = 70, 50
+    spec["i_range"] = [int(grid.cells_of_columns(spec, [0])[0]),
+                       int(grid.cells_of_columns(spec, [w - 1])[0]) + 1]
+    j_ends = grid.cells_of_rows(spec, [0, h - 1])
+    spec["j_range"] = [int(j_ends.min()), int(j_ends.max()) + 1]
+    spec["cells_w"] = spec["i_range"][1] - spec["i_range"][0]
+    spec["cells_h"] = spec["j_range"][1] - spec["j_range"][0]
+    n = spec["cells_w"] * spec["cells_h"]
+    keys = rng.integers(-1, 6, (h, w)).astype(np.int64)
+    mask = (keys >= 0) & (rng.random((h, w)) < 0.7)
+    i = grid.cells_of_columns(spec, np.arange(w)) - spec["i_range"][0]
+    j = grid.cells_of_rows(spec, np.arange(h)) - spec["j_range"][0]
+    flat = j[:, None] * spec["cells_w"] + i[None, :]
+    want_c, want_k = np.unique(keys[mask] * n + flat[mask], return_counts=True)
+    got_c, got_k = grid._sparse(spec, keys, mask, step=16)    # rows split across chunks
+    assert np.array_equal(got_c, want_c) and np.array_equal(got_k, want_k)
+    assert got_k.dtype == np.int64
+
+
+def test_the_colour_membership_table_is_isin_of_the_decoded_ids():
+    """decoded_id_in replaced np.isin(decode_ids(...), ids) for the DWG and
+    filled-region masks; composed over generated maps (a colour named twice,
+    an id 0, the largest id decode_ids can hold, ids absent from the map).
+    decode_ids' lookup is int32: a larger id raises OverflowError there, so
+    the reference cannot decode one."""
+    rng = np.random.default_rng(13)
+    for trial in range(25):
+        colours = [tuple(int(c) for c in rng.integers(0, 256, 3)) for _ in range(25)]
+        ids = [int(v) for v in rng.integers(-3, 40, 25)]
+        ids[0] = 2 ** 31 - 1 - trial                  # int32's largest ids
+        cmap = dict((str(i), list(c)) for i, c in zip(ids, colours))
+        cmap[str(500 + trial)] = list(colours[1])     # named twice: the last wins
+        wanted = [i for i in set(ids) if rng.random() < 0.5] + [0, 999999, ids[2]]
+        pixels = np.array(colours + [(255, 255, 255), (0, 0, 0)],
+                          dtype=np.uint8)[rng.integers(0, 27, (30, 40))]
+        decoded, _stats = dsc.decode_ids(pixels, cmap)
+        element = decoded != dsc.BACKGROUND_ELEMENT_ID      # as both callers AND it
+        want = element & np.isin(decoded, np.array(wanted, dtype=np.int64))
+        got = element & grid.decoded_id_in(rm.pack_pixels(pixels), cmap, wanted)
+        assert np.array_equal(got, want), trial
+        assert want.any() and (element & ~want).any(), trial   # both outcomes occur
+
+
+def test_dense_sum_is_np_add_at_and_refuses_what_add_at_would_wrap():
+    rng = np.random.default_rng(17)
+    for trial in range(25):
+        h, w = (int(v) for v in rng.integers(1, 30, 2))
+        n = int(rng.integers(0, 200))
+        jj, ii = rng.integers(0, h, n), rng.integers(0, w, n)
+        values = rng.integers(0, 2 ** 31 - 1, n).astype(np.int32)
+        want = np.zeros((h, w), dtype=np.int64)
+        np.add.at(want, (jj, ii), values.astype(np.int64))
+        got = grid.dense_sum(jj, ii, values, (h, w))
+        assert got.dtype == want.dtype and np.array_equal(got, want), trial
+    with pytest.raises(IndexError):
+        grid.dense_sum(np.array([-1]), np.array([0]), np.array([1]), (3, 3))
+    with pytest.raises(IndexError):
+        grid.dense_sum(np.array([0]), np.array([3]), np.array([1]), (3, 3))
+
+
+def test_a_key_index_int32_cannot_hold_is_refused_not_wrapped():
+    """Per-pixel key indices are int32 (KEY_INDEX_DTYPE). A key count or a
+    key past int32 is a GridRefusal; wrapping would send pixels to another
+    key. The control narrows the largest value that fits, unchanged."""
+    top = np.iinfo(grid.KEY_INDEX_DTYPE).max
+    fits = grid.narrow_key_index(np.array([-1, 0, top], dtype=np.int64), top)
+    assert fits.dtype == grid.KEY_INDEX_DTYPE and fits.tolist() == [-1, 0, top]
+    with pytest.raises(grid.GridRefusal):
+        grid.narrow_key_index(np.array([0, top + 1], dtype=np.int64), top + 2)
+    with pytest.raises(grid.GridRefusal):
+        grid.narrow_key_index(np.array([0], dtype=np.int64), top + 1)
+    with pytest.raises(grid.GridRefusal):           # through the table, too
+        grid.colour_key_index(np.zeros((2, 2), dtype=np.int32), [0], [top + 1])
+
+
+def test_assigned_black_ids_are_the_dense_ids_at_the_mask():
+    rng = np.random.default_rng(19)
+    black = rng.random((40, 60)) < 0.3
+    spec = {"mapping": {"a_u": 1.0, "b_u": 0.0, "a_v": -1.0, "b_v": 40.0}}
+    bbox_map = dict((str(100 + k), {"bbox_uv": {"state": "value", "value": [
+        float(u), float(v), float(u + du), float(v + dv)]}})
+        for k, (u, v, du, dv) in enumerate(rng.integers(0, 30, (12, 4))))
+    mask, record, dense = grid.assign_black(black, bbox_map, [], spec, (0, 0),
+                                            return_ids=True)
+    mask2, record2, sparse = grid.assign_black(black, bbox_map, [], spec, (0, 0),
+                                               return_ids="assigned")
+    assert np.array_equal(mask, mask2) and record == record2
+    assert mask.any() and sparse.dtype == np.int64
+    assert np.array_equal(sparse, dense[mask])

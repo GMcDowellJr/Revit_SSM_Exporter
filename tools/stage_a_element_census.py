@@ -434,7 +434,7 @@ def load_view_grid(grid_json):
                             "x cell accounting; re-run stage_a_grid".format(
                                 Path(grid_json).name, rec.get("schema")))
     try:
-        return kinds.load_grid(grid_json)
+        return kinds.load_grid(grid_json, members=kinds.ec_only)
     except kinds.KindsRefusal as ex:
         raise CensusRefusal("{0}: {1}".format(Path(grid_json).name, ex))
 
