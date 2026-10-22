@@ -227,6 +227,28 @@ def test_the_record_names_the_tiff_it_sits_beside(tmp_path):
         tiff_path.read_bytes()).hexdigest()
 
 
+def test_registering_an_unchanged_capture_twice_writes_the_same_bytes(
+        tmp_path, monkeypatch):
+    """1.0.1: the record carries no wall time (``elapsed_ms`` until 1.0.0), so
+    a re-registration of the same capture, a year later by the clock, writes
+    a byte-identical record and registered TIFF -- nothing downstream that
+    hashes them (the grid, the element census) sees a change."""
+    import time
+    anno_path, _model, _c = _write_pair(tmp_path)
+    reg.register(anno_path)
+    tiff_path, json_path = reg.output_paths(anno_path)
+    first = (json_path.read_bytes(), tiff_path.read_bytes())
+    assert _persisted(anno_path)["status"] == "registered"          # control: a value
+    assert "elapsed_ms" not in _persisted(anno_path)
+    real_time, real_local = time.time, time.localtime
+    monkeypatch.setattr(time, "time", lambda: real_time() + 366 * 86400)
+    monkeypatch.setattr(time, "localtime",
+                        lambda t=None: real_local((real_time() if t is None else t)
+                                                  + 366 * 86400))
+    reg.register(anno_path)
+    assert (json_path.read_bytes(), tiff_path.read_bytes()) == first
+
+
 def test_the_resample_invents_no_colour(tmp_path):
     """Nearest neighbour: every output colour is a source colour or white. A
     blended pixel is a colour no element owns."""

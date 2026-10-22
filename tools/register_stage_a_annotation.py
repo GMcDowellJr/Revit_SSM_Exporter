@@ -53,6 +53,14 @@ USAGE
 
 Exit 0 when every capture registered, 1 when any was refused, 2 when an input
 could not be read at all.
+
+1.0.1 (2026-10-22): the record no longer carries ``elapsed_ms``. It was wall
+time, so re-registering an unchanged capture rewrote every record with new
+bytes, which changed its sha256 -- recorded by the grid
+(``registered_annotation.record_sha256``) and hashed by the element census as
+an input -- and made both look changed when nothing was. The record is now a
+function of its inputs: registering the same capture twice writes the same
+bytes. No tool read the field.
 """
 from __future__ import annotations
 
@@ -60,7 +68,6 @@ import argparse
 import hashlib
 import json
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -74,7 +81,7 @@ from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.0.1"
 SCHEMA = "vop.stage_a.registered_annotation.v1"
 ANNO_SUFFIX = "_anno"
 
@@ -282,7 +289,6 @@ def _fit_summary(fit):
 
 def register(anno_sidecar_path, model_sidecar_path=None):
     """Register one annotation capture. Returns the record it wrote."""
-    t0 = time.time()
     anno_sidecar_path = Path(anno_sidecar_path)
     tiff_out, json_out = output_paths(anno_sidecar_path)
     anno_sidecar = legacy_view(json.loads(anno_sidecar_path.read_text(encoding="utf-8")))
@@ -412,7 +418,6 @@ def register(anno_sidecar_path, model_sidecar_path=None):
     if refusals and tiff_out.exists():
         tiff_out.unlink()
         record["stale_registered_tiff_removed"] = True
-    record["elapsed_ms"] = round((time.time() - t0) * 1000.0, 3)
     # LAST: after the TIFF exists and its hash is in the record.
     json_out.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
     return record

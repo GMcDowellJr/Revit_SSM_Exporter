@@ -196,6 +196,10 @@ when the transform would mirror an axis. It never falls back to the model's
 recorded lattice. Losses (ink off the model image, uncovered model pixels,
 colours that did not survive the resample) are counted in the record.
 
+The record is a function of its inputs (1.0.1, 2026-10-22: no `elapsed_ms`):
+registering an unchanged capture again writes the same record and TIFF bytes,
+so the grid and the element census see no change.
+
 **Usage:**
 ```bash
 python tools/register_stage_a_annotation.py path/to/View_123_anno.json

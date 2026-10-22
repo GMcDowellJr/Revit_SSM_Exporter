@@ -190,27 +190,26 @@ def test_gate3_control_the_moved_clock_moves_a_writer_that_stamps_it(tmp_path, m
     assert _stamped(tmp_path / "2.zip") != first
 
 
-def test_gate3_a_reregistration_recomputes_the_census_and_no_pair(tmp_path):
-    """The re-analysis of 10-25 (E3): register rewrites every registration
-    record with a new ``elapsed_ms``, so the record's sha256 -- a census
-    input, and recorded in the grid json -- changes. The census is
-    recomputed onto the same CSV; the pairs read nothing that changed."""
+def test_gate3_a_reregistration_of_unchanged_captures_leaves_everything_fresh(tmp_path):
+    """The re-analysis of 10-25 (E3). Until register 1.0.1 every record was
+    rewritten with a new ``elapsed_ms`` (wall time), which changed its sha256
+    -- a census input, and recorded in the grid json -- so the census was
+    recomputed. Now the record, the registered TIFF and the grid come out
+    byte-identical, and nothing is stale."""
     model = _model(tmp_path)
     a, b, c = _three(model)
     census.drive(model)
     rec_path = _capture_dir(b) / "V_1_anno.registered.json"
-    old = json.loads(rec_path.read_text())
-    csv_before = grid.sha256_file(_files(b).census_path("csv"))
+    watched = [rec_path, _capture_dir(b) / "V_1_anno.registered.tiff",
+               _grid_dir(b) / "V_1.grid.json", _grid_dir(b) / "V_1.grid.npz"]
+    before = dict((p, p.read_bytes()) for p in watched)
     time.sleep(0.01)
     reg.register(_capture_dir(b) / "V_1_anno.json")
-    new = json.loads(rec_path.read_text())
-    assert old != new and dict(old, elapsed_ms=0) == dict(new, elapsed_ms=0)
     grid.grid_view(_capture_dir(b) / "V_1.json", _grid_dir(b))
+    assert dict((p, p.read_bytes()) for p in watched) == before
+    assert "elapsed_ms" not in json.loads(rec_path.read_text())
     actions = census.drive(model)
-    assert _computed(actions) == [("census", b.name)]
-    why = [x["why"] for x in actions if x["step"] == "census" and x["run"] == b.name][0]
-    assert "V_1_anno.registered.json" in why
-    assert grid.sha256_file(_files(b).census_path("csv")) == csv_before
+    assert _computed(actions) == []
 
 
 def test_gate3_a_census_rewritten_onto_the_same_csv_leaves_the_pairs_fresh(tmp_path):
@@ -524,9 +523,14 @@ def test_a_pair_kept_fresh_names_no_hash_the_census_on_disk_no_longer_has(tmp_pa
     model = _model(tmp_path)
     a, b, c = _three(model)
     census.drive(model)
-    reg.register(_capture_dir(b) / "V_1_anno.json")           # rewrites the census inputs
-    grid.grid_view(_capture_dir(b) / "V_1.json", _grid_dir(b))
-    assert _computed(census.drive(model)) == [("census", b.name)]
+    f = _files(b)
+    summary_before = grid.sha256_file(f.census_path("summary"))
+    tiff = _capture_dir(b) / "V_1.tiff"                        # stage_a_analyze step 6:
+    st = tiff.stat()                                           # the census rewritten onto
+    os.utime(str(tiff), ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))   # the same CSV
+    census.main([str(b)])
+    assert grid.sha256_file(f.census_path("summary")) != summary_before
+    assert _computed(census.drive(model)) == []
     for run in (b, c):
         summary, _rows = _pair(run)
         for side, files in (("cur", _files(run)),
