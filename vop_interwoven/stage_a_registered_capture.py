@@ -812,12 +812,20 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # which happen after it is built.
         "timings_ms": dict(record.get("timings_ms") or {}),
         "timing_partition": list(TIMING_PARTITION),
+        # C2: memory_telemetry.process_memory_sample() at the pipeline's view
+        # start (None when the caller took none), the capture's start, and its
+        # end (after the read-backs, before these sidecar writes).
+        "process_memory": record.get("process_memory"),
     }
 
 
 def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
-                                   raster=None, elem_cache=None):
+                                   raster=None, elem_cache=None, view_start_memory=None):
     """Both Stage A passes, registered by marks, restored by one rollback.
+
+    ``view_start_memory``: the pipeline's memory_telemetry.process_memory_sample()
+    taken when it began this view, recorded beside the capture's own two
+    (``process_memory``, C2). Telemetry only.
 
     Returns the MODEL pass's result dict, with the annotation pass nested under
     ``annotation_pass`` exactly as pipeline.py nests it, and the capture's own
@@ -882,6 +890,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                         annotation_crop=extent_variant == "annotation_crop_on")
     group = TransactionGroup(doc, "VOP Stage A registered capture")
     started = False
+    # C2: process memory at the pipeline's view start and around the capture,
+    # each sample OUTSIDE timings_ms total (its own cost is its read_ms).
+    from .memory_telemetry import process_memory_sample
+    record["process_memory"] = {"view_start": view_start_memory,
+                                "capture_start": process_memory_sample()}
     t_total = time.time()
     try:
         started = group.Start() == TransactionStatus.Started
@@ -1470,6 +1483,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         record["restore"] = restore
         record["timings_ms"]["total"] = round((time.time() - t_total) * 1000.0, 3)
         record["timings_ms"]["unaccounted"] = unaccounted_ms(record["timings_ms"])
+        record["process_memory"]["capture_end"] = process_memory_sample()
         record["success"] = bool(
             model_out and model_out.get("success")
             and anno_out and anno_out.get("success") and not record["faults"])
