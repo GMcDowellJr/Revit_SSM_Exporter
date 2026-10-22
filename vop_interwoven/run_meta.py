@@ -315,6 +315,113 @@ def exporter_version(package_dir=None):
         _PACKAGE_VERSION, source["value"]["sha256"][:SOURCE_FINGERPRINT_CHARS]), source
 
 
+# --- what EXECUTED, pinned when the session starts ------------------------------------
+#
+# exporter_version / exporter_source / git_commit used to be read from the disk
+# when the record was written. The pyRevit batch imports the package ONCE per
+# button press, so a ``git pull`` during a batch changed what later runs
+# RECORDED without changing what they RAN (batch 2026-10-21: runs 6 and 7 of
+# one session carry two newer commits whose only vop_interwoven/ change was
+# _version.py). The values are now read once, when the batch -- or the Dynamo
+# run, whose thinrunner reloads the package every run -- starts, and the disk
+# is read again at write time only to SAY whether it moved since.
+PROVENANCE_SCHEMA = "vop.provenance.v1"
+# At most one pin: the OUTERMOST session's. A list, not a global rebound: one
+# module state, readable from IronPython 2.
+_PINNED = []
+
+
+def read_provenance(package_dir=None):
+    """``{exporter_version, exporter_source, git_commit}`` as the disk holds them
+    NOW (the three keys build_run_meta writes)."""
+    version, source = exporter_version(package_dir)
+    return {"exporter_version": version, "exporter_source": source,
+            "git_commit": git_commit(package_dir)}
+
+
+def pin_executed_provenance(pinned_by, package_dir=None, now=None):
+    """``(pin, owner)``: the provenance of the code this session executes, read
+    once. A session already pinned (a run inside a batch) keeps the outer pin
+    and ``owner`` is False; only the owner releases it."""
+    if _PINNED:
+        return _PINNED[0], False
+    from datetime import datetime
+    # Not _clock(): that seam mints run ids, and reading it here would move
+    # the run id a test's clock hands out.
+    pin = dict(read_provenance(package_dir), pinned_by=pinned_by,
+               pinned_at=(now or datetime.now()).strftime(CLOCK_SECONDS_FORMAT),
+               # As given (None = the defaults), so the write-time re-read
+               # walks exactly the paths the pin did.
+               package_dir=package_dir)
+    _PINNED.append(pin)
+    return pin, True
+
+
+def release_executed_provenance(owner):
+    if owner:
+        del _PINNED[:]
+
+
+def executed_provenance():
+    """The active pin, or None outside any session."""
+    return _PINNED[0] if _PINNED else None
+
+
+class provenance_session(object):
+    """``with provenance_session("batch_capture"): ...`` -- pins on entry
+    unless an outer session already has, releases on exit only what it
+    pinned."""
+
+    def __init__(self, pinned_by, package_dir=None, now=None):
+        self.pinned_by, self.package_dir, self.now = pinned_by, package_dir, now
+        self.pin, self.owner = None, False
+
+    def __enter__(self):
+        self.pin, self.owner = pin_executed_provenance(self.pinned_by, self.package_dir,
+                                                       self.now)
+        return self.pin
+
+    def __exit__(self, *exc):
+        release_executed_provenance(self.owner)
+        return False
+
+
+def _provenance_key(values):
+    source = values.get("exporter_source") or {}
+    sha = (source.get("value") or {}).get("sha256") if source.get("state") == "value" else None
+    commit = values.get("git_commit") or {}
+    return (values.get("exporter_version"), sha,
+            commit.get("value") if commit.get("state") == "value" else None)
+
+
+def provenance_fields():
+    """The provenance a record written NOW carries: the three existing keys,
+    meaning "what executed", plus ``provenance`` saying how they were read.
+
+    * In a session: the pinned values. The disk is read again; when it no
+      longer matches, ``provenance.source_changed_on_disk`` is True and
+      ``provenance.source_on_disk`` holds what it reads now. Never refused.
+    * Outside one: read now, ``basis: read_at_write`` and the flag None (a
+      record with nothing to compare against cannot say). Every record
+      written before this key existed is that case: a reader that finds no
+      ``provenance`` is reading disk-at-write values."""
+    pin = executed_provenance()
+    if pin is None:
+        values = read_provenance()
+        return dict(values, provenance={"schema": PROVENANCE_SCHEMA, "basis": "read_at_write",
+                                        "source_changed_on_disk": None})
+    disk = read_provenance(pin.get("package_dir"))
+    changed = _provenance_key(disk) != _provenance_key(pin)
+    block = {"schema": PROVENANCE_SCHEMA, "basis": "pinned_at_session_start",
+             "pinned_by": pin.get("pinned_by"), "pinned_at": pin.get("pinned_at"),
+             "source_changed_on_disk": changed}
+    if changed:
+        block["source_on_disk"] = disk
+    return {"exporter_version": pin["exporter_version"],
+            "exporter_source": pin["exporter_source"],
+            "git_commit": pin["git_commit"], "provenance": block}
+
+
 def revit_version(doc):
     if doc is None:
         return _unavailable("no document")
@@ -333,7 +440,7 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
     compute_config_hash(cfg) -- the value views_core.ConfigHash carries.
     ``date_str`` is the run's AS-OF date (run_identity()), not its
     execution date; ``run_dir`` the run directory (run_directory())."""
-    version, source = exporter_version()
+    executed = provenance_fields()
     return {
         "schema": RUN_META_SCHEMA,
         "finalized": False,
@@ -349,9 +456,11 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=No
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
         "exporter": EXPORTER_NAME,
-        "exporter_version": version,
-        "exporter_source": source,
-        "git_commit": git_commit(),
+        # What EXECUTED: pinned at the session's start (provenance_fields).
+        "exporter_version": executed["exporter_version"],
+        "exporter_source": executed["exporter_source"],
+        "git_commit": executed["git_commit"],
+        "provenance": executed["provenance"],
         "revit_version": revit_version(doc),
         "config_hash": config_hash,
         "config_hash_basis": ("root_cache.compute_config_hash: sha256 of "

@@ -100,6 +100,17 @@ def relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_summ
 
 def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=None,
                 export_view_raster=True):
+    """_run_capture inside a provenance session: what executed is read once,
+    here, unless an enclosing batch already pinned it (run_meta.provenance_fields)."""
+    from vop_interwoven.run_meta import provenance_session
+    with provenance_session("run_capture"):
+        return _run_capture(doc, view_ids, cfg, output_dir, batch_size=batch_size,
+                            date_override=date_override,
+                            export_view_raster=export_view_raster)
+
+
+def _run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=None,
+                 export_view_raster=True):
     """Capture ``view_ids`` of ``doc`` as ONE run under the root ``output_dir``.
 
     Returns ``(result, run_dir, run_id)``: the streaming result (merged over

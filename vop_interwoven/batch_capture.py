@@ -52,7 +52,7 @@ import os
 import re
 
 from . import output_layout
-from .run_meta import clock_stamp, write_run_meta
+from .run_meta import clock_stamp, provenance_session, write_run_meta
 
 DEFAULT_VIEW_TYPES = (
     "FloorPlan", "CeilingPlan", "AreaPlan", "EngineeringPlan", "Section",
@@ -480,13 +480,27 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
 
     Every job's outcome goes into the durable log after that job, and each
     run directory a job wrote gains ``opened_from``. Returns the log record.
+
+    The executed source is pinned HERE, once (run_meta.provenance_session):
+    every run of the batch records what this session loaded, and says when
+    the disk moved under it.
     """
+    with provenance_session("batch_capture", now=now) as pin:
+        return _run_batch(plan, open_doc, close_doc, capture, recapture, limit=limit,
+                          log=log, now=now, write_log=write_log, pin=pin)
+
+
+def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
+               now=None, write_log=True, pin=None):
     pending, done = pending_jobs(plan, limit=limit)
     clock_id = clock_stamp(now)
     record = {"schema": BATCH_LOG_SCHEMA, "started": clock_id, "plan_mode": plan.get("mode"),
               "jobs": [], "already_done": [{"key": j["key"], "detail": j.get("done_detail")}
                                            for j in done],
-              "ok": 0, "failed": 0, "finished": False}
+              "ok": 0, "failed": 0, "finished": False,
+              # What this batch executed, read once at its start.
+              "executed_provenance": dict((k, v) for k, v in (pin or {}).items()
+                                          if k != "package_dir")}
     output_root = plan.get("output_root") or "."
     log_path = _log_path(output_root, clock_id)
 

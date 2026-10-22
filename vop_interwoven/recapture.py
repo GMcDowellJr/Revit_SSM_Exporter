@@ -57,7 +57,7 @@ import os
 
 from . import output_layout
 from .run_meta import (
-    _replace, clock_stamp, exporter_version, git_commit, view_outcomes,
+    _replace, clock_stamp, provenance_fields, provenance_session, view_outcomes,
 )
 
 RECAPTURE_REASON = "ticks_outside_crop_loop"
@@ -159,13 +159,15 @@ def recapture_record(meta, view_ids, reason=RECAPTURE_REASON, now=None):
     """The record every recaptured sidecar and run_meta carry: WHEN (the
     execution clock, to the second), WHICH build, WHY, which views,
     and what build the run itself was."""
-    version, source = exporter_version()
+    executed = provenance_fields()
     return {
         "schema": RECAPTURE_SCHEMA,
         "captured_at": clock_stamp(now),
-        "exporter_version": version,
-        "exporter_source": source,
-        "git_commit": git_commit(),
+        # What EXECUTED (run_meta.provenance_fields), pinned at the session's start.
+        "exporter_version": executed["exporter_version"],
+        "exporter_source": executed["exporter_source"],
+        "git_commit": executed["git_commit"],
+        "provenance": executed["provenance"],
         "reason": reason,
         "view_ids": [_vid(v) for v in view_ids],
         "replaces_exporter_version": meta.get("exporter_version"),
@@ -302,6 +304,14 @@ def load_recapture_lists(source):
 
 
 def run_recapture(doc, lists, cfg, batch_size=None, reason=RECAPTURE_REASON, runner=None):
+    """_run_recapture inside a provenance session: what executed is read once,
+    here, unless an enclosing batch already pinned it (run_meta.provenance_fields)."""
+    with provenance_session("run_recapture"):
+        return _run_recapture(doc, lists, cfg, batch_size=batch_size, reason=reason,
+                              runner=runner)
+
+
+def _run_recapture(doc, lists, cfg, batch_size=None, reason=RECAPTURE_REASON, runner=None):
     """Recapture every run entry of ``lists`` that names views, one run at a
     time, in chunks of ``batch_size`` views, each chunk one call of
     ``run_vop_pipeline_streaming`` with ``recapture=`` the run's record.
