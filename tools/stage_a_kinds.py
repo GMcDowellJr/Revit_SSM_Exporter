@@ -173,10 +173,23 @@ def grid_records(grid_dir):
     return sorted(Path(grid_dir).glob("*.grid.json"))
 
 
-def load_grid(json_path):
+# The element x cell rows: all the inventory, the roll-up's row_keys and the
+# element census read of a grid npz.
+EC_PREFIX = "ec_"
+
+
+def ec_only(name):
+    return name.startswith(EC_PREFIX)
+
+
+def load_grid(json_path, members=None):
     """``(record, arrays)`` for a ``value`` grid carrying the element x cell
     accounting, its npz verified against the hash the record names. Anything
-    else is refused with the reason."""
+    else is refused with the reason.
+
+    ``members``: a predicate on member names; only those are decompressed
+    (np.load reads a member when it is indexed). ``ec_only`` for a reader of
+    the element x cell rows alone. Default: every member (derive)."""
     json_path = Path(json_path)
     try:
         rec = _load_json(json_path)
@@ -197,7 +210,7 @@ def load_grid(json_path):
     if sha256_file(npz) != rec.get("npz_sha256"):
         raise KindsRefusal("the grid npz does not match the hash its record names")
     with np.load(str(npz)) as data:
-        arrays = dict((k, data[k]) for k in data.files)
+        arrays = dict((k, data[k]) for k in data.files if members is None or members(k))
     return rec, arrays
 
 
@@ -235,7 +248,7 @@ def inventory(grid_dirs, cmap):
         for path in grid_records(gdir):
             entry = {"grid_dir": str(gdir), "view_stem": view_stem(path)}
             try:
-                rec, arr = load_grid(path)
+                rec, arr = load_grid(path, members=ec_only)
             except KindsRefusal as ex:
                 views.append(dict(entry, used=False, reason=str(ex)))
                 continue

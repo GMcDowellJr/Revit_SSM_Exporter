@@ -198,3 +198,32 @@ def test_workers_give_the_serial_runs_files_exit_code_and_summary(tmp_path, caps
     assert got[1][0] == got[2][0] == 1
     assert got[1][1] == got[2][1] and len(got[1][1]) > 20
     assert got[1][2] == got[2][2]
+
+
+def test_the_ec_readers_decompress_only_the_ec_members(tmp_path, monkeypatch):
+    """Inventory, the roll-up's row_keys and the census per-view reader read
+    only the element x cell rows of a grid npz, so only ``ec_*`` members are
+    decompressed (np.load reads a member when indexed). The control: derive,
+    under the same watch, reads the dense arrays too -- the watch sees them."""
+    import numpy as np
+    from tools import stage_a_element_census as census
+    from tools import stage_a_grid_rollup as rollup
+    run = _run(tmp_path)
+    _capture(run, 1, register=False, gridded=False)
+    assert analyze.analyze([run], workers=1)[0] == 0
+    out = run / "analysis_grid"
+    grid_json = out / "V_1.grid.json"
+    read = []
+    real = np.lib.npyio.NpzFile.__getitem__
+
+    def watched(self, key):
+        read.append(key)
+        return real(self, key)
+    monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", watched)
+    kinds.inventory([out], kinds.load_class_map()[0])
+    assert isinstance(rollup.row_keys(grid_json), list)
+    census.view_census(run / "color_id_buffer" / "V_1.json", grid_json)
+    assert read and all(k.startswith("ec_") for k in read), sorted(set(read))
+    del read[:]
+    kinds.derive_view(grid_json, kinds.load_class_map())          # control
+    assert any(not k.startswith("ec_") for k in read)
