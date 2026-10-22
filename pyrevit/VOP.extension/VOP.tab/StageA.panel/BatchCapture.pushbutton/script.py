@@ -98,10 +98,12 @@ from Autodesk.Revit.UI import TaskDialog, TaskDialogCommandLinkId, TaskDialogRes
 ui_app = __revit__  # noqa: F821
 
 # ---------------------------------------------------------------------------
-# Dialog suppressor (the Fingerprint extension's; every id is logged)
+# Dialog suppressor (the Fingerprint extension's). Every dialog is logged
+# with its time, the job it came up in and the result it was answered with
+# (batch_capture.DialogLog, persisted in the batch log after every job).
 # ---------------------------------------------------------------------------
 
-_seen_dialog_ids = []
+_dialog_log = []    # [DialogLog], set in main() once the package is importable
 
 
 def _on_dialog_showing(sender, args):
@@ -110,14 +112,16 @@ def _on_dialog_showing(sender, args):
         dialog_id = str(args.DialogId) if args.DialogId else ""
     except Exception as ex:  # noqa: BLE001 -- the id is for the log only
         dialog_id = "(unreadable: {0})".format(ex)
-    if dialog_id and dialog_id not in _seen_dialog_ids:
-        _seen_dialog_ids.append(dialog_id)
+    accepted = None
     for result_code in (1002, 1001, 1):
         try:
             if args.OverrideResult(result_code):
+                accepted = result_code
                 break
         except Exception:  # noqa: BLE001 -- the next code is tried
             continue
+    if _dialog_log:
+        _dialog_log[0].record(dialog_id, accepted)
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +242,8 @@ def main():
                         "It is derived from this script's location only when pyrevit/ sits "
                         "inside the checkout.".format(REPO_ROOT, _SETTINGS_PATH))
         return
-    from vop_interwoven.batch_capture import load_plan, pending_jobs, run_batch  # noqa: E402
+    from vop_interwoven.batch_capture import (  # noqa: E402
+        DialogLog, load_plan, pending_jobs, run_batch)
 
     plan = load_plan(_settings["plan_json"])
     pending, done = pending_jobs(plan, limit=_int_or_none(_settings.get("limit")))
@@ -261,23 +266,26 @@ def main():
     if _result != TaskDialogResult.CommandLink1:
         return
 
+    _dialog_log[:] = [DialogLog()]
     ui_app.DialogBoxShowing += _on_dialog_showing
     try:
         import ctypes
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         try:
             record = run_batch(plan, open_doc, close_doc, capture, recapture,
-                               limit=_int_or_none(_settings.get("limit")), log=print)
+                               limit=_int_or_none(_settings.get("limit")), log=print,
+                               dialog_log=_dialog_log[0])
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:
         ui_app.DialogBoxShowing -= _on_dialog_showing
 
-    if _seen_dialog_ids and plan.get("output_root"):
+    # One line per dialog: time, job key, id, result (also in the batch log).
+    if _dialog_log[0].events and plan.get("output_root"):
         try:
             with open(os.path.join(plan["output_root"], "dialog_ids_{0}.log".format(
                     datetime.now().strftime("%Y%m%dT%H%M%S"))), "w", encoding="utf-8") as handle:
-                handle.write("\n".join(_seen_dialog_ids) + "\n")
+                handle.write("\n".join(_dialog_log[0].lines()) + "\n")
         except (IOError, OSError) as ex:
             print("  dialog id log not written: {0}".format(ex))
 

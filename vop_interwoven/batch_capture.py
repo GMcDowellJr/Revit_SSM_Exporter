@@ -50,6 +50,8 @@ import csv
 import json
 import os
 import re
+import time
+from datetime import datetime
 
 from . import output_layout
 from .run_meta import clock_stamp, provenance_session, write_run_meta
@@ -466,8 +468,46 @@ def _log_path(output_root, clock_id):
     return os.path.join(output_root, "{0}{1}.json".format(BATCH_LOG_PREFIX, clock_id))
 
 
+# --- C4: batch-level timing ------------------------------------------------------------
+#
+# Batch 2026-10-21: 23-31 min between runs that no file recorded (next run's
+# start - previous start - previous per-view time). Each job entry now says
+# when it started and ended, how long the open, the previous document's
+# close, the capture and the run_meta stamps took, and process memory at each
+# of those boundaries. Every clock is injected so the tests are deterministic.
+WALL_FORMAT = "%Y-%m-%dT%H:%M:%S"
+_perf = getattr(time, "perf_counter", time.time)
+
+
+def _wall_stamp(wall):
+    return wall().strftime(WALL_FORMAT)
+
+
+class DialogLog(object):
+    """Every Revit dialog the batch auto-answered: WHEN, during WHICH job, its
+    id and the result it was overridden with. run_batch sets ``job_key``
+    while a job runs and persists ``events`` with the batch log after every
+    job; the pyRevit button's DialogBoxShowing handler calls ``record``."""
+
+    def __init__(self, wall=None):
+        self._wall = wall or datetime.now
+        self.job_key = None
+        self.events = []
+
+    def record(self, dialog_id, override_result=None):
+        self.events.append({"at": _wall_stamp(self._wall), "job_key": self.job_key,
+                            "dialog_id": dialog_id, "override_result": override_result})
+
+    def lines(self):
+        """One tab-separated line per dialog: time, job key, id, result."""
+        return ["\t".join(str("" if e.get(k) is None else e.get(k))
+                          for k in ("at", "job_key", "dialog_id", "override_result"))
+                for e in self.events]
+
+
 def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
-              now=None, write_log=True):
+              now=None, write_log=True, clock=None, wall=None, memory_sample=None,
+              dialog_log=None):
     """Run the plan's pending jobs in order. Injected:
 
     * ``open_doc(job) -> (doc, how)``: opens the file; ``how`` is the
@@ -484,15 +524,34 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
     The executed source is pinned HERE, once (run_meta.provenance_session):
     every run of the batch records what this session loaded, and says when
     the disk moved under it.
+
+    C4: each job entry carries ``started_at`` / ``ended_at`` (wall clock,
+    ``wall``), ``timings_ms`` (open, close_previous, capture, stamp, from
+    ``clock``, seconds) and ``memory`` (``memory_sample()`` at job start, after
+    the open, after closing the previous document and after the capture). A
+    ``dialog_log`` (DialogLog) has its job key set while each job runs and
+    its events persisted with the log.
     """
     with provenance_session("batch_capture", now=now) as pin:
         return _run_batch(plan, open_doc, close_doc, capture, recapture, limit=limit,
-                          log=log, now=now, write_log=write_log, pin=pin)
+                          log=log, now=now, write_log=write_log, pin=pin, clock=clock,
+                          wall=wall, memory_sample=memory_sample, dialog_log=dialog_log)
 
 
 def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
-               now=None, write_log=True, pin=None):
+               now=None, write_log=True, pin=None, clock=None, wall=None,
+               memory_sample=None, dialog_log=None):
+    clock = clock or _perf
+    wall = wall or datetime.now
+    if memory_sample is None:
+        from .memory_telemetry import process_memory_sample as memory_sample
+
+    def _ms(since):
+        return round((clock() - since) * 1000.0, 3)
+    batch_started_at = _wall_stamp(wall)
+    t_scan = clock()
     pending, done = pending_jobs(plan, limit=limit)
+    plan_scan_ms = _ms(t_scan)
     clock_id = clock_stamp(now)
     record = {"schema": BATCH_LOG_SCHEMA, "started": clock_id, "plan_mode": plan.get("mode"),
               "jobs": [], "already_done": [{"key": j["key"], "detail": j.get("done_detail")}
@@ -500,7 +559,10 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
               "ok": 0, "failed": 0, "finished": False,
               # What this batch executed, read once at its start.
               "executed_provenance": dict((k, v) for k, v in (pin or {}).items()
-                                          if k != "package_dir")}
+                                          if k != "package_dir"),
+              # C4: when the batch began, and the resume scan's cost.
+              "started_at": batch_started_at, "plan_scan_ms": plan_scan_ms,
+              "dialogs": dialog_log.events if dialog_log is not None else None}
     output_root = plan.get("output_root") or "."
     log_path = _log_path(output_root, clock_id)
 
@@ -520,29 +582,50 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
         label = "[{0}/{1}] {2} ({3})".format(index + 1, len(pending), job["display_name"],
                                              job["kind"])
         log(label)
-        entry = {"key": job["key"], "kind": job["kind"], "status": "failed", "run_dirs": []}
+        entry = {"key": job["key"], "kind": job["kind"], "status": "failed", "run_dirs": [],
+                 "started_at": _wall_stamp(wall), "timings_ms": {},
+                 "memory": {"job_start": memory_sample()}}
+        if dialog_log is not None:
+            dialog_log.job_key = job["key"]
+            dialogs_before = len(dialog_log.events)
         doc = None
         try:
-            doc, how = open_doc(job)
+            t_step = clock()
+            try:
+                doc, how = open_doc(job)
+            finally:
+                entry["timings_ms"]["open_ms"] = _ms(t_step)
+                entry["memory"]["after_open"] = memory_sample()
             if doc is None:
                 raise RuntimeError("open_doc returned no document for {0}".format(job["full_path"]))
             entry["opened"] = opened_record(job, how, getattr(doc, "Title", None),
                                             getattr(doc, "PathName", None))
             if prev is not None:
+                t_step = clock()
                 try:
                     close_doc(prev)
                 except Exception as ex:  # noqa: BLE001 -- recorded, not fatal
                     entry["close_previous_failed"] = "{0}: {1}".format(type(ex).__name__, ex)
+                entry["timings_ms"]["close_previous_ms"] = _ms(t_step)
+                entry["memory"]["after_close_previous"] = memory_sample()
                 prev = None
-            result = recapture(doc, job) if job["kind"] == "recapture" else capture(doc, job)
+            t_step = clock()
+            try:
+                result = (recapture(doc, job) if job["kind"] == "recapture"
+                          else capture(doc, job))
+            finally:
+                entry["timings_ms"]["capture_ms"] = _ms(t_step)
+                entry["memory"]["after_capture"] = memory_sample()
             entry["result"] = dict((k, v) for k, v in (result or {}).items()
                                    if k not in ("view_summaries",))
             entry["run_dirs"] = list((result or {}).get("run_dirs") or [])
             entry["stamp_failures"] = {}
+            t_step = clock()
             for run_dir in entry["run_dirs"]:
                 err = stamp_run_meta(run_dir, "opened_from", entry["opened"])
                 if err:
                     entry["stamp_failures"][run_dir] = err
+            entry["timings_ms"]["stamp_ms"] = _ms(t_step)
             entry["status"] = "ok"
             record["ok"] += 1
             log("  OK: {0}".format(", ".join(entry["run_dirs"]) or "(no run directory reported)"))
@@ -554,14 +637,21 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
             log("  FAILED: {0}".format(entry["error"]))
         if doc is not None:
             prev = doc
+        if dialog_log is not None:
+            entry["dialog_count"] = len(dialog_log.events) - dialogs_before
+            dialog_log.job_key = None
+        entry["ended_at"] = _wall_stamp(wall)
         record["jobs"].append(entry)
         _persist()
     if prev is not None:
+        t_step = clock()
         try:
             close_doc(prev)
             record["last_document_closed"] = True
         except Exception as ex:  # noqa: BLE001
             record["last_document_closed"] = "{0}: {1}".format(type(ex).__name__, ex)
+        record["last_close_ms"] = _ms(t_step)
+    record["finished_at"] = _wall_stamp(wall)
     record["finished"] = True
     record["log_path"] = log_path if write_log else None
     _persist()
