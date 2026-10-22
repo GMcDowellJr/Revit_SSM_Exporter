@@ -374,6 +374,8 @@ sha256, so a fresh check does not parse a record whose sha256 is unchanged.
 A fresh census written before 2.1.1 gains them once, in place
 (`added tiff_locators to <run>`); nothing else in the summary changes, and no
 census or pair is recomputed for it.
+A run folder whose run_meta cannot be read or is ambiguous, or whose name is
+not `<date>__<run_id>`, is skipped the same way (2.1.2).
 
 **Per pair** (`element_transitions_<d>.csv`): one row per element key on
 either side, with `class`, `in_prev` / `in_cur` and `deciding_view_ids`, the
@@ -386,7 +388,9 @@ there). `gone` = not drawn in any view that drew it before; deleted from the
 model is an inference. The summary carries the counts per class (and
 `_LINK`), common measured views, the host-id Jaccard over them, the
 predecessor's run_id, path and as-of date, and the sha256 of both census
-summaries and CSVs. The first run gets a summary with state
+CSVs (from 2.1.2 not of the census summaries: a pair kept fresh across a
+census rewrite could not keep that hash true; its `identity.census_content`
+says what it was computed from). The first run gets a summary with state
 `no_predecessor` and no CSV (not zeros). Two runs on one as-of date in a model
 folder refuse, by name, the pairs of both and of the run after them.
 

@@ -127,8 +127,9 @@ def test_the_pair_steps_classes_are_transitions_on_the_same_two_runs(tmp_path):
         assert rb_row[k] == str(v), k
     assert summary["predecessor"]["run_id"] == "RUN_A"
     assert set(summary["census"]) == {"cur", "prev"}
-    assert summary["census"]["prev"]["summary_sha256"] == grid.sha256_file(
-        _files(a).census_path("summary"))
+    assert summary["census"]["prev"]["csv_sha256"] == grid.sha256_file(
+        _files(a).census_path("csv"))
+    assert "summary_sha256" not in summary["census"]["prev"]          # 2.1.2
 
 
 def test_the_first_run_says_it_has_no_predecessor_and_writes_no_csv(tmp_path):

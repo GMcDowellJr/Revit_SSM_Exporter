@@ -97,8 +97,8 @@ one pair rather than the whole series (44 runs, ~45 min, under 1.3.0):
     the summary: counts per class (and ``_LINK``; from 2.1.0 the
     replace-in-place split of created / gone), common measured views, the
     host-id Jaccard, the predecessor's run_id / path / as-of date, both census
-    files' sha256. The predecessor is the run with the previous as-of date in
-    the same model folder (``predecessors``), never run_id or folder order.
+    CSVs' sha256 (2.1.2: not the census summaries'). The predecessor is the
+    run with the previous as-of date in the same model folder (``predecessors``), never run_id or folder order.
     The pair is read from the two census FILES through ``classify``,
     ``transitions`` and ``host_id_overlap``, the functions the series uses.
     The first run: a ``no_predecessor`` summary and no CSV, never zeros. Two
@@ -204,13 +204,25 @@ none: the driver adds them once (``add_tiff_locators``: that field and a
 reads are unchanged, so no pair reruns), from the records the check just
 parsed.
 
+2.1.2 (review, PR #245; pair outputs only): the pair summary's
+``census.<side>`` no longer records ``summary_sha256``. A pair kept fresh
+across a census rewritten onto the same content (2.1.1) left that hash naming
+a summary no longer on disk; what the pair was computed from is
+``identity.census_content``, and the CSV it read is ``csv_sha256``.
+PAIR_VERSION 2.1.2 recomputes every pair once, so no pair keeps the field. A
+run folder the walk finds but cannot index (run_meta unreadable or
+ambiguous, or a folder name that is not ``<date>__<run_id>``) is a
+``skipped`` action like any run out of scope, naming the census and
+transitions files already in it; the driver writes nothing into it.
+
 Exit, ``--root``: 0 nothing refused, 1 a census or pair refused, 2 no run
 folder found. A skipped run is not a refusal: a root whose runs are all
-skipped exits 0. Runs without ``--out``: 0 every view measured, 1 a view unmeasured, 2
-a run refused. ``--out``: 0 when no run is refused and every requested view
-is measured; 1 for an unmeasured view or a refused run; 2 when every run is
-refused, two runs share an as-of date, or on bad arguments (a run that is not
-a directory).
+skipped (an unindexable run folder included) exits 0. Runs without
+``--out``: 0 every view measured, 1 a view unmeasured, 2 a run refused.
+``--out``: 0 when no run is refused and every requested view is measured; 1
+for an unmeasured view or a refused run; 2 when every run is refused, two
+runs share an as-of date, or on bad arguments (a run that is not a
+directory).
 """
 from __future__ import annotations
 
@@ -238,16 +250,18 @@ from vop_interwoven import output_layout  # noqa: E402
 SCHEMA = "vop.stage_a.element_census.v1"
 RUN_SCHEMA = "vop.stage_a.element_census.run.v1"
 PAIR_SCHEMA = "vop.stage_a.element_transitions.v1"
-TOOL_VERSION = "2.1.1"
+TOOL_VERSION = "2.1.2"
 # The version of each step's OUTPUTS, which is what makes a file on disk
 # stale (``_version_check``). A change to one step bumps that step's version
 # only: 2.1.0 changed the pair outputs, and the per-run censuses (minutes
 # each from the grids) stay current at 2.0.0. A summary written before these
 # were split records only ``tool_version``, read as the output version.
 # 2.1.1: the pair's identity is the census CONTENT it reads
-# (``census_content``), so every pair is judged once under it.
+# (``census_content``), so every pair is judged once under it. 2.1.2: the
+# pair summary no longer records each census summary's sha256, which a pair
+# kept fresh across a census rewrite could not keep true.
 CENSUS_VERSION = "2.0.0"
-PAIR_VERSION = "2.1.1"
+PAIR_VERSION = "2.1.2"
 # The census summary fields the pair step reads (``load_run_census``): the
 # checks it makes before reading (schema, output version, state, the CSV it
 # names and that CSV's sha256), the refusal it reports, and the run's view
@@ -1609,11 +1623,6 @@ def predecessors(all_files):
     return out
 
 
-def _summary_sha(files):
-    path = files.census_path("summary")
-    return grid.sha256_file(path) if path.is_file() else None
-
-
 def census_content(files, rec=None):
     """What the pair step reads from one run's census (``load_run_census``),
     as ``{"csv_sha256", "read_fields_sha256"}``: the census CSV's sha256 as
@@ -1701,7 +1710,7 @@ def pair_staleness(cur, choice, contents=None):
 def write_pair(cur, choice, contents=None):
     """Run ``cur`` against its predecessor, into ``cur``'s grid folder: the
     transitions CSV (one row per element key on either side), then the
-    summary naming its sha256 and both census files' (written last). No
+    summary naming its sha256 and both census CSVs' (written last). No
     predecessor or a refused pair: a summary saying so and no CSV, never
     zeros. Read from the census FILES, through ``classify`` and
     ``host_id_overlap`` -- the functions the series uses."""
@@ -1731,7 +1740,6 @@ def write_pair(cur, choice, contents=None):
             for side, files, rec in (("cur", cur, c_rec), ("prev", prev, p_rec)):
                 summary["census"][side] = {
                     "summary": files.census_summary,
-                    "summary_sha256": _summary_sha(files),
                     "csv": rec.get("csv"), "csv_sha256": rec.get("csv_sha256")}
             classes = classify(p_run, c_run)
             _e, _l, summary["counts"] = transitions(p_run, c_run)
@@ -1785,6 +1793,19 @@ def _left_in_place(files):
     return sorted(n for n in names if (files.grid_dir / n).is_file())
 
 
+def _left_in_folder(run_dir):
+    """The census and transitions files in a run folder's grid folders, by
+    name, for a run whose run_meta cannot be read (so no ``RunFiles``)."""
+    names = set()
+    for sub in output_layout.GRID_DIR.values():
+        folder = Path(run_dir) / sub
+        if folder.is_dir():
+            prefixes = ("element_census", "element_transitions")
+            names |= set(p.name for p in folder.iterdir()
+                         if p.is_file() and p.name.startswith(prefixes))
+    return sorted(names)
+
+
 def out_of_scope(files):
     """Why the driver leaves a run alone, or None. A run is out of scope
     when (a) its run_meta is absent or unreadable (``RunFiles.meta``, found
@@ -1822,9 +1843,20 @@ def drive(root, progress=None):
     in scope), and its pair records which run that was."""
     say = progress or (lambda line: None)
     run_dirs, scan = find_runs(root)
-    for s in scan["skipped"]:
-        say("skipped {0}: {1}".format(s["path_rel"], s["reason"]))
     all_files, actions = [], []
+    for s in scan["skipped"]:
+        folder = Path(root) / s["path_rel"]
+        if not output_layout.run_meta_candidates(folder):
+            say("skipped {0}: {1}".format(s["path_rel"], s["reason"]))
+            continue
+        # A run folder the walk could not index (run_meta unreadable or
+        # ambiguous, or a folder name that is not <date>__<run_id>): skipped
+        # like any run out of scope, with what is already in it named.
+        left = _left_in_folder(folder)
+        actions.append({"step": "census", "run": folder.name, "action": "skipped",
+                        "state": None, "why": s["reason"], "left_in_place": left})
+        say("skipped {0}: {1}{2}".format(folder.name, s["reason"], "; left in place: " +
+                                         ", ".join(left) if left else ""))
     for r in run_dirs:
         f = RunFiles(r)
         if not f.has_capture:

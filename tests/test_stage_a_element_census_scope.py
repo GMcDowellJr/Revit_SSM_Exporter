@@ -274,8 +274,11 @@ def _as_2_1_0(files):
     rec["identity"] = {
         "state": ident["state"], "reason": ident["reason"], "predecessor": prev,
         "census_summary_sha256": {
-            "cur": census._summary_sha(files),
-            "prev": census._summary_sha(prev_files) if prev_files else None}}
+            "cur": grid.sha256_file(files.census_path("summary")),
+            "prev": (grid.sha256_file(prev_files.census_path("summary"))
+                     if prev_files else None)}}
+    for side in rec["census"].values():
+        side["summary_sha256"] = "as 2.1.0 recorded it"
     rec.pop("identity_rule")
     rec.update(tool_version="2.1.0", pair_version="2.1.0")
     path.write_text(json.dumps(rec, indent=2, sort_keys=True))
@@ -510,3 +513,81 @@ def test_an_interrupted_backfill_leaves_the_old_summary(tmp_path, monkeypatch):
         census.drive(model)
     assert f.census_path("summary").read_bytes() == old
     assert not list(f.grid_dir.glob("*.tmp"))
+
+
+# --- review, PR #245 ---------------------------------------------------------------------------
+
+def test_a_pair_kept_fresh_names_no_hash_the_census_on_disk_no_longer_has(tmp_path):
+    """Codex: a pair left fresh across a census rewritten onto the same
+    content recorded the old summary's sha256. 2.1.2 records none; every
+    hash the pair summary does carry matches the files on disk."""
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    reg.register(_capture_dir(b) / "V_1_anno.json")           # rewrites the census inputs
+    grid.grid_view(_capture_dir(b) / "V_1.json", _grid_dir(b))
+    assert _computed(census.drive(model)) == [("census", b.name)]
+    for run in (b, c):
+        summary, _rows = _pair(run)
+        for side, files in (("cur", _files(run)),
+                            ("prev", _files(model / summary["predecessor"]["run_dir_name"]))):
+            rec = summary["census"][side]
+            assert "summary_sha256" not in rec
+            assert rec["csv_sha256"] == grid.sha256_file(files.census_path("csv"))
+            assert summary["identity"]["census_content"][side] == census.census_content(files)
+
+
+def test_a_2_1_1_pair_is_recomputed_once_and_loses_the_summary_hash(tmp_path):
+    model = _model(tmp_path)
+    runs = _three(model)
+    census.drive(model)
+    for r in runs:
+        path = _files(r).pair_path("summary")
+        rec = json.loads(path.read_text())
+        rec.update(tool_version="2.1.1", pair_version="2.1.1")
+        for side in rec["census"].values():
+            side["summary_sha256"] = "as 2.1.1 recorded it"
+        path.write_text(json.dumps(rec, indent=2, sort_keys=True))
+    actions = census.drive(model)
+    assert _computed(actions) == sorted(("pair", r.name) for r in runs)
+    for r in runs[1:]:
+        assert not [s for s in _pair(r)[0]["census"].values() if "summary_sha256" in s]
+    assert _computed(census.drive(model)) == []
+
+
+def _unindexable(model, census_from=None):
+    """A run folder whose run_meta cannot be read, holding the census files
+    ``census_from``'s grid folder holds (as an earlier driver left them)."""
+    x = model / "2025-02-15__RUN_BROKEN"
+    (x / "analysis_grid").mkdir(parents=True)
+    (x / "run_meta.json").write_text("{ not json")
+    if census_from is not None:
+        for p in _grid_dir(census_from).glob("element_*"):
+            shutil.copyfile(str(p), str(x / "analysis_grid" / p.name))
+    return x
+
+
+def test_a_run_folder_with_unreadable_run_meta_is_a_skipped_action(tmp_path):
+    """Codex: discover() leaves such a folder out of the runs, so it had no
+    action record and its files were not named."""
+    model = _model(tmp_path)
+    a, b, c = _three(model)
+    census.drive(model)
+    x = _unindexable(model, census_from=b)
+    before = _snapshot(x)
+    actions = census.drive(model)
+    rec = _skipped(actions)[x.name]
+    assert rec["why"].startswith("run_meta unreadable")
+    assert rec["left_in_place"] == sorted(p.name for p in _grid_dir(b).glob("element_*"))
+    assert rec["left_in_place"]                                     # control: not empty
+    assert _snapshot(x) == before
+    assert _computed(actions) == []                                 # the series is unchanged
+
+
+def test_a_root_holding_only_an_unreadable_run_exits_0_and_writes_nothing(tmp_path):
+    model = _model(tmp_path)
+    x = _unindexable(model)
+    before = _snapshot(model)
+    assert census.main(["--root", str(model)]) == 0
+    assert _snapshot(model) == before
+    assert [a_["run"] for a_ in census.drive(model)] == [x.name]
