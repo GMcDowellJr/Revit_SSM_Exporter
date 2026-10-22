@@ -681,6 +681,48 @@ def _inventory_job(grid_dirs, out, names, cmap_info):
     return 1 if record["grid_records"]["not_used"] else 0
 
 
+def derive_job(path, cmap_info):
+    """One grid record of ``derive``: ``(exit code, line, None)``. A
+    module-level function of picklable arguments that prints nothing
+    (tools/stage_a_jobs.py)."""
+    rec = derive_view(path, cmap_info)
+    if rec["status"] != "value":
+        return 1, "REFUSED {0}: {1}".format(rec["view_stem"], rec["reason"]), None
+    return 0, "{0:<40} {1}".format(rec["view_stem"][:40], ", ".join(
+        "{0} {1}".format(f, len(r.get("classes_with_rows") or []))
+        for f, r in sorted(rec["families"].items()))), None
+
+
+def derive_plan_for(grid_dirs, cmap_info):
+    from tools import stage_a_jobs
+    return stage_a_jobs.Plan(jobs=[stage_a_jobs.Job(derive_job, (path, cmap_info))
+                                   for gdir in grid_dirs for path in grid_records(gdir)])
+
+
+def _setup(runs, class_map):
+    """``(cmap_info, grid_dirs, None)``, or ``(None, None, line)`` when the
+    class map is refused or a run has no grid records: both commands' exit 2."""
+    try:
+        cmap_info = load_class_map(class_map)
+    except KindsRefusal as ex:
+        return None, None, "REFUSED: {0}".format(ex)
+    grid_dirs = [grid_dir_of(r) for r in runs]
+    missing = [str(d) for d in grid_dirs if not grid_records(d)]
+    if missing:
+        return None, None, "no grid records in: {0}".format(", ".join(missing))
+    return cmap_info, grid_dirs, None
+
+
+def derive_plan(runs, class_map=None):
+    """``derive``'s work as a stage_a_jobs.Plan, its set-up refusal as an
+    early exit."""
+    from tools import stage_a_jobs
+    cmap_info, grid_dirs, why = _setup(runs, class_map)
+    if why is not None:
+        return stage_a_jobs.Plan(lines=[why], early=2)
+    return derive_plan_for(grid_dirs, cmap_info)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="command", required=True)
@@ -694,15 +736,12 @@ def main(argv=None):
     der.add_argument("runs", nargs="+", metavar="run")
     der.add_argument("--class-map", default=None)
     args = ap.parse_args(argv)
-    try:
-        cmap_info = load_class_map(args.class_map)
-    except KindsRefusal as ex:
-        print("REFUSED: {0}".format(ex))
-        return 2
-    grid_dirs = [grid_dir_of(r) for r in args.runs]
-    missing = [str(d) for d in grid_dirs if not grid_records(d)]
-    if missing:
-        print("no grid records in: {0}".format(", ".join(missing)))
+    if args.command == "derive":
+        from tools import stage_a_jobs
+        return stage_a_jobs.run_serial(derive_plan(args.runs, args.class_map))
+    cmap_info, grid_dirs, why = _setup(args.runs, args.class_map)
+    if why is not None:
+        print(why)
         return 2
     if args.command == "inventory":
         if args.out:
@@ -717,18 +756,7 @@ def main(argv=None):
         for dirs, out, names in jobs:
             code = max(code, _inventory_job(dirs, out, names, cmap_info))
         return code
-    worst = 0
-    for gdir in grid_dirs:
-        for path in grid_records(gdir):
-            rec = derive_view(path, cmap_info)
-            if rec["status"] != "value":
-                worst = 1
-                print("REFUSED {0}: {1}".format(rec["view_stem"], rec["reason"]))
-                continue
-            print("{0:<40} {1}".format(rec["view_stem"][:40], ", ".join(
-                "{0} {1}".format(f, len(r.get("classes_with_rows") or []))
-                for f, r in sorted(rec["families"].items()))))
-    return worst
+    raise AssertionError("unreachable: derive returns above")
 
 
 if __name__ == "__main__":

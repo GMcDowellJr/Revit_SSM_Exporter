@@ -143,3 +143,58 @@ def test_index_root_rebuilds_the_runs_index_with_the_census(tmp_path):
         ("RUN_A", "value", "no_predecessor")]
     code, results = analyze.analyze([run])                           # control: not asked
     assert "index" not in [r["stage"] for r in results]
+
+
+def _products(root):
+    """sha256 of every file under ``root``; a census summary with its
+    input_stats mtimes zeroed (census freshness: a rebuilt fixture's files
+    are new, so their mtimes differ while nothing else does)."""
+    import hashlib
+    out = {}
+    for f in sorted(p for p in root.rglob("*") if p.is_file()):
+        data = f.read_bytes()
+        if f.name.startswith("element_census_") and f.name.endswith(".summary.json"):
+            doc = json.loads(data)
+            doc["input_stats"] = dict((k, [v[0], 0]) for k, v in
+                                      (doc.get("input_stats") or {}).items())
+            data = json.dumps(doc, sort_keys=True).encode()
+        out[str(f.relative_to(root))] = hashlib.sha256(data).hexdigest()
+    return out
+
+
+def test_workers_give_the_serial_runs_files_exit_code_and_summary(tmp_path, capsys):
+    """The same two-run fixture, rebuilt at the same path, analysed with
+    --workers 1 and --workers 2: every file byte-identical, the same exit
+    code, the same summary lines apart from their timings. A refused view
+    (no annotation ticks) is in it, so a refusal travels through the pool."""
+    import re
+    import shutil
+
+    def _fixture():
+        shutil.rmtree(str(tmp_path / "Model"), ignore_errors=True)
+        model = tmp_path / "Model"
+        model.mkdir()
+        a = _run(model, "2026-10-07__RUN_A", "RUN_A")
+        for n in (1, 2):
+            _capture(a, n, register=False, gridded=False, drop_anno_marks=(n == 2))
+        b = _run(model, "2026-10-14__RUN_B", "RUN_B", date="2026-10-14")
+        _capture(b, 1, register=False, gridded=False)
+        # The capture harness stages each pair beside the runs; not products.
+        for stage in model.glob("stage_*"):
+            shutil.rmtree(str(stage))
+        return a, b
+
+    def _summary(text):
+        lines = text.split("== summary", 1)[1].splitlines()
+        return [re.sub(r"\s+\(\d+\.\d s\)$", "", line) for line in lines
+                if not line.strip().startswith("total")]
+
+    got = {}
+    for workers in (1, 2):
+        a, b = _fixture()
+        code = analyze.main([str(a), str(b), "--workers", str(workers)])
+        got[workers] = (code, _products(tmp_path / "Model"),
+                        _summary(capsys.readouterr().out))
+    assert got[1][0] == got[2][0] == 1
+    assert got[1][1] == got[2][1] and len(got[1][1]) > 20
+    assert got[1][2] == got[2][2]

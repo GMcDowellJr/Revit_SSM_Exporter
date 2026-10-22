@@ -1532,48 +1532,67 @@ def model_sidecars(folder):
                   if _MODEL_SIDECAR_NAME.search(p.name)), folder
 
 
+def grid_job(path, out, run_meta, png_px_per_cell):
+    """One view of main(): ``(exit code, line, size entry or None)``, the
+    size entry ``(ec_rows, npz bytes, keys, stem)`` for the closing table. A
+    module-level function of picklable arguments that prints nothing
+    (tools/stage_a_jobs.py)."""
+    start = time.perf_counter()
+    rec = grid_view(path, out, run_meta=run_meta, png_px_per_cell=png_px_per_cell)
+    seconds = time.perf_counter() - start
+    if rec["status"] != "value":
+        return 1, "REFUSED {0}: {1}  {2:.2f}s".format(path.name, rec.get("reason"),
+                                                     seconds), None
+    g = rec["grid"]
+    line = ("{0:<40} {1:>5} x {2:<5} cells  {3:5.2f} px/cell  basis {4:<12} "
+            "unc {5}  {6}  {7:.2f}s".format(
+                path.stem[:40], g["cells_w"], g["cells_h"],
+                min(g["px_per_cell_u"], g["px_per_cell_v"]), g["uv_basis"]["chosen"],
+                "-" if g["uv_basis"]["uncertainty_px"] is None else
+                "{0:.2f}px".format(g["uv_basis"]["uncertainty_px"]),
+                ",".join(g["flags"]), seconds))
+    return 0, line, (rec["ec_rows"], rec["npz_bytes"], len(rec["ec_keys"]), path.stem)
+
+
+def _finish(results):
+    sizes = [r[2] for r in results if r[2] is not None]
+    lines = []
+    if sizes:
+        # No size threshold: the numbers are printed for a person to judge.
+        lines.append("largest element x cell tables (ec_rows, npz bytes, keys), of {0} "
+                     "gridded views:".format(len(sizes)))
+        for rows, size, keys, stem in sorted(sizes, reverse=True)[:5]:
+            lines.append("  {0:>10} rows  {1:>12} bytes  {2:>7} keys  {3}".format(
+                rows, size, keys, stem))
+    return lines, max([r[0] for r in results] or [0])
+
+
+def plan(run, out=None, png_px_per_cell=4):
+    """main()'s work as a stage_a_jobs.Plan: one grid_job per model sidecar,
+    then the largest element x cell tables from the gathered results."""
+    from tools import stage_a_jobs
+    paths, folder = model_sidecars(run)
+    if not paths:
+        return stage_a_jobs.Plan(lines=["no model sidecars under {0}".format(folder)],
+                                 early=2)
+    out = Path(out) if out else Path(output_layout.grid_dir_for_capture(folder))
+    # Every sidecar is in ``folder``, so find_run_meta finds the same record
+    # for each: read it once, not once per view.
+    run_meta = dsc.find_run_meta(paths[0])
+    return stage_a_jobs.Plan(
+        jobs=[stage_a_jobs.Job(grid_job, (path, out, run_meta, png_px_per_cell))
+              for path in paths], finish=_finish)
+
+
 def main(argv=None):
+    from tools import stage_a_jobs
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run", help="a run directory or its color_id_buffer/")
     ap.add_argument("--out", default=None,
                     help="output directory (default: <run>/analysis_grid)")
     ap.add_argument("--png-px-per-cell", type=int, default=4)
     args = ap.parse_args(argv)
-    paths, folder = model_sidecars(args.run)
-    if not paths:
-        print("no model sidecars under {0}".format(folder))
-        return 2
-    out = Path(args.out) if args.out else Path(output_layout.grid_dir_for_capture(folder))
-    # Every sidecar is in ``folder``, so find_run_meta finds the same record
-    # for each: read it once, not once per view.
-    run_meta = dsc.find_run_meta(paths[0])
-    worst = 0
-    sizes = []
-    for path in paths:
-        start = time.perf_counter()
-        rec = grid_view(path, out, run_meta=run_meta, png_px_per_cell=args.png_px_per_cell)
-        seconds = time.perf_counter() - start
-        if rec["status"] != "value":
-            worst = 1
-            print("REFUSED {0}: {1}  {2:.2f}s".format(path.name, rec.get("reason"), seconds))
-            continue
-        sizes.append((rec["ec_rows"], rec["npz_bytes"], len(rec["ec_keys"]), path.stem))
-        g = rec["grid"]
-        print("{0:<40} {1:>5} x {2:<5} cells  {3:5.2f} px/cell  basis {4:<12} "
-              "unc {5}  {6}  {7:.2f}s".format(
-                  path.stem[:40], g["cells_w"], g["cells_h"],
-                  min(g["px_per_cell_u"], g["px_per_cell_v"]), g["uv_basis"]["chosen"],
-                  "-" if g["uv_basis"]["uncertainty_px"] is None else
-                  "{0:.2f}px".format(g["uv_basis"]["uncertainty_px"]),
-                  ",".join(g["flags"]), seconds))
-    if sizes:
-        # No size threshold: the numbers are printed for a person to judge.
-        print("largest element x cell tables (ec_rows, npz bytes, keys), of {0} "
-              "gridded views:".format(len(sizes)))
-        for rows, size, keys, stem in sorted(sizes, reverse=True)[:5]:
-            print("  {0:>10} rows  {1:>12} bytes  {2:>7} keys  {3}".format(
-                rows, size, keys, stem))
-    return worst
+    return stage_a_jobs.run_serial(plan(args.run, args.out, args.png_px_per_cell))
 
 
 if __name__ == "__main__":

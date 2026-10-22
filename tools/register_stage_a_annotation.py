@@ -439,7 +439,42 @@ def collect(paths):
     return out
 
 
+def register_job(path, model=None):
+    """One annotation sidecar of main(): ``(exit code, line, None)``. A
+    module-level function of picklable arguments that prints nothing, so it
+    runs the same in a worker process (tools/stage_a_jobs.py)."""
+    # Wall seconds per view, appended to its line (not to the record, which
+    # is a function of its inputs: 1.0.1).
+    start = time.perf_counter()
+    try:
+        record = register(path, Path(model) if model else None)
+    except (OSError, ValueError) as ex:
+        return 2, "unreadable {0}: {1}: {2}  {3:.2f}s".format(
+            path, type(ex).__name__, ex, time.perf_counter() - start), None
+    seconds = time.perf_counter() - start
+    if record["status"] == "registered":
+        t = record["annotation_to_model_px"]
+        return 0, ("registered {0} -> {1}  x' = {2:.6f} x {3:+.2f}, y' = {4:.6f} y "
+                   "{5:+.2f}  {6:.2f}s".format(path, record["registered_tiff"], t["scale_x"],
+                                               t["offset_x"], t["scale_y"], t["offset_y"],
+                                               seconds)), None
+    return 1, "REFUSED {0}: {1}  {2:.2f}s".format(path, "; ".join(record["refusals"]),
+                                                  seconds), None
+
+
+def plan(paths, model=None):
+    """main()'s work as a stage_a_jobs.Plan: one register_job per target."""
+    from tools import stage_a_jobs
+    targets = collect(paths)
+    if not targets:
+        return stage_a_jobs.Plan(lines=["no annotation sidecars found under {0}".format(
+            paths)], early=2)
+    return stage_a_jobs.Plan(jobs=[stage_a_jobs.Job(register_job, (path, model))
+                                   for path in targets])
+
+
 def main(argv=None):
+    from tools import stage_a_jobs
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("paths", nargs="+",
                     help="annotation sidecar(s) (<view>_anno.json) or directories")
@@ -447,36 +482,9 @@ def main(argv=None):
                     help="the model sidecar, when it cannot be found beside a "
                          "single annotation sidecar")
     ns = ap.parse_args(argv)
-    targets = collect(ns.paths)
-    if ns.model and len(targets) != 1:
+    if ns.model and len(collect(ns.paths)) != 1:
         ap.error("--model names one model sidecar, so it takes one annotation sidecar")
-    code = 0
-    for path in targets:
-        # Wall seconds per view, appended to its line (not to the record,
-        # which is a function of its inputs: 1.0.1).
-        start = time.perf_counter()
-        try:
-            record = register(path, Path(ns.model) if ns.model else None)
-        except (OSError, ValueError) as ex:
-            print("unreadable {0}: {1}: {2}  {3:.2f}s".format(
-                path, type(ex).__name__, ex, time.perf_counter() - start))
-            code = 2
-            continue
-        seconds = time.perf_counter() - start
-        if record["status"] == "registered":
-            t = record["annotation_to_model_px"]
-            print("registered {0} -> {1}  x' = {2:.6f} x {3:+.2f}, y' = {4:.6f} y "
-                  "{5:+.2f}  {6:.2f}s".format(path, record["registered_tiff"], t["scale_x"],
-                                              t["offset_x"], t["scale_y"], t["offset_y"],
-                                              seconds))
-        else:
-            print("REFUSED {0}: {1}  {2:.2f}s".format(path, "; ".join(record["refusals"]),
-                                                     seconds))
-            code = max(code, 1)
-    if not targets:
-        print("no annotation sidecars found under {0}".format(ns.paths))
-        code = 2
-    return code
+    return stage_a_jobs.run_serial(plan(ns.paths, ns.model))
 
 
 if __name__ == "__main__":
