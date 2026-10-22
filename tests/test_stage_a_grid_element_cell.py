@@ -330,7 +330,7 @@ def test_the_colour_to_key_table_is_the_decode_then_the_key_search():
         base = int(rng.integers(0, 9))
         want = grid._key_index(ids_now.astype(np.int64), table, base)
         got = grid.decoded_key_index(packed, cmap, table, base)
-        assert got.dtype == want.dtype and np.array_equal(got, want), trial
+        assert got.dtype == grid.KEY_INDEX_DTYPE and np.array_equal(got, want), trial
 
 
 def test_the_link_key_table_is_the_sorted_search_and_remap_it_replaced():
@@ -428,3 +428,34 @@ def test_dense_sum_is_np_add_at_and_refuses_what_add_at_would_wrap():
         grid.dense_sum(np.array([-1]), np.array([0]), np.array([1]), (3, 3))
     with pytest.raises(IndexError):
         grid.dense_sum(np.array([0]), np.array([3]), np.array([1]), (3, 3))
+
+
+def test_a_key_index_int32_cannot_hold_is_refused_not_wrapped():
+    """Per-pixel key indices are int32 (KEY_INDEX_DTYPE). A key count or a
+    key past int32 is a GridRefusal; wrapping would send pixels to another
+    key. The control narrows the largest value that fits, unchanged."""
+    top = np.iinfo(grid.KEY_INDEX_DTYPE).max
+    fits = grid.narrow_key_index(np.array([-1, 0, top], dtype=np.int64), top)
+    assert fits.dtype == grid.KEY_INDEX_DTYPE and fits.tolist() == [-1, 0, top]
+    with pytest.raises(grid.GridRefusal):
+        grid.narrow_key_index(np.array([0, top + 1], dtype=np.int64), top + 2)
+    with pytest.raises(grid.GridRefusal):
+        grid.narrow_key_index(np.array([0], dtype=np.int64), top + 1)
+    with pytest.raises(grid.GridRefusal):           # through the table, too
+        grid.colour_key_index(np.zeros((2, 2), dtype=np.int32), [0], [top + 1])
+
+
+def test_assigned_black_ids_are_the_dense_ids_at_the_mask():
+    rng = np.random.default_rng(19)
+    black = rng.random((40, 60)) < 0.3
+    spec = {"mapping": {"a_u": 1.0, "b_u": 0.0, "a_v": -1.0, "b_v": 40.0}}
+    bbox_map = dict((str(100 + k), {"bbox_uv": {"state": "value", "value": [
+        float(u), float(v), float(u + du), float(v + dv)]}})
+        for k, (u, v, du, dv) in enumerate(rng.integers(0, 30, (12, 4))))
+    mask, record, dense = grid.assign_black(black, bbox_map, [], spec, (0, 0),
+                                            return_ids=True)
+    mask2, record2, sparse = grid.assign_black(black, bbox_map, [], spec, (0, 0),
+                                               return_ids="assigned")
+    assert np.array_equal(mask, mask2) and record == record2
+    assert mask.any() and sparse.dtype == np.int64
+    assert np.array_equal(sparse, dense[mask])
