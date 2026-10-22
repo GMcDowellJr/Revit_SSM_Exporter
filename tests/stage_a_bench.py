@@ -29,6 +29,14 @@ from vop_interwoven.stage_a_registration import (  # noqa: E402
 
 VIEW_SCALE = 96.0
 CELL_IN = 0.125                     # 1 ft cells at 1/8" = 1'-0"
+# Pixel density is per view, not a constant: Greg's capped plans
+# (2025-10-25__20261012T122748) are at ~2.56 px per cell, uncapped views
+# finer. Per-pixel costs follow the image size; per-cell costs (element x
+# cell rows, dense arrays, derive) follow the cell count, which for one
+# image size grows as 1 / (px per cell)^2. The default is the capped
+# density; a view may give its own. The annotation pass is ~0.9x as fine.
+MODEL_PX_PER_FT = 2.56
+ANNO_OVER_MODEL = 0.9
 
 
 def _integrity():
@@ -87,15 +95,15 @@ def _tick(img, seg, colour, to_x, to_y, thickness=2):
 
 
 def write_view(cap, n, size=(700, 520), seed=0, model_elements=None,
-               anno_elements=None):
+               anno_elements=None, px_per_ft=MODEL_PX_PER_FT):
     """View ``V_<n>`` in the capture folder ``cap``; returns its model sidecar."""
     rng = np.random.default_rng(seed + 1000 * n)
     mw, mh = size
-    px_ft = 18.0
+    px_ft = float(px_per_ft)
     bounds = (-1.0, -2.0, -1.0 + mw / px_ft, -2.0 + mh / px_ft)
     w_ft, h_ft = bounds[2] - bounds[0], bounds[3] - bounds[1]
     # Annotation lattice: its own scale and offset, the crop inset.
-    a_px = 12.0
+    a_px = ANNO_OVER_MODEL * px_ft
     crop = (bounds[0] + 0.05 * w_ft, bounds[1] + 0.05 * h_ft,
             bounds[2] - 0.05 * w_ft, bounds[3] - 0.05 * h_ft)
     aw = int((crop[2] - crop[0]) * a_px) + 60
@@ -141,7 +149,7 @@ def write_view(cap, n, size=(700, 520), seed=0, model_elements=None,
     anno = np.full((ah, aw, 3), 255, dtype=np.uint8)
     bbox_map = {}
     for k, rect in enumerate(_rects(rng, n_anno, crop[2] - crop[0], crop[3] - crop[1],
-                                    crop[0], crop[1], 0.3, 3.0)):
+                                    crop[0], crop[1], w_ft / 400.0, w_ft / 40.0)):
         eid = 50000 + k
         filled = k % 9 == 0
         _paint(anno, rect, anno_colours[k], ax, ay, outline_only=not filled, width=1)
@@ -196,13 +204,14 @@ def write_view(cap, n, size=(700, 520), seed=0, model_elements=None,
 
 def write_run(run, sizes, seed=0, run_id="RUN_BENCH", date="2026-10-07"):
     """A finalized v1 run at ``run`` (``<date>__<run_id>`` by convention),
-    one view per entry of ``sizes``."""
+    one view per entry of ``sizes``: ``(w, h)`` or ``(w, h, px_per_ft)``."""
     run = Path(run)
     cap = run / "color_id_buffer"
     cap.mkdir(parents=True)
     views = []
     for n, size in enumerate(sizes, start=1):
-        write_view(cap, n, size, seed)
+        write_view(cap, n, tuple(size[:2]), seed,
+                   px_per_ft=size[2] if len(size) > 2 else MODEL_PX_PER_FT)
         views.append({"view_id": n, "view_name": "V {0}".format(n),
                       "capture_status": "success", "capture_failure_reason": ""})
     meta = {"schema": "vop.run_meta.v1", "run_id": run_id, "git_commit": "bench",
@@ -218,10 +227,12 @@ def write_run(run, sizes, seed=0, run_id="RUN_BENCH", date="2026-10-07"):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run")
-    ap.add_argument("--size", type=int, nargs=2, action="append", metavar=("W", "H"))
+    ap.add_argument("--size", type=float, nargs="+", action="append",
+                    metavar="W H [PX_PER_FT]")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
-    write_run(args.run, [tuple(s) for s in (args.size or [(700, 520)])], args.seed)
+    write_run(args.run, [(int(s[0]), int(s[1])) + tuple(s[2:3])
+                     for s in (args.size or [(700, 520)])], args.seed)
     return 0
 
 
