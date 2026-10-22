@@ -369,11 +369,38 @@ def mark_reference_rectangle(view, raster, diag=None, view_id=None):
     return None, "no authored crop, model crop or raster frame to place marks in"
 
 
+# C3: per-element timing of annotation_avoid_rects. Stall A (batch
+# 2026-10-21, run 2, LEVEL 2 - JGL working) spent 4,555 s here over 462 rects
+# in a step that took 0.5-3 s for the same view in the other six runs -- i.e.
+# ~1-6 ms per element. The record kept only the total, so whether ONE call
+# hung or every call slowed could not be told.
+# * AVOID_SLOWEST_N = 5: one hung call is the case to name; five also shows
+#   whether the slow ones share a category, at ~5 x 60 bytes per sidecar.
+# * AVOID_SLOW_CALL_MS = 1000: > 100x the normal per-element cost above, and
+#   still well under any stall worth naming; counted, never listed in full.
+AVOID_SLOWEST_N = 5
+AVOID_SLOW_CALL_MS = 1000.0
+_perf = getattr(time, "perf_counter", time.time)
+
+
+def _category_id_int(elem):
+    """The element's category id, or None (read only for the slowest few)."""
+    try:
+        category = getattr(elem, "Category", None)
+        return None if category is None else _element_id_int(getattr(category, "Id", None))
+    except Exception:  # noqa: BLE001 -- telemetry; None says unreadable
+        return None
+
+
 def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
     """``(avoid, record)``: each annotation element's view bbox in UV, for
     registration.relocate_marks_clear_of. An element whose bbox does not
     resolve is counted, not guessed; a read that raises is counted with its
     first error. Bboxes only -- no geometry (the Stage A rule).
+
+    C3: each element's bbox read and projection is timed; the record keeps
+    the AVOID_SLOWEST_N slowest (id, category id, ms) and how many took over
+    AVOID_SLOW_CALL_MS, so a stall here names its element afterwards.
 
     T2: an ImportInstance is NOT avoided. A view-specific DWG's bbox spans
     the plan, so every tick inside it was moved or marked "blocked" while
@@ -382,18 +409,32 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
     element is excluded."""
     from .color_id_buffer import _is_import_instance
     from .revit.collection import project_bbox_corners_uv
+    import heapq
     avoid, no_bbox, errors, excluded_imports = [], 0, [], 0
+    slowest, slow_calls, timed = [], 0, 0
     t0 = time.time()
-    for elem in anno_elements or []:
+    for index, elem in enumerate(anno_elements or []):
         if _is_import_instance(elem):
             excluded_imports += 1
             continue
+        t_call = _perf()
         try:
             bbox = elem.get_BoundingBox(view)
             corners = (project_bbox_corners_uv(bbox, basis, diag=diag, view_id=view_id)
                        if bbox is not None and basis is not None else None)
         except Exception as ex:
             errors.append("{0}: {1}".format(type(ex).__name__, ex))
+            corners = _AVOID_READ_FAILED
+        call_ms = (_perf() - t_call) * 1000.0
+        timed += 1
+        if call_ms > AVOID_SLOW_CALL_MS:
+            slow_calls += 1
+        # (ms, index, elem): the index breaks ties without comparing elements.
+        if len(slowest) < AVOID_SLOWEST_N:
+            heapq.heappush(slowest, (call_ms, index, elem))
+        elif call_ms > slowest[0][0]:
+            heapq.heapreplace(slowest, (call_ms, index, elem))
+        if corners is _AVOID_READ_FAILED:
             continue
         if not corners:
             no_bbox += 1
@@ -406,7 +447,17 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
                    "avoid_rects": len(avoid), "no_bbox": no_bbox,
                    "excluded_imports": excluded_imports,
                    "read_errors": len(errors), "first_error": errors[0] if errors else None,
-                   "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
+                   "elapsed_ms": round((time.time() - t0) * 1000.0, 3),
+                   # C3: the slowest calls first, and the count over the threshold.
+                   "calls_timed": timed,
+                   "slowest": [{"id": _element_id_int(getattr(e, "Id", None)),
+                                "category_id": _category_id_int(e), "ms": round(ms, 3)}
+                               for ms, _i, e in sorted(slowest, key=lambda t: (-t[0], t[1]))],
+                   "slow_call_threshold_ms": AVOID_SLOW_CALL_MS,
+                   "calls_over_threshold": slow_calls}
+
+
+_AVOID_READ_FAILED = object()
 
 
 # Revit refuses a curve shorter than Application.ShortCurveTolerance
@@ -474,9 +525,14 @@ def mark_fpp_ft(view, raster, cfg):
 # P2: the phases that PARTITION ``total`` -- sequential, non-overlapping.
 # Every other key in timings_ms is nested inside one of these (model_export
 # and sidecar_write_model inside model_pass, ...), so it is not summed again.
+# C3: a key with a SUBKEY_SEPARATOR is a part of the key before its last one
+# (model_expand.resolve_all inside model_expand, mark_layout.avoid_rects
+# inside mark_layout); its parts sum to no more than it, and none is ever in
+# the partition (tests/test_stage_a_timing_subkeys.py).
 # What total holds beyond their sum -- the membership collection, detail-line
 # hide/show, link-category discovery, the view-state and mark read-backs --
 # is reported as ``unaccounted``, not hidden.
+SUBKEY_SEPARATOR = "."
 TIMING_PARTITION = ("authored_override_scan", "split_remove", "lines_unhide",
                     "co_sizing_first_attempt", "mark_layout",
                     "marks_create", "model_pass", "suppression", "annotation_pass",
@@ -880,6 +936,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # restore_commit, finish), nested in the pass like the export.
         for step, ms in sorted((timings.get("steps_ms") or {}).items()):
             record["timings_ms"]["{0}_{1}".format(name, step)] = ms
+        # C3: parts of a step, "<step>.<part>", nested in that step
+        # (model_graphics_state.category_overrides, model_expand.resolve_all).
+        for sub, ms in sorted((timings.get("substeps_ms") or {}).items()):
+            record["timings_ms"]["{0}_{1}".format(name, sub)] = ms
 
     primary, record["primary_view"] = primary_view(doc, view, diag=diag, view_id=view_id)
     if primary is not None:
@@ -1056,9 +1116,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                                          "reason": source})
                 # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or
                 # dimension does not show in the annotation capture.
+                _t_avoid = time.time()
                 avoid, record["mark_avoidance"] = annotation_avoid_rects(
                     view, _anno, getattr(raster, "view_basis", None), diag=diag,
                     view_id=view_id)
+                record["timings_ms"]["mark_layout.avoid_rects"] = round(
+                    (time.time() - _t_avoid) * 1000.0, 3)
                 # A diagnostic only (group A of RUN_..._SMALL_VIEWS.md): crop A
                 # united with the annotation bboxes, against the cap. Not the
                 # export's extent (see the function): recorded to compare with it.

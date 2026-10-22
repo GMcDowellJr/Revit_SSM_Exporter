@@ -49,7 +49,7 @@ _OwnerUnreadable.__name__ = "ImportInstance"
 
 def _both(tmp_path, monkeypatch, imports):
     def _expand(doc_, view_, elems, cfg, diag=None, elem_cache=None,
-                dwg_omitted_out=None):
+                dwg_omitted_out=None, timings_out=None):
         return ([{"element": e, "source_type": "HOST"} for e in elems]
                 + [{"element": i, "source_type": "DWG"} for i in imports])
     monkeypatch.setattr(revit_collection, "expand_host_link_import_model_elements",

@@ -6,6 +6,7 @@ element visibility according to Revit view settings.
 """
 
 import math
+import time
 
 def resolve_element_bbox(elem, view=None, diag=None, context=None):
     """Resolve an element bounding box with explicit source semantics.
@@ -328,7 +329,8 @@ def is_element_visible_in_view(elem, view):
 
 
 def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
-                                           elem_cache=None, dwg_omitted_out=None):
+                                           elem_cache=None, dwg_omitted_out=None,
+                                           timings_out=None):
     """Expand element list to include linked/imported model elements.
 
     Args:
@@ -336,6 +338,11 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
         dwg_omitted_out: Optional list, passed through to
             collect_all_linked_elements() so a dropped DWG import is recorded
             in the capture instead of being silently absent.
+        timings_out: Optional dict, FILLED with ms (telemetry only, Stage A
+            C3): ``host_bbox`` and ``host_fingerprint`` summed over the host
+            loop's elements, ``host_loop`` the whole loop, ``linked`` the
+            linked/import collection and its bbox loop. Every element passed
+            in is the caller's -- this function scans nothing document-wide.
 
     Returns:
         List of element wrappers with transform info plus bbox provenance.
@@ -353,6 +360,10 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
     # Add host elements with identity transform
     identity_trf = Transform.Identity
     _bbox_call_count = 0  # Step 4 diagnostic: counts resolve_element_bbox calls in host loop
+    _perf = getattr(time, "perf_counter", time.time)
+    _t_bbox = [0.0]
+    _t_fingerprint = [0.0]
+    _t_loop = time.time()
     for e in elements:
         elem_id = getattr(getattr(e, "Id", None), "IntegerValue", None)
 
@@ -361,12 +372,14 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
             "elem_id": elem_id,
             "source_type": "HOST",
         }
+        _t_call = _perf()
         bbox, bbox_source = resolve_element_bbox(
             e,
             view=None,
             diag=diag,
             context=bbox_context,
         )
+        _t_bbox[0] += _perf() - _t_call
         _bbox_call_count += 1
 
         if bbox_source == "view":
@@ -378,6 +391,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
 
         # Phase 2: Optionally cache bbox fingerprint for cross-view reuse
         fingerprint = None
+        _t_call = _perf()
         if elem_cache is not None and elem_id is not None:
             try:
                 fingerprint = elem_cache.get_or_create_fingerprint(
@@ -395,6 +409,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
                         message="Exception in expand_host_link_import_model_elements: {}".format(e),
                         exc=e,
                     )
+        _t_fingerprint[0] += _perf() - _t_call
         result.append(
             {
                 "element": e,
@@ -412,6 +427,11 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
             }
         )
 
+    if timings_out is not None:
+        timings_out["host_loop"] = round((time.time() - _t_loop) * 1000.0, 3)
+        timings_out["host_loop.bbox"] = round(_t_bbox[0] * 1000.0, 3)
+        timings_out["host_loop.fingerprint"] = round(_t_fingerprint[0] * 1000.0, 3)
+    _t_linked = time.time()
     if diag is not None and _bbox_call_count != len(elements):
         diag.warn(
             phase="collection",
@@ -474,6 +494,8 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
             )
         else:
             print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
+    if timings_out is not None:
+        timings_out["linked"] = round((time.time() - _t_linked) * 1000.0, 3)
 
     # Aggregated bbox source report (if anything was missing)
     if diag is not None and bbox_none > 0:
