@@ -227,7 +227,7 @@ def test_coarse_is_uncertainty_as_a_fraction_of_the_cell(tmp_path, monkeypatch):
     fixed pixel figure."""
     real = grid.choose_mapping
 
-    def _one_px(sidecar, rgb, crop_uv):
+    def _one_px(sidecar, rgb, crop_uv, located=None):
         mapping, basis = real(sidecar, rgb, crop_uv)
         return mapping, dict(basis, uncertainty_px=1.0)
     monkeypatch.setattr(grid, "choose_mapping", _one_px)
@@ -546,7 +546,7 @@ def test_crop_A_cells_come_from_the_crop_not_the_padded_image(tmp_path, monkeypa
     rgb = dsc._load_rgb_array(tmp_path / "V_1.tiff")
     real = grid.choose_mapping
 
-    def padded(sidecar, _padded_rgb, crop_uv):
+    def padded(sidecar, _padded_rgb, crop_uv, located=None):
         # Production's mapping of the unpadded capture, moved by the pad.
         mapping, basis = real(sidecar, rgb, crop_uv)
         mapping = dict(mapping, b_u=mapping["b_u"] + pad,
@@ -648,7 +648,7 @@ def test_bboxes_are_placed_with_the_registrations_mapping(tmp_path, monkeypatch)
                                         black=[(11.0, 10.5, 12.0, 11.5)])
     real = grid.choose_mapping
 
-    def shifted(sidecar, rgb, crop_uv):
+    def shifted(sidecar, rgb, crop_uv, located=None):
         mapping, basis = real(sidecar, rgb, crop_uv)
         # 20 px in v: more than the black text's 0.5 ft (9 px) margin to its
         # box edges plus the 1 px pad, so a box placed by THIS mapping misses.

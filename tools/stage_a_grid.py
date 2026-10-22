@@ -163,8 +163,12 @@ def residual_at_measured_ticks(mapping, ticks):
     return worst
 
 
-def choose_mapping(sidecar, rgb, crop_uv):
+def choose_mapping(sidecar, rgb, crop_uv, located=None):
     """``(mapping, basis_record)``: the mapping closer to the measured ticks.
+
+    ``located``: registration_marks.locate_recorded_marks for this image, so
+    the ticks the fit measures are the ones the decode subtracts, located
+    once (grid_view).
 
     Both mappings are scored the same way: the largest distance between where
     each puts a tick's centre line and where the fit MEASURED it
@@ -182,7 +186,8 @@ def choose_mapping(sidecar, rgb, crop_uv):
                               "reason": refusal or "the capture records no ticks"}
     else:
         fit = rm.fit_recorded_marks(rgb, payload,
-                                    reserved_colours=rm.palette_colours(sidecar))
+                                    reserved_colours=rm.palette_colours(sidecar),
+                                    located=located)
         if fit.get("status") != "value":
             record["tick_fit"] = {"status": "unavailable", "reason": fit.get("reason")}
             fit = None
@@ -411,8 +416,9 @@ def lattice_origin(crop_min_uv, cell_ft):
     return out
 
 
-def build_spec(sidecar, rgb, run_config, lattice=None):
-    """The GridSpec for one view, or raises GridRefusal."""
+def build_spec(sidecar, rgb, run_config, lattice=None, located=None):
+    """The GridSpec for one view, or raises GridRefusal. ``located``: as
+    choose_mapping takes it."""
     frame = frame_record(sidecar)
     scale = frame.get("view_scale")
     crop = frame.get("crop_uv")
@@ -426,7 +432,7 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
     if not crop or len(crop) != 4:
         raise GridRefusal("the frame record carries no crop_uv")
     cell_ft = float(cell_in) * float(scale) / 12.0
-    mapping, basis = choose_mapping(sidecar, rgb, crop)
+    mapping, basis = choose_mapping(sidecar, rgb, crop, located)
     px_u = abs(mapping["a_u"]) * cell_ft
     px_v = abs(mapping["a_v"]) * cell_ft
     px_per_cell = min(px_u, px_v)
@@ -486,18 +492,26 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
 # --- counting ----------------------------------------------------------------
 
 def _accumulate(spec, counts, channel_masks, model_cols, model_rows):
-    """Add each channel mask's pixels to its per-cell count."""
+    """Add each channel mask's pixels to its per-cell count.
+
+    A chunk of pixel rows falls in a contiguous band of cell rows, so each
+    bincount is sized to that band and added into its slice of the counts:
+    the same sums as a bincount over every cell, without allocating and
+    adding a whole-grid array per chunk per channel -- a cost that grew with
+    the cell count, i.e. as 1 / (px per cell)^2 for one image size."""
+    w = spec["cells_w"]
     i = cells_of_columns(spec, model_cols) - spec["i_range"][0]
     j = cells_of_rows(spec, model_rows) - spec["j_range"][0]
-    flat = (j[:, None] * spec["cells_w"] + i[None, :]).ravel()
-    n = spec["cells_w"] * spec["cells_h"]
+    lo, hi = int(j.min()), int(j.max()) + 1
+    if lo < 0 or hi > spec["cells_h"]:
+        # A whole-grid bincount raised on these too (a negative index, or a
+        # result longer than the counts).
+        raise ValueError("pixel rows map to cell rows [{0}, {1}) outside the grid's "
+                         "[0, {2})".format(lo, hi, spec["cells_h"]))
+    flat = ((j - lo)[:, None] * w + i[None, :]).ravel()
+    n = (hi - lo) * w
     for name, mask in channel_masks.items():
-        counts[name] += np.bincount(flat[mask.ravel()], minlength=n)
-
-
-def _pack(rgb):
-    return (rgb[..., 0].astype(np.int64) << 16) | (rgb[..., 1].astype(np.int64) << 8) \
-        | rgb[..., 2].astype(np.int64)
+        counts[name][lo * w:hi * w] += np.bincount(flat[mask.ravel()], minlength=n)
 
 
 def _colour_set(colour_map):
@@ -523,19 +537,43 @@ def model_channel_masks(sidecar, rgb):
     return model_pixels(sidecar, rgb)[0]
 
 
-def model_pixels(sidecar, rgb):
+def decoded_id_in(packed, colour_map, ids):
+    """``np.isin(decode_ids(colour_map) ids, ids)`` ON EVERY ELEMENT PIXEL
+    (decoded id != 0), from the packed colours, through a bool table over the
+    2**24 colours: a pixel's decoded id is in ``ids`` exactly when its
+    colour's (last-named, as _build_lookup) id is. A background pixel is
+    False here, where isin would say True if ``ids`` held 0; both callers AND
+    this with ``element``, so they cannot tell the two apart.
+    The table is bounded by the colour space, never by the id range (Revit
+    2024+ ElementIds are 64-bit), and replaces a full-image isin.
+    tests/test_stage_a_grid_element_cell.py composes the two."""
+    wanted = set(int(i) for i in ids)
+    last = {}
+    for elem_id_str, rgb in colour_map.items():
+        r, g, b = (int(c) for c in rgb)
+        last[(r << 16) | (g << 8) | b] = int(elem_id_str)
+    lut = np.zeros(256 * 256 * 256, dtype=bool)
+    hits = [c for c, eid in last.items() if eid in wanted]
+    if hits:
+        lut[np.array(hits, dtype=np.int64)] = True
+    return lut[packed]
+
+
+def model_pixels(sidecar, rgb, packed=None):
     """``(masks, id_array, packed, decode_map)``: model_channel_masks' masks,
     with the decoded element id of every pixel (0 = none), the packed colours
-    and the decode map they came from (the ticks' ids removed)."""
-    decode_map, _block, mark_mask = dsc._registration_mark_exclusion(rgb, sidecar)
-    id_array, _stats = dsc.decode_ids(rgb, decode_map)
-    packed = _pack(rgb)
+    and the decode map they came from (the ticks' ids removed). ``packed``:
+    registration_marks.pack_pixels(rgb), when the caller has it."""
+    packed = rm.pack_pixels(rgb) if packed is None else packed
+    decode_map, _block, mark_mask = dsc._registration_mark_exclusion(
+        rgb, sidecar, with_fit=False, packed=packed)
+    id_array, _stats = dsc.decode_ids(rgb, decode_map, packed=packed, with_stats=False)
     host_map = (sidecar.get("near_face_w_map") or {}).get("host") or {}
     dwg_ids = np.array(sorted(int(k) for k, e in host_map.items()
                               if isinstance(e, dict) and e.get("source") == "DWG"),
                        dtype=np.int64)
     element = id_array != dsc.BACKGROUND_ELEMENT_ID
-    dwg = element & np.isin(id_array, dwg_ids)
+    dwg = element & decoded_id_in(packed, decode_map, dwg_ids)
     rest = ~element
     tick = rest & mark_mask if mark_mask is not None else np.zeros_like(rest)
     rest = rest & ~tick
@@ -634,17 +672,18 @@ def anno_channel_masks(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin
     return anno_pixels(anno_sidecar, rgb, excluded_ids, spec, canvas_origin)[:2]
 
 
-def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)):
+def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0),
+                return_packed=False):
     """``(masks, info, ids, black_ids, colour_map)``: anno_channel_masks'
     masks and info, with each pixel's decoded element id and each black
     pixel's assigned element id (0 = none), and the colour map decoded (the
-    excluded ids removed)."""
+    excluded ids removed). ``return_packed``: the packed colours too, sixth."""
     excluded = set(int(e) for e in excluded_ids or ())
     colour_map = dict((k, v) for k, v in (anno_sidecar.get("color_assignment_map") or {}).items()
                       if int(k) not in excluded)
-    packed = _pack(rgb)
+    packed = rm.pack_pixels(rgb)
     if colour_map:
-        ids, _stats = dsc.decode_ids(rgb, colour_map)
+        ids, _stats = dsc.decode_ids(rgb, colour_map, packed=packed, with_stats=False)
     else:
         ids = np.zeros(packed.shape, dtype=np.int32)
     element = ids != dsc.BACKGROUND_ELEMENT_ID
@@ -654,7 +693,7 @@ def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)
     fr_ids = sorted(int(k) for k, e in bbox_map.items()
                     if isinstance(e, dict) and e.get("element_class") in FILLED_REGION_CLASSES
                     and int(k) not in excluded)
-    filled = element & np.isin(ids, np.array(fr_ids, dtype=np.int64))
+    filled = element & decoded_id_in(packed, colour_map, fr_ids)
     rest = ~element
     white = rest & (packed == 0xFFFFFF)
     black = rest & (packed == 0)
@@ -678,6 +717,8 @@ def anno_pixels(anno_sidecar, rgb, excluded_ids, spec=None, canvas_origin=(0, 0)
         info["filled_region"]["reason"] = (
             "this capture records no element_class, so filled regions cannot be "
             "told from detail components and are counted by ink")
+    if return_packed:
+        return masks, info, ids, black_ids, colour_map, packed
     return masks, info, ids, black_ids, colour_map
 
 
@@ -863,6 +904,42 @@ def _key_index(values, table, base):
     return out
 
 
+def colour_key_index(packed, colours, keys):
+    """``keys[k]`` at each pixel whose packed colour is ``colours[k]``, -1
+    elsewhere (int64), by one gather through a 2**24 table. A colour listed
+    twice takes its LAST key, as _build_lookup's dict walk does."""
+    lut = np.full(256 * 256 * 256, -1, dtype=np.int64)
+    colours = np.asarray(colours, dtype=np.int64)
+    keys = np.asarray(keys, dtype=np.int64)
+    if len(colours):
+        # The last occurrence of each colour: first in the reversed list.
+        uniq, first = np.unique(colours[::-1], return_index=True)
+        lut[uniq] = keys[::-1][first]
+    return lut[packed]
+
+
+def decoded_key_index(packed, colour_map, table, base):
+    """``_key_index(decode_ids(colour_map) ids, table, base)`` from the packed
+    colours in ONE gather (colour_key_index): the same int64 values -- -1
+    where the colour decodes to no id in ``table`` -- without the id array's
+    int64 copy and a full-image searchsorted. tests/test_stage_a_grid_
+    element_cell.py composes the two."""
+    colours, ids = [], []
+    for elem_id_str, rgb in colour_map.items():
+        r, g, b = (int(c) for c in rgb)
+        colours.append((r << 16) | (g << 8) | b)
+        ids.append(int(elem_id_str))
+    ids = np.asarray(ids, dtype=np.int64)
+    table = np.asarray(table, dtype=np.int64)
+    keys = np.full(len(ids), -1, dtype=np.int64)
+    if len(table) and len(ids):
+        pos = np.searchsorted(table, ids)
+        hit = pos < len(table)
+        hit[hit] = table[pos[hit]] == ids[hit]
+        keys[hit] = pos[hit] + base
+    return colour_key_index(packed, colours, keys)
+
+
 def _sparse(spec, keys, mask, col_offset=0, row_offset=0, step=512):
     """``(codes, counts)`` of the pixels where ``mask`` holds, by
     ``key * n_cells + cell``, each code once, ascending."""
@@ -884,8 +961,26 @@ def _sparse(spec, keys, mask, col_offset=0, row_offset=0, step=512):
         return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
     codes = np.concatenate(parts_c)
     counts = np.concatenate(parts_n)
-    uniq, inv = np.unique(codes, return_inverse=True)
-    return uniq, np.bincount(inv, weights=counts).astype(np.int64)
+    # Each chunk's codes are sorted and unique, so a stable sort only merges
+    # runs; equal codes are then summed. np.unique(codes, return_inverse)
+    # plus a float bincount gave the same codes and the same sums.
+    order = np.argsort(codes, kind="stable")
+    codes, counts = codes[order], counts[order]
+    starts = np.flatnonzero(np.concatenate([[True], codes[1:] != codes[:-1]]))
+    return codes[starts], np.add.reduceat(counts, starts).astype(np.int64)
+
+
+def sorted_union(arrays):
+    """PURE. ``np.unique(np.concatenate(arrays))`` for arrays that are each
+    sorted: a stable sort merges their runs (near-linear), then repeats are
+    dropped. numpy 2's hash-based np.unique took 27.7 s on 18 M such codes
+    where this takes 0.25 s; the result is the same sorted unique array."""
+    if not arrays:
+        return np.zeros(0, dtype=np.int64)
+    merged = np.sort(np.concatenate(arrays), kind="stable")
+    if not len(merged):
+        return merged
+    return merged[np.concatenate([[True], merged[1:] != merged[:-1]])]
 
 
 def merge_sparse(spec, parts):
@@ -893,8 +988,7 @@ def merge_sparse(spec, parts):
     field holds, zeros where a field has none."""
     n = spec["cells_w"] * spec["cells_h"]
     all_codes = [c for c, _k in parts.values() if len(c)]
-    codes = (np.unique(np.concatenate(all_codes)) if all_codes
-             else np.zeros(0, dtype=np.int64))
+    codes = sorted_union(all_codes)
     out = {"ec_key": (codes // n).astype(np.int32)}
     flat = codes % n
     out["ec_i"] = (flat % spec["cells_w"] + spec["i_range"][0]).astype(np.int32)
@@ -913,11 +1007,42 @@ def merge_sparse(spec, parts):
 def ec_dense(spec, ec, rows, field):
     """PURE. ``field`` summed over the ec_ rows selected by the boolean
     ``rows``, as a dense (cells_h, cells_w) array."""
-    out = np.zeros((spec["cells_h"], spec["cells_w"]), dtype=np.int64)
-    np.add.at(out, (ec["ec_j"][rows] - spec["j_range"][0],
-                    ec["ec_i"][rows] - spec["i_range"][0]),
-              ec[field][rows].astype(np.int64))
-    return out
+    return dense_sum(ec["ec_j"][rows].astype(np.int64) - spec["j_range"][0],
+                     ec["ec_i"][rows].astype(np.int64) - spec["i_range"][0],
+                     ec[field][rows], (spec["cells_h"], spec["cells_w"]))
+
+
+def dense_sum(jj, ii, values, shape):
+    """PURE. ``values`` summed into a ``shape`` int64 array at ``(jj, ii)``:
+    what ``np.add.at(out, (jj, ii), values)`` gives on a zero ``out``, by one
+    np.bincount. Exact: the weights are whole numbers and every sum is a pixel
+    count (< 2**53, float64's exact-integer range), checked. An index outside
+    ``shape`` raises IndexError, as np.add.at does -- including a negative
+    one, which np.add.at would wrap (the ec_ rows are built inside the grid,
+    merge_sparse, so none is)."""
+    flat, inside = cell_flat(jj, ii, shape)
+    if not inside.all():
+        raise IndexError("cell index outside the {0} x {1} grid".format(*shape))
+    return dense_sum_flat(flat, values, shape)
+
+
+def cell_flat(jj, ii, shape):
+    """PURE. ``(jj * w + ii, inside)``: each row's flat cell index and whether
+    its (jj, ii) lies in ``shape`` -- for a caller that selects many subsets
+    of one set of rows (stage_a_kinds.class_arrays) and checks each."""
+    h, w = shape
+    jj = np.asarray(jj, dtype=np.int64)
+    ii = np.asarray(ii, dtype=np.int64)
+    return jj * w + ii, (jj >= 0) & (jj < h) & (ii >= 0) & (ii < w)
+
+
+def dense_sum_flat(flat, values, shape):
+    """dense_sum on flat cell indices already shown inside ``shape``."""
+    h, w = shape
+    sums = np.bincount(flat, weights=values, minlength=h * w)
+    if len(sums) and sums.max() >= 2 ** 53:
+        raise OverflowError("a cell sum exceeds float64's exact-integer range")
+    return sums.astype(np.int64).reshape(h, w)
 
 
 def ec_invariants(spec, ec, keys, arrays):
@@ -990,20 +1115,17 @@ def element_cell_accounting(spec, model, anno=None):
     -- the model image's decoded ids, packed colours and channel masks, and
     ``cover`` (element | black_assigned on the model image's window, or None
     with no registered annotation).
-    ``anno``: ``{"sidecar", "ids", "black_ids", "colour_map", "masks",
+    ``anno``: ``{"sidecar", "ids", "packed", "black_ids", "colour_map", "masks",
     "origin", "black_by_element"}`` for the registered canvas, or None."""
     keys, elem_ids, link_colours = model_keys(model["sidecar"], model["decode_map"])
     masks = model["masks"]
     n_elem = len(elem_ids)
-    mkey = _key_index(model["ids"].astype(np.int64), elem_ids, 0)
+    mkey = decoded_key_index(model["packed"], model["decode_map"], elem_ids, 0)
     mkey[~(masks["host"] | masks["dwg"])] = -1
-    lkey = _key_index(model["packed"], np.sort(link_colours), 0)
-    if len(link_colours):
-        # Back from colour order to the keys' (name) order.
-        order = np.argsort(link_colours)
-        remap = np.full(len(link_colours), -1, dtype=np.int64)
-        remap[np.arange(len(link_colours))] = order + n_elem
-        lkey = np.where(lkey >= 0, remap[np.clip(lkey, 0, None)], -1)
+    # Link category k (model_keys' name order; its colours are distinct) is
+    # key n_elem + k.
+    lkey = colour_key_index(model["packed"], link_colours,
+                            n_elem + np.arange(len(link_colours)))
     lkey[~masks["link"]] = -1
     mkey = np.where(lkey >= 0, lkey, mkey)
     del lkey
@@ -1029,10 +1151,13 @@ def element_cell_accounting(spec, model, anno=None):
                         1 for k in akeys if k["element_class"] is None))
         am = anno["masks"]
         ox, oy = anno["origin"]
-        akey = _key_index(anno["ids"].astype(np.int64), a_ids, base)
+        akey = decoded_key_index(anno["packed"], anno["colour_map"], a_ids, base)
         akey[~am["element"]] = -1
-        bkey = _key_index(anno["black_ids"], a_ids, base)
-        bkey[~am["black_assigned"]] = -1
+        # Searched only where a black pixel was assigned: everywhere else the
+        # key is -1 whatever the search would have found.
+        bkey = np.full(am["black_assigned"].shape, -1, dtype=np.int64)
+        bkey[am["black_assigned"]] = _key_index(anno["black_ids"][am["black_assigned"]],
+                                                a_ids, base)
         anno_parts = {"ec_px": _sparse(spec, akey, akey >= 0, ox, oy),
                       "ec_ink_px": _sparse(spec, akey, (akey >= 0) & am["element_ink"],
                                            ox, oy),
@@ -1187,6 +1312,12 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         tiff = dsc._resolve_tiff_path(model_sidecar_path, sidecar)
         record["model_tiff_sha256"] = sha256_file(tiff)
         rgb = dsc._load_rgb_array(tiff)
+        # One pack and one tick locate per image, shared by the mapping fit
+        # and the decode's mark subtraction (identical calls before).
+        packed = rm.pack_pixels(rgb)
+        payload, _why = rm.recorded_marks(sidecar)
+        located = (rm.locate_recorded_marks(rgb, payload, rm.palette_colours(sidecar),
+                                            packed) if payload is not None else None)
         reg_path = Path(output_layout.registered_paths(
             model_sidecar_path.with_name(stem + "_anno.json"))[1])
         registered = _load_json(reg_path) if reg_path.exists() else None
@@ -1202,8 +1333,10 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 anno_sidecar_path = _check_registration_sources(
                     registered, reg_path, model_sidecar_path,
                     record["model_tiff_sha256"])
-        spec = build_spec(sidecar, rgb, run_config, lattice=lattice)
-        model_masks, model_ids, model_packed, decode_map = model_pixels(sidecar, rgb)
+        spec = build_spec(sidecar, rgb, run_config, lattice=lattice, located=located)
+        model_masks, model_ids, model_packed, decode_map = model_pixels(sidecar, rgb,
+                                                                        packed=packed)
+        del packed, located
         h, w = rgb.shape[:2]
         del rgb
         arrays = dict(("model_" + k, v) for k, v in count_cells(spec, model_masks).items())
@@ -1237,9 +1370,10 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                                   "mapping to place the annotation bboxes")
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
-            anno_masks, anno_info, anno_ids, black_ids, anno_colours = anno_pixels(
-                anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
-                spec=dict(spec, mapping=placement), canvas_origin=(ox, oy))
+            anno_masks, anno_info, anno_ids, black_ids, anno_colours, anno_packed = \
+                anno_pixels(anno_sidecar, anno_rgb, registered.get("excluded_element_ids"),
+                            spec=dict(spec, mapping=placement), canvas_origin=(ox, oy),
+                            return_packed=True)
             del anno_rgb
             arrays.update(("anno_" + k, v) for k, v in count_cells(
                 spec, anno_masks, col_offset=ox, row_offset=oy).items())
@@ -1253,7 +1387,8 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 "model_ink_under_anno": model_ink & cover,
                 "model_ink_under_filled_region": model_ink & filled}))
             model_in["cover"] = cover
-            anno_in = {"sidecar": anno_sidecar, "ids": anno_ids, "black_ids": black_ids,
+            anno_in = {"sidecar": anno_sidecar, "ids": anno_ids, "packed": anno_packed,
+                       "black_ids": black_ids,
                        "colour_map": anno_colours, "masks": anno_masks,
                        "origin": (ox, oy),
                        "black_by_element": anno_info["black"].get("by_element") or {}}
@@ -1342,11 +1477,14 @@ def main(argv=None):
         print("no model sidecars under {0}".format(folder))
         return 2
     out = Path(args.out) if args.out else Path(output_layout.grid_dir_for_capture(folder))
+    # Every sidecar is in ``folder``, so find_run_meta finds the same record
+    # for each: read it once, not once per view.
+    run_meta = dsc.find_run_meta(paths[0])
     worst = 0
     sizes = []
     for path in paths:
         start = time.perf_counter()
-        rec = grid_view(path, out, png_px_per_cell=args.png_px_per_cell)
+        rec = grid_view(path, out, run_meta=run_meta, png_px_per_cell=args.png_px_per_cell)
         seconds = time.perf_counter() - start
         if rec["status"] != "value":
             worst = 1

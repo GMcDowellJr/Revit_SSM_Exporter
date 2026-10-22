@@ -351,8 +351,11 @@ def register(anno_sidecar_path, model_sidecar_path=None):
         anno_px = rm.load_rgb(anno_tiff)
         model_px = rm.load_rgb(model_tiff)
         anno_palette = rm.palette_colours(anno_sidecar)
+        # One locate of the annotation ticks, for the fit and the subtraction.
+        anno_located = rm.locate_recorded_marks(anno_px, anno_marks, anno_palette)
         anno_fit = rm.fit_recorded_marks(anno_px, anno_marks,
-                                         reserved_colours=anno_palette)
+                                         reserved_colours=anno_palette,
+                                         located=anno_located)
         model_fit = rm.fit_recorded_marks(model_px, model_marks,
                                           reserved_colours=rm.palette_colours(
                                               model_sidecar))
@@ -377,7 +380,8 @@ def register(anno_sidecar_path, model_sidecar_path=None):
                 refusals.append(why)
             record["annotation_to_model_px"] = transform
         if not refusals:
-            mask = rm.mark_ink_mask(anno_px, anno_marks, anno_palette)
+            mask = rm.mark_ink_mask(anno_px, anno_marks, anno_palette,
+                                    located=anno_located)
             cleaned = anno_px.copy()
             cleaned[mask] = 255
             canvas = output_canvas(model_fit["mapping"], out_w, out_h, transform,

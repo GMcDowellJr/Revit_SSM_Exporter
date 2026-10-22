@@ -357,6 +357,8 @@ def class_arrays(rec, arr, cmap):
     fields = _row_fields(rec, arr)
     jj = arr["ec_j"].astype(np.int64) - g["j_range"][0]
     ii = arr["ec_i"].astype(np.int64) - g["i_range"][0]
+    # Each row's cell, once; every class below selects its rows from it.
+    flat, inside = grid.cell_flat(jj, ii, shape)
     out, records = {}, {}
     gridded_layers = ["model"] + (["annotation"] if "anno_element" in arr else [])
     for family, layer in FAMILIES.items():
@@ -378,9 +380,11 @@ def class_arrays(rec, arr, cmap):
             if not rows.any():
                 continue
             present.append(name)
+            if not inside[rows].all():
+                raise IndexError("cell index outside the {0} x {1} grid".format(*shape))
+            class_flat = flat[rows]
             for f in LAYER_FIELDS[layer]:
-                a = np.zeros(shape, dtype=np.int64)
-                np.add.at(a, (jj[rows], ii[rows]), fields[f][rows])
+                a = grid.dense_sum_flat(class_flat, fields[f][rows], shape)
                 running[f] += a
                 out["{0}__{1}__{2}".format(family, name, f)] = a.astype(np.int32)
         broken = []
@@ -498,7 +502,12 @@ def derivations(families, arrays, grid_arrays, cmap, min_px=1):
     for family, rec in families.items():
         if rec.get("state") != "value":
             continue
-        counts = family_counts(arrays, family, rec["classes"], rec["fields"], shape)
+        # Only the fields read below: ink_px (presence) and, for the legacy
+        # partition, occupancy_px. The other fields' dense arrays were built
+        # and never read.
+        needed = [f for f in rec["fields"]
+                  if f == "ink_px" or (family == "legacy_bucket" and f == "occupancy_px")]
+        counts = family_counts(arrays, family, rec["classes"], needed, shape)
         out["cells_with_ink"][family] = class_cells(presence(counts, "ink_px", min_px),
                                                     inside)
         if family == "legacy_bucket":
