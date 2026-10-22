@@ -49,6 +49,7 @@ import json
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -1343,20 +1344,22 @@ def main(argv=None):
     worst = 0
     sizes = []
     for path in paths:
+        start = time.perf_counter()
         rec = grid_view(path, out, png_px_per_cell=args.png_px_per_cell)
+        seconds = time.perf_counter() - start
         if rec["status"] != "value":
             worst = 1
-            print("REFUSED {0}: {1}".format(path.name, rec.get("reason")))
+            print("REFUSED {0}: {1}  {2:.2f}s".format(path.name, rec.get("reason"), seconds))
             continue
         sizes.append((rec["ec_rows"], rec["npz_bytes"], len(rec["ec_keys"]), path.stem))
         g = rec["grid"]
         print("{0:<40} {1:>5} x {2:<5} cells  {3:5.2f} px/cell  basis {4:<12} "
-              "unc {5}  {6}".format(
+              "unc {5}  {6}  {7:.2f}s".format(
                   path.stem[:40], g["cells_w"], g["cells_h"],
                   min(g["px_per_cell_u"], g["px_per_cell_v"]), g["uv_basis"]["chosen"],
                   "-" if g["uv_basis"]["uncertainty_px"] is None else
                   "{0:.2f}px".format(g["uv_basis"]["uncertainty_px"]),
-                  ",".join(g["flags"])))
+                  ",".join(g["flags"]), seconds))
     if sizes:
         # No size threshold: the numbers are printed for a person to judge.
         print("largest element x cell tables (ec_rows, npz bytes, keys), of {0} "

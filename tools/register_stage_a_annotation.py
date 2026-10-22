@@ -68,6 +68,7 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -447,19 +448,26 @@ def main(argv=None):
         ap.error("--model names one model sidecar, so it takes one annotation sidecar")
     code = 0
     for path in targets:
+        # Wall seconds per view, appended to its line (not to the record,
+        # which is a function of its inputs: 1.0.1).
+        start = time.perf_counter()
         try:
             record = register(path, Path(ns.model) if ns.model else None)
         except (OSError, ValueError) as ex:
-            print("unreadable {0}: {1}: {2}".format(path, type(ex).__name__, ex))
+            print("unreadable {0}: {1}: {2}  {3:.2f}s".format(
+                path, type(ex).__name__, ex, time.perf_counter() - start))
             code = 2
             continue
+        seconds = time.perf_counter() - start
         if record["status"] == "registered":
             t = record["annotation_to_model_px"]
             print("registered {0} -> {1}  x' = {2:.6f} x {3:+.2f}, y' = {4:.6f} y "
-                  "{5:+.2f}".format(path, record["registered_tiff"], t["scale_x"],
-                                    t["offset_x"], t["scale_y"], t["offset_y"]))
+                  "{5:+.2f}  {6:.2f}s".format(path, record["registered_tiff"], t["scale_x"],
+                                              t["offset_x"], t["scale_y"], t["offset_y"],
+                                              seconds))
         else:
-            print("REFUSED {0}: {1}".format(path, "; ".join(record["refusals"])))
+            print("REFUSED {0}: {1}  {2:.2f}s".format(path, "; ".join(record["refusals"]),
+                                                     seconds))
             code = max(code, 1)
     if not targets:
         print("no annotation sidecars found under {0}".format(ns.paths))

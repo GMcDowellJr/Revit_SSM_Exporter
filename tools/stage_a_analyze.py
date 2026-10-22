@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -76,12 +77,14 @@ OPTIONAL_STAGES = ("index",)
 
 def _stage(name, label, fn, argv, results):
     print("== {0}: {1}".format(name, label))
+    start = time.perf_counter()
     try:
         code = fn([str(a) for a in argv])
     except SystemExit as ex:          # argparse errors: a stage that cannot run
         code = ex.code if isinstance(ex.code, int) else 2
     code = int(code or 0)
-    results.append({"stage": name, "target": label, "exit": code})
+    results.append({"stage": name, "target": label, "exit": code,
+                    "seconds": time.perf_counter() - start})
     return code
 
 
@@ -139,10 +142,16 @@ def main(argv=None):
                     help="the export root: rebuild runs_index there once the census "
                          "and pairs are written (default: not rebuilt)")
     args = ap.parse_args(argv)
+    # One line at a time, so a piped run (Tee-Object, a timestamping pipe)
+    # sees each line when it is printed, not when a block buffer fills.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     code, results = analyze(args.runs, args.out, args.index_root)
     print("== summary")
     for r in results:
-        print("  {0:<10} exit {1}  {2}".format(r["stage"], r["exit"], r["target"]))
+        print("  {0:<10} exit {1}  {2}  ({3:.1f} s)".format(
+            r["stage"], r["exit"], r["target"], r["seconds"]))
+    print("  total      {0:.1f} s".format(sum(r["seconds"] for r in results)))
     done = set(r["stage"] for r in results)
     skipped = [s for s in STAGES if s not in done]
     if skipped:
