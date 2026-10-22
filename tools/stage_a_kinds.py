@@ -44,6 +44,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from tools import npz_write  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 
@@ -630,7 +631,7 @@ def derive_view(grid_json, cmap_info, out_dir=None):
         out["legacy_source_partition_8"] = part
         if npz_path.exists():
             npz_path.unlink()
-        np.savez_compressed(npz_path, **out)
+        npz_write.savez_compressed(npz_path, out)
         record.update({
             "status": "value", "families": families, "derived": derived,
             "channel_shape_legacy": shape,

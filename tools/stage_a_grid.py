@@ -58,6 +58,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from tools import npz_write  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
@@ -1280,7 +1281,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         arrays["inside_crop_a"] = inside_crop_a(spec)
         arrays["occupancy"] = occupancy(arrays)
         npz_path = out_dir / (stem + ".grid.npz")
-        np.savez_compressed(npz_path, **dict(arrays, **ec))
+        npz_write.savez_compressed(npz_path, dict(arrays, **ec))
         png_path = out_dir / (stem + ".grid.png")
         render_png(spec, arrays, png_path, px_per_cell=png_px_per_cell)
         record.update({
