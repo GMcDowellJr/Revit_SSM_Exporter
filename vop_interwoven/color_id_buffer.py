@@ -2919,6 +2919,28 @@ def co_sized_fit_px(cfg):
     return None if value is None else int(value)
 
 
+def crop_a_export_geometry(view, raster, cfg, diag=None, view_id=None):
+    """The lattice the registered capture's MODEL pass would publish through
+    ``geometry_out`` -- frame_export_geometry() on crop A, with the scale,
+    dpi, fit direction, cap and co-sized bound export_color_id_buffer_view
+    reads, and ``sizing_frame`` "crop_a" -- for a single-pass view that runs
+    no model pass (vop_interwoven/capture_passes.py). The annotation pass is
+    sized from it exactly as from the model pass's.
+    tests/test_stage_a_single_pass_capture.py asserts the two agree. Raises
+    ValueError when crop A cannot be resolved or sized."""
+    crop_uv, _record = resolve_crop_a(view, raster, diag=diag, view_id=view_id)
+    geom = frame_export_geometry(
+        crop_uv, crop_uv, float(getattr(view, "Scale", 1) or 1),
+        float(getattr(cfg, "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI)),
+        fit_direction=str(getattr(cfg, "color_id_buffer_fit_direction", "horizontal")
+                          or "horizontal").strip().lower(),
+        max_axis_px=getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX,
+        fit_px_limit=co_sized_fit_px(cfg))
+    geom = dict(geom)
+    geom["sizing_frame"] = "crop_a"
+    return geom
+
+
 def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
     """Set ImageExportOptions.PixelSize, backing off if Revit rejects the value.
 

@@ -145,8 +145,8 @@ def declared_passes(sidecar):
     other = [p for p in BOTH_PASSES if p not in passes][0]
     if (not isinstance(skipped, dict) or skipped.get("skipped") != other
             or skipped.get("reason") != SKIP_REASON):
-        return None, None, ("capture_passes is {0!r} but skipped_pass does not declare the "
-                      "{1} pass skipped ({2!r})".format(passes, other, skipped))
+        return None, None, ("capture_passes is {0!r} but skipped_pass does not declare "
+                            "the {1} pass skipped ({2!r})".format(passes, other, skipped))
     return list(passes), skipped, None
 
 
