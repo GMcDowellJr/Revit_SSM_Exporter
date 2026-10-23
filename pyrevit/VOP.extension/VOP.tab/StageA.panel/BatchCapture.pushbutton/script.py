@@ -21,6 +21,8 @@ Settings (batch_settings.json beside this script):
     batch_size         views per streaming batch, blank = one batch
     export_view_raster raw Revit view PNGs beside the captures (false)
     worksets           "all" (default) or "last_viewed"
+    parking_document   a small .rvt kept ACTIVE for the whole batch; blank =
+                       a blank project the button saves once under %TEMP%
 
 Every file is opened DETACHED (DetachAndPreserveWorksets) with the chosen
 workset configuration, read-only in effect; dialogs during the open are
@@ -45,7 +47,7 @@ except NameError:
     _SCRIPT_DIR = os.getcwd()
 _SETTINGS_PATH = os.path.join(_SCRIPT_DIR, "batch_settings.json")
 _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
-             "export_view_raster": False, "worksets": "all"}
+             "export_view_raster": False, "worksets": "all", "parking_document": ""}
 
 
 def _load_settings():
@@ -222,6 +224,70 @@ def close_doc(doc):
 
 
 # ---------------------------------------------------------------------------
+# The parking document. Revit will not close the ACTIVE document from the
+# API, and with no document open the first archive the API opens became the
+# active one (batch 2026-10-22: "The active document may not be closed from
+# the API" for V50, which stayed resident -- about 2.6 GB -- while V51 was
+# captured, and was never closed). A small blank project is opened AND
+# ACTIVATED first, so every archive is a background document the loop can
+# close as soon as its job ends (run_batch close_after_capture).
+# ---------------------------------------------------------------------------
+
+def _active_title():
+    try:
+        uidoc = ui_app.ActiveUIDocument
+        return None if uidoc is None else uidoc.Document.Title
+    except Exception as ex:  # noqa: BLE001 -- recorded as the reason
+        return "(unreadable: {0}: {1})".format(type(ex).__name__, ex)
+
+
+def _parking_path():
+    given = str(_settings.get("parking_document") or "").strip()
+    if given:
+        return given, "settings"
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "vop_batch_parking_{0}.rvt".format(
+        ui_app.Application.VersionNumber)), "temp"
+
+
+def _activate_parking_document():
+    """``(close_after_capture, session record)``. Never raises: a parking
+    document that cannot be made active leaves the old order (close each
+    archive once the next is open), and the record says why."""
+    record = {"active_before": _active_title(), "parking_document": None,
+              "parking_created": False}
+    try:
+        path, source = _parking_path()
+        record.update(parking_document=path, parking_source=source)
+        if not os.path.isfile(path):
+            if source == "settings":
+                raise IOError("parking_document not found: {0}".format(path))
+            from Autodesk.Revit.DB import SaveAsOptions, UnitSystem
+            blank = ui_app.Application.NewProjectDocument(UnitSystem.Imperial)
+            options = SaveAsOptions()
+            options.OverwriteExistingFile = True
+            blank.SaveAs(path, options)
+            record["parking_created"] = True
+            try:
+                blank.Close(False)
+            except Exception as ex:  # noqa: BLE001 -- recorded; the activation decides
+                record["blank_close_failed"] = "{0}: {1}".format(type(ex).__name__, ex)
+        ui_app.OpenAndActivateDocument(path)
+        record["active_after"] = _active_title()
+        parked = os.path.splitext(os.path.basename(path))[0]
+        if record["active_after"] != parked:
+            raise RuntimeError("the active document is {0!r}, not the parking document "
+                               "{1!r}".format(record["active_after"], parked))
+        _note("parking document active: {0}".format(path))
+        return True, record
+    except Exception as ex:  # noqa: BLE001 -- the batch runs in the old order
+        record["error"] = "{0}: {1}".format(type(ex).__name__, ex)
+        _note("parking document NOT active ({0}); archives are closed once the next "
+              "is open, and the last stays open".format(record["error"]))
+        return False, record
+
+
+# ---------------------------------------------------------------------------
 # The two jobs
 # ---------------------------------------------------------------------------
 
@@ -333,12 +399,14 @@ def main():
     _dialog_log[:] = [DialogLog()]
     ui_app.DialogBoxShowing += _on_dialog_showing
     try:
+        close_after_capture, session = _activate_parking_document()
         import ctypes
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         try:
             record = run_batch(plan, open_doc, close_doc, capture, recapture,
                                limit=_int_or_none(_settings.get("limit")), log=print,
-                               dialog_log=_dialog_log[0])
+                               dialog_log=_dialog_log[0],
+                               close_after_capture=close_after_capture, session=session)
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:
@@ -364,6 +432,11 @@ def main():
             summary.append("  REFUSED {0}: {1}".format(refused.get("run_id"), refused.get("reason")))
     if record.get("last_document_closed") is not True:
         summary.append("Last document left open: {0}".format(record.get("last_document_closed")))
+    if record.get("documents_left_open"):
+        summary.append("Still open (close refused): {0}".format(
+            ", ".join(str(t) for t in record["documents_left_open"])))
+    if (record.get("session") or {}).get("error"):
+        summary.append("Parking document not active: {0}".format(record["session"]["error"]))
     summary.append("")
     summary.append("Next: register_stage_a_annotation.py, stage_a_grid.py, stage_a_kinds.py and "
                    "stage_a_grid_rollup.py over each run written.")

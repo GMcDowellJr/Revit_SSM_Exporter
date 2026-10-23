@@ -507,7 +507,7 @@ class DialogLog(object):
 
 def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
               now=None, write_log=True, clock=None, wall=None, memory_sample=None,
-              dialog_log=None):
+              dialog_log=None, close_after_capture=False, session=None):
     """Run the plan's pending jobs in order. Injected:
 
     * ``open_doc(job) -> (doc, how)``: opens the file; ``how`` is the
@@ -531,16 +531,28 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
     the open, after closing the previous document and after the capture). A
     ``dialog_log`` (DialogLog) has its job key set while each job runs and
     its events persisted with the log.
+
+    ``close_after_capture``: close each archive as soon as its job ends
+    (``closed``, ``timings_ms.close_ms``, ``memory.after_close``) rather than
+    once the next one is open. Revit refuses to close the ACTIVE document
+    from the API (batch 2026-10-22: "The active document may not be closed
+    from the API", V50 resident while V51 was captured), so the caller sets
+    this only when some other document is active -- the button's parking
+    document. A close that still fails falls back to the old order: the
+    document is tried again once the next one is open. ``session``: the
+    caller's record of how the session was set up, stored as ``session``.
     """
     with provenance_session("batch_capture", now=now) as pin:
         return _run_batch(plan, open_doc, close_doc, capture, recapture, limit=limit,
                           log=log, now=now, write_log=write_log, pin=pin, clock=clock,
-                          wall=wall, memory_sample=memory_sample, dialog_log=dialog_log)
+                          wall=wall, memory_sample=memory_sample, dialog_log=dialog_log,
+                          close_after_capture=close_after_capture, session=session)
 
 
 def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
                now=None, write_log=True, pin=None, clock=None, wall=None,
-               memory_sample=None, dialog_log=None):
+               memory_sample=None, dialog_log=None, close_after_capture=False,
+               session=None):
     clock = clock or _perf
     wall = wall or datetime.now
     if memory_sample is None:
@@ -562,7 +574,11 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
                                           if k != "package_dir"),
               # C4: when the batch began, and the resume scan's cost.
               "started_at": batch_started_at, "plan_scan_ms": plan_scan_ms,
-              "dialogs": dialog_log.events if dialog_log is not None else None}
+              "dialogs": dialog_log.events if dialog_log is not None else None,
+              "close_mode": "after_capture" if close_after_capture else "after_next_open",
+              "session": session,
+              # Every document whose last close attempt failed: still open.
+              "documents_left_open": []}
     output_root = plan.get("output_root") or "."
     log_path = _log_path(output_root, clock_id)
 
@@ -606,6 +622,7 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
                     close_doc(prev)
                 except Exception as ex:  # noqa: BLE001 -- recorded, not fatal
                     entry["close_previous_failed"] = "{0}: {1}".format(type(ex).__name__, ex)
+                    record["documents_left_open"].append(getattr(prev, "Title", None))
                 entry["timings_ms"]["close_previous_ms"] = _ms(t_step)
                 entry["memory"]["after_close_previous"] = memory_sample()
                 prev = None
@@ -635,7 +652,18 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
             entry["traceback"] = traceback.format_exc()
             record["failed"] += 1
             log("  FAILED: {0}".format(entry["error"]))
-        if doc is not None:
+        if doc is not None and close_after_capture:
+            t_step = clock()
+            try:
+                close_doc(doc)
+                entry["closed"] = True
+            except Exception as ex:  # noqa: BLE001 -- recorded; retried after the next open
+                entry["closed"] = "{0}: {1}".format(type(ex).__name__, ex)
+                prev = doc
+            entry["timings_ms"]["close_ms"] = _ms(t_step)
+            entry["memory"]["after_close"] = memory_sample()
+            record["last_document_closed"] = entry["closed"]
+        elif doc is not None:
             prev = doc
         if dialog_log is not None:
             entry["dialog_count"] = len(dialog_log.events) - dialogs_before
@@ -650,6 +678,7 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
             record["last_document_closed"] = True
         except Exception as ex:  # noqa: BLE001
             record["last_document_closed"] = "{0}: {1}".format(type(ex).__name__, ex)
+            record["documents_left_open"].append(getattr(prev, "Title", None))
         record["last_close_ms"] = _ms(t_step)
     record["finished_at"] = _wall_stamp(wall)
     record["finished"] = True

@@ -132,3 +132,101 @@ def test_the_default_memory_sampler_is_process_memory_sample(tmp_path, monkeypat
     record = bc.run_batch(_plan(tmp_path, ("00",)), open_doc, close_doc, capture, None,
                           log=lambda s: None, write_log=False, clock=c.clock)
     assert record["jobs"][0]["memory"]["job_start"] == {"schema": "patched"}
+
+
+# --- the close: each archive closed as soon as its job ends -------------------------
+
+def _close_harness(tmp_path, refuse=(), fail_capture=()):
+    """Fakes that log the order of events; ``refuse`` titles raise as Revit
+    does for the active document."""
+    events = []
+
+    def open_doc(job):
+        events.append(("open", job["stem"]))
+        return types.SimpleNamespace(Title=job["stem"], PathName=job["full_path"]), {}
+
+    def close_doc(doc):
+        if doc.Title in refuse:
+            events.append(("close_refused", doc.Title))
+            raise RuntimeError("The active document may not be closed from the API.")
+        events.append(("close", doc.Title))
+
+    def capture(doc, job):
+        events.append(("capture", job["stem"]))
+        if job["stem"] in fail_capture:
+            raise RuntimeError("capture blew up")
+        return {"run_dirs": [_run_dir(job["output_dir"], doc.Title,
+                                      run_id="20261023T07" + job["stem"])]}
+    return events, open_doc, close_doc, capture
+
+
+def _run_close(tmp_path, stems, **kw):
+    events, open_doc, close_doc, capture = _close_harness(
+        tmp_path, refuse=kw.pop("refuse", ()), fail_capture=kw.pop("fail_capture", ()))
+    c = _Clocks()
+    record = bc.run_batch(_plan(tmp_path / "Exports", stems), open_doc, close_doc, capture, None,
+                          log=lambda s: None, clock=c.clock, wall=c.wall,
+                          memory_sample=c.memory, **kw)
+    return events, record, json.loads(Path(record["log_path"]).read_text())
+
+
+def test_after_capture_each_archive_is_closed_before_the_next_opens(tmp_path):
+    events, _r, log = _run_close(tmp_path, ("00", "01"), close_after_capture=True,
+                                 session={"parking_document": "p.rvt"})
+    assert events == [("open", "00"), ("capture", "00"), ("close", "00"),
+                      ("open", "01"), ("capture", "01"), ("close", "01")]
+    assert [j["closed"] for j in log["jobs"]] == [True, True]
+    assert all("close_ms" in j["timings_ms"] and "after_close" in j["memory"]
+               for j in log["jobs"])
+    assert "close_previous_ms" not in log["jobs"][1]["timings_ms"]
+    assert log["last_document_closed"] is True
+    assert log["close_mode"] == "after_capture"
+    assert log["session"] == {"parking_document": "p.rvt"}
+    assert log["documents_left_open"] == []
+
+
+def test_a_refused_close_falls_back_to_closing_once_the_next_is_open(tmp_path):
+    """The 2026-10-22 failure, with the fallback: the refusal is recorded and
+    the document is tried again after the next open, never silently kept."""
+    events, _r, log = _run_close(tmp_path, ("00", "01"), close_after_capture=True,
+                                 refuse=("00",))
+    assert events[:4] == [("open", "00"), ("capture", "00"), ("close_refused", "00"),
+                          ("open", "01")]
+    assert events.count(("close_refused", "00")) == 2
+    assert "may not be closed" in log["jobs"][0]["closed"]
+    assert "may not be closed" in log["jobs"][1]["close_previous_failed"]
+    assert log["jobs"][1]["closed"] is True
+    # The last archive closed, but the refused one is still open, and the
+    # log says so rather than letting last_document_closed stand for both.
+    assert log["last_document_closed"] is True
+    assert log["documents_left_open"] == ["00"]
+
+
+def test_a_failed_capture_still_closes_its_archive(tmp_path):
+    events, _r, log = _run_close(tmp_path, ("00",), close_after_capture=True,
+                                 fail_capture=("00",))
+    assert events == [("open", "00"), ("capture", "00"), ("close", "00")]
+    assert log["jobs"][0]["status"] == "failed" and log["jobs"][0]["closed"] is True
+
+
+def test_the_default_order_is_unchanged(tmp_path):
+    events, _r, log = _run_close(tmp_path, ("00", "01"))
+    assert events == [("open", "00"), ("capture", "00"), ("open", "01"), ("close", "00"),
+                      ("capture", "01"), ("close", "01")]
+    assert log["close_mode"] == "after_next_open"
+    assert "closed" not in log["jobs"][0]
+
+
+def test_the_button_parks_an_active_document_before_the_first_archive():
+    """Pinned on the source (the script cannot run outside Revit)."""
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyrevit",
+                        "VOP.extension", "VOP.tab", "StageA.panel", "BatchCapture.pushbutton",
+                        "script.py")
+    src = open(path, encoding="utf-8").read()
+    main = src.split("def main():")[1]
+    assert main.index("_activate_parking_document()") < main.index("run_batch(")
+    assert "close_after_capture=close_after_capture, session=session" in main
+    parking = src.split("def _activate_parking_document():")[1].split("\ndef ")[0]
+    assert "ui_app.OpenAndActivateDocument(path)" in parking
+    assert "return False, record" in parking      # never raises; the old order stands
