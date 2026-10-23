@@ -104,6 +104,29 @@ ui_app = __revit__  # noqa: F821
 # ---------------------------------------------------------------------------
 
 _dialog_log = []    # [DialogLog], set in main() once the package is importable
+_events = []        # every open event, in order: the dialog_ids_<clock>.log lines
+
+# Known dialogs during an open, answered by id. Codes: 1 = IDOK, 8 = Close
+# (TaskDialogResult.Close), 1002 = CommandLink2. Verified by Greg's manual open
+# of V50 (2026-10-20): DocWarnDialog = OK / Cancel / Delete Room(s);
+# Elements_Lost = Close only; Unresolved References CommandLink2 = "Ignore and
+# continue opening the project".
+_DIALOG_ANSWERS = {
+    "Dialog_Revit_DocWarnDialog": (1,),
+    "TaskDialog_Elements_Lost_On_Import": (8, 1),
+    "TaskDialog_Unresolved_References": (1002,),
+}
+_LEGACY_ORDER = (1002, 1001, 1)
+
+
+def _note(text):
+    """One line per event, in order (not de-duplicated), stamped with the time
+    and the job running: the dialog log and the pyRevit output window both
+    show the sequence of the open."""
+    job_key = _dialog_log[0].job_key if _dialog_log else None
+    _events.append("{0}\t{1}\t{2}".format(
+        datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), job_key or "", text))
+    print("  [open] {0}".format(text))
 
 
 def _on_dialog_showing(sender, args):
@@ -112,16 +135,27 @@ def _on_dialog_showing(sender, args):
         dialog_id = str(args.DialogId) if args.DialogId else ""
     except Exception as ex:  # noqa: BLE001 -- the id is for the log only
         dialog_id = "(unreadable: {0})".format(ex)
-    accepted = None
-    for result_code in (1002, 1001, 1):
+    message = getattr(args, "Message", None)
+    codes = _DIALOG_ANSWERS.get(dialog_id)
+    attempts = []
+    answered = None
+    for result_code in (codes or _LEGACY_ORDER):
         try:
-            if args.OverrideResult(result_code):
-                accepted = result_code
-                break
-        except Exception:  # noqa: BLE001 -- the next code is tried
+            accepted = args.OverrideResult(result_code)
+        except Exception as ex:  # noqa: BLE001 -- recorded; the next code is tried
+            attempts.append("{0}:{1}".format(result_code, type(ex).__name__))
             continue
+        attempts.append("{0}:{1}".format(result_code, accepted))
+        if accepted:
+            answered = result_code
+            break
+    # The batch log's record (C4): time, job key, id, the code that took.
     if _dialog_log:
-        _dialog_log[0].record(dialog_id, accepted)
+        _dialog_log[0].record(dialog_id, answered)
+    _note("dialog {0}{1} ({2}) tried {3}{4}".format(
+        dialog_id, "" if codes else " [unmapped]", type(args).__name__,
+        ", ".join(attempts),
+        " | {0}".format(str(message)[:120].replace("\n", " ")) if message else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -140,16 +174,46 @@ def _open_options():
     return opts, {"detach": "DetachAndPreserveWorksets", "worksets": name, "audit": False}
 
 
+from Autodesk.Revit.DB import FailureProcessingResult, FailureSeverity  # noqa: E402
+
+
+def _on_failures_processing(sender, args):
+    """Subscribed only while an archive opens. When everything posted is a
+    warning (V50: 407, "Multiple Rooms in the same enclosed region"), the
+    warnings are deleted so Revit shows no warnings dialog. Errors are left
+    to Revit. The document is closed unsaved, so nothing is written back."""
+    try:
+        accessor = args.GetFailuresAccessor()
+        messages = list(accessor.GetFailureMessages())
+        warnings = [m for m in messages if m.GetSeverity() == FailureSeverity.Warning]
+        if messages and len(warnings) == len(messages):
+            accessor.DeleteAllWarnings()
+            args.SetProcessingResult(FailureProcessingResult.Continue)
+            _note("failures_processing: {0} warnings deleted".format(len(warnings)))
+        elif messages:
+            _note("failures_processing: {0} messages, {1} warnings, left to Revit".format(
+                len(messages), len(warnings)))
+    except Exception as ex:  # noqa: BLE001 -- recorded; Revit's own handling continues
+        _note("failures_processing: error {0}: {1}".format(type(ex).__name__, ex))
+
+
 def open_doc(job):
     path = job["full_path"]
     if not os.path.isfile(path):
         raise IOError("not on disk (not synced by Desktop Connector?): {0}".format(path))
     opts, how = _open_options()
+    how["open_warnings"] = "deleted_in_failures_processing"
     model_path = ModelPathUtils.ConvertUserVisiblePathToModelPath(path)
-    doc = ui_app.Application.OpenDocumentFile(model_path, opts)
+    _note("open: {0}".format(os.path.basename(path)))
+    app = ui_app.Application
+    app.FailuresProcessing += _on_failures_processing
+    try:
+        doc = app.OpenDocumentFile(model_path, opts)
+    finally:
+        app.FailuresProcessing -= _on_failures_processing
     if doc is None:
         raise RuntimeError("OpenDocumentFile returned None for {0}".format(path))
-    print("  Opened: title={0!r}".format(doc.Title))
+    _note("opened: title={0!r}".format(doc.Title))
     return doc, how
 
 
@@ -280,12 +344,13 @@ def main():
     finally:
         ui_app.DialogBoxShowing -= _on_dialog_showing
 
-    # One line per dialog: time, job key, id, result (also in the batch log).
-    if _dialog_log[0].events and plan.get("output_root"):
+    # One line per open event: time, job key, event (dialogs are also in the
+    # batch log, with the code that took).
+    if _events and plan.get("output_root"):
         try:
             with open(os.path.join(plan["output_root"], "dialog_ids_{0}.log".format(
                     datetime.now().strftime("%Y%m%dT%H%M%S"))), "w", encoding="utf-8") as handle:
-                handle.write("\n".join(_dialog_log[0].lines()) + "\n")
+                handle.write("\n".join(_events) + "\n")
         except (IOError, OSError) as ex:
             print("  dialog id log not written: {0}".format(ex))
 
