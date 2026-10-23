@@ -11,7 +11,9 @@ The plan is written beforehand by
 
 and reviewed/edited before this button opens anything. Resumable: a job
 whose outcome is already in the run's files is skipped
-(vop_interwoven.batch_capture.pending_jobs). Run with no document open.
+(vop_interwoven.batch_capture.pending_jobs). Run with a small document OPEN
+and active that is not one of the plan's archives: Revit will not close the
+active document from the API, so it must never be an archive.
 
 Settings (batch_settings.json beside this script):
     plan_json          path to capture_plan.json           (required)
@@ -21,8 +23,6 @@ Settings (batch_settings.json beside this script):
     batch_size         views per streaming batch, blank = one batch
     export_view_raster raw Revit view PNGs beside the captures (false)
     worksets           "all" (default) or "last_viewed"
-    parking_document   a small .rvt kept ACTIVE for the whole batch; blank =
-                       a blank project the button saves once under %TEMP%
 
 Every file is opened DETACHED (DetachAndPreserveWorksets) with the chosen
 workset configuration, read-only in effect; dialogs during the open are
@@ -47,7 +47,7 @@ except NameError:
     _SCRIPT_DIR = os.getcwd()
 _SETTINGS_PATH = os.path.join(_SCRIPT_DIR, "batch_settings.json")
 _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
-             "export_view_raster": False, "worksets": "all", "parking_document": ""}
+             "export_view_raster": False, "worksets": "all"}
 
 
 def _load_settings():
@@ -224,67 +224,20 @@ def close_doc(doc):
 
 
 # ---------------------------------------------------------------------------
-# The parking document. Revit will not close the ACTIVE document from the
-# API, and with no document open the first archive the API opens became the
-# active one (batch 2026-10-22: "The active document may not be closed from
-# the API" for V50, which stayed resident -- about 2.6 GB -- while V51 was
-# captured, and was never closed). A small blank project is opened AND
-# ACTIVATED first, so every archive is a background document the loop can
-# close as soon as its job ends (run_batch close_after_capture).
+# The active document. Revit will not close the ACTIVE document from the API,
+# and with nothing open the first archive the API opened became the active
+# one (batch 2026-10-22: V50 was never closed and stayed resident, about
+# 2.6 GB, while V51 was captured). The batch starts with a document the user
+# opened instead; every archive is then a background document the loop
+# closes as soon as its job ends (run_batch close_after_capture).
 # ---------------------------------------------------------------------------
 
-def _active_title():
-    try:
-        uidoc = ui_app.ActiveUIDocument
-        return None if uidoc is None else uidoc.Document.Title
-    except Exception as ex:  # noqa: BLE001 -- recorded as the reason
-        return "(unreadable: {0}: {1})".format(type(ex).__name__, ex)
-
-
-def _parking_path():
-    given = str(_settings.get("parking_document") or "").strip()
-    if given:
-        return given, "settings"
-    import tempfile
-    return os.path.join(tempfile.gettempdir(), "vop_batch_parking_{0}.rvt".format(
-        ui_app.Application.VersionNumber)), "temp"
-
-
-def _activate_parking_document():
-    """``(close_after_capture, session record)``. Never raises: a parking
-    document that cannot be made active leaves the old order (close each
-    archive once the next is open), and the record says why."""
-    record = {"active_before": _active_title(), "parking_document": None,
-              "parking_created": False}
-    try:
-        path, source = _parking_path()
-        record.update(parking_document=path, parking_source=source)
-        if not os.path.isfile(path):
-            if source == "settings":
-                raise IOError("parking_document not found: {0}".format(path))
-            from Autodesk.Revit.DB import SaveAsOptions, UnitSystem
-            blank = ui_app.Application.NewProjectDocument(UnitSystem.Imperial)
-            options = SaveAsOptions()
-            options.OverwriteExistingFile = True
-            blank.SaveAs(path, options)
-            record["parking_created"] = True
-            try:
-                blank.Close(False)
-            except Exception as ex:  # noqa: BLE001 -- recorded; the activation decides
-                record["blank_close_failed"] = "{0}: {1}".format(type(ex).__name__, ex)
-        ui_app.OpenAndActivateDocument(path)
-        record["active_after"] = _active_title()
-        parked = os.path.splitext(os.path.basename(path))[0]
-        if record["active_after"] != parked:
-            raise RuntimeError("the active document is {0!r}, not the parking document "
-                               "{1!r}".format(record["active_after"], parked))
-        _note("parking document active: {0}".format(path))
-        return True, record
-    except Exception as ex:  # noqa: BLE001 -- the batch runs in the old order
-        record["error"] = "{0}: {1}".format(type(ex).__name__, ex)
-        _note("parking document NOT active ({0}); archives are closed once the next "
-              "is open, and the last stays open".format(record["error"]))
-        return False, record
+def _active_document():
+    """``(title, path)`` of the active document, or ``(None, None)``."""
+    uidoc = ui_app.ActiveUIDocument
+    if uidoc is None:
+        return None, None
+    return uidoc.Document.Title, uidoc.Document.PathName
 
 
 # ---------------------------------------------------------------------------
@@ -373,19 +326,26 @@ def main():
                         "inside the checkout.".format(REPO_ROOT, _SETTINGS_PATH))
         return
     from vop_interwoven.batch_capture import (  # noqa: E402
-        DialogLog, load_plan, pending_jobs, run_batch)
+        DialogLog, active_document_refusal, load_plan, pending_jobs, run_batch)
 
     plan = load_plan(_settings["plan_json"])
     pending, done = pending_jobs(plan, limit=_int_or_none(_settings.get("limit")))
+    active_title, active_path = _active_document()
+    refusal = active_document_refusal(pending, active_title, active_path)
+    if refusal:
+        TaskDialog.Show("VOP Batch Capture -- open a document first",
+                        "The batch did not start: {0}".format(refusal))
+        return
     _confirm = TaskDialog("VOP Batch Capture -- confirm")
     _confirm.MainInstruction = "Ready to run"
     _confirm.MainContent = (
         "Plan:        {0}\nMode:        {1}\nOutput root: {2}\nRepo root:   {3}\n\n"
         "Jobs pending: {4}   already done: {5}\n"
-        "(first: {6})\n\nOpen each archive detached, {7} worksets; proceed?".format(
+        "(first: {6})\nActive document: {8} (stays open)\n\n"
+        "Open each archive detached, {7} worksets; proceed?".format(
             _settings["plan_json"], plan.get("mode"), plan.get("output_root"), REPO_ROOT,
             len(pending), len(done), pending[0]["display_name"] if pending else "-",
-            _settings.get("worksets") or "all"))
+            _settings.get("worksets") or "all", active_title))
     _confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Run")
     _confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Open settings in Notepad, then cancel")
     _result = _confirm.Show()
@@ -399,14 +359,14 @@ def main():
     _dialog_log[:] = [DialogLog()]
     ui_app.DialogBoxShowing += _on_dialog_showing
     try:
-        close_after_capture, session = _activate_parking_document()
+        session = {"active_document": active_title, "active_document_path": active_path}
         import ctypes
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         try:
             record = run_batch(plan, open_doc, close_doc, capture, recapture,
                                limit=_int_or_none(_settings.get("limit")), log=print,
                                dialog_log=_dialog_log[0],
-                               close_after_capture=close_after_capture, session=session)
+                               close_after_capture=True, session=session)
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:
@@ -435,8 +395,6 @@ def main():
     if record.get("documents_left_open"):
         summary.append("Still open (close refused): {0}".format(
             ", ".join(str(t) for t in record["documents_left_open"])))
-    if (record.get("session") or {}).get("error"):
-        summary.append("Parking document not active: {0}".format(record["session"]["error"]))
     summary.append("")
     summary.append("Next: register_stage_a_annotation.py, stage_a_grid.py, stage_a_kinds.py and "
                    "stage_a_grid_rollup.py over each run written.")

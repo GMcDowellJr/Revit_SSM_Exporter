@@ -468,6 +468,33 @@ def _log_path(output_root, clock_id):
     return os.path.join(output_root, "{0}{1}.json".format(BATCH_LOG_PREFIX, clock_id))
 
 
+# --- the active document ------------------------------------------------------------
+#
+# Revit will not close the ACTIVE document from the API. Started with nothing
+# open, the first archive the API opened became the active one, and no
+# archive of batch 2026-10-22 was ever closed ("The active document may not
+# be closed from the API"). The batch therefore starts with a document the
+# user opened -- any small file that is not one of the plan's archives -- and
+# every archive is a background document the loop closes when its job ends.
+
+def active_document_refusal(jobs, active_title, active_path):
+    """PURE. Why the batch must not start with this active document, or None.
+    No active document, or one that IS an archive of a pending job (its
+    job would reopen the active document, which cannot then be closed), is a
+    refusal; the reason says what to open instead."""
+    if active_title is None:
+        return ("no document is open. Open any small file that is not one of the "
+                "plan's archives (it stays active for the whole batch, so every archive "
+                "can be closed when its job ends), then press the button again.")
+    for job in jobs:
+        if (same_file(active_path, job.get("full_path"))
+                or title_matches(job.get("stem"), active_title)):
+            return ("the active document {0!r} is an archive of this plan ({1}). Open a "
+                    "file that is not in the plan, then press the button again.".format(
+                        active_title, job.get("key")))
+    return None
+
+
 # --- C4: batch-level timing ------------------------------------------------------------
 #
 # Batch 2026-10-21: 23-31 min between runs that no file recorded (next run's
@@ -537,8 +564,8 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
     once the next one is open. Revit refuses to close the ACTIVE document
     from the API (batch 2026-10-22: "The active document may not be closed
     from the API", V50 resident while V51 was captured), so the caller sets
-    this only when some other document is active -- the button's parking
-    document. A close that still fails falls back to the old order: the
+    this only when some other document is active -- the one the user opened
+    before pressing the button (active_document_refusal). A close that still fails falls back to the old order: the
     document is tried again once the next one is open. ``session``: the
     caller's record of how the session was set up, stored as ``session``.
     """

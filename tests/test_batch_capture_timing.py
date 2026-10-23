@@ -172,7 +172,7 @@ def _run_close(tmp_path, stems, **kw):
 
 def test_after_capture_each_archive_is_closed_before_the_next_opens(tmp_path):
     events, _r, log = _run_close(tmp_path, ("00", "01"), close_after_capture=True,
-                                 session={"parking_document": "p.rvt"})
+                                 session={"active_document": "Blank"})
     assert events == [("open", "00"), ("capture", "00"), ("close", "00"),
                       ("open", "01"), ("capture", "01"), ("close", "01")]
     assert [j["closed"] for j in log["jobs"]] == [True, True]
@@ -181,7 +181,7 @@ def test_after_capture_each_archive_is_closed_before_the_next_opens(tmp_path):
     assert "close_previous_ms" not in log["jobs"][1]["timings_ms"]
     assert log["last_document_closed"] is True
     assert log["close_mode"] == "after_capture"
-    assert log["session"] == {"parking_document": "p.rvt"}
+    assert log["session"] == {"active_document": "Blank"}
     assert log["documents_left_open"] == []
 
 
@@ -217,7 +217,20 @@ def test_the_default_order_is_unchanged(tmp_path):
     assert "closed" not in log["jobs"][0]
 
 
-def test_the_button_parks_an_active_document_before_the_first_archive():
+def test_the_batch_refuses_to_start_with_no_document_or_an_archive_active():
+    jobs = [{"key": "KSRF/V50.rvt", "stem": "V50", "full_path": "C:\\ACC\\V50.rvt"}]
+    assert "no document is open" in bc.active_document_refusal(jobs, None, None)
+    # The archive itself, by its file or by its (detached) title.
+    assert "is an archive of this plan" in bc.active_document_refusal(
+        jobs, "anything", "c:/acc/v50.rvt")
+    assert "is an archive of this plan" in bc.active_document_refusal(
+        jobs, "V50_detached", "C:\\Temp\\V50_detached.rvt")
+    # Any other file: the batch starts.
+    assert bc.active_document_refusal(jobs, "Blank", "C:\\Temp\\Blank.rvt") is None
+    assert bc.active_document_refusal([], "Blank", "") is None
+
+
+def test_the_button_keeps_the_open_document_active_and_closes_after_capture():
     """Pinned on the source (the script cannot run outside Revit)."""
     import os
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyrevit",
@@ -225,8 +238,7 @@ def test_the_button_parks_an_active_document_before_the_first_archive():
                         "script.py")
     src = open(path, encoding="utf-8").read()
     main = src.split("def main():")[1]
-    assert main.index("_activate_parking_document()") < main.index("run_batch(")
-    assert "close_after_capture=close_after_capture, session=session" in main
-    parking = src.split("def _activate_parking_document():")[1].split("\ndef ")[0]
-    assert "ui_app.OpenAndActivateDocument(path)" in parking
-    assert "return False, record" in parking      # never raises; the old order stands
+    refusal = main.index("active_document_refusal(pending, active_title, active_path)")
+    assert refusal < main.index("_confirm.Show()") < main.index("run_batch(")
+    assert "close_after_capture=True, session=session" in main
+    assert "parking" not in src.lower()
