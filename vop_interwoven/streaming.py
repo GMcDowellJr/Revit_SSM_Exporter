@@ -150,13 +150,19 @@ def _stage_a_registration_summary(view_result):
     if "registration" not in view_result:
         return {"registration_success": "not_applicable"}
     record = view_result.get("registration") or {}
-    return {
+    summary = {
         "registration_success": bool(view_result.get("registration_success")),
         "registration_faults": [f.get("fault") for f in record.get("faults") or []],
         "registration_marks_drawn": "{0}/{1}".format(
             (record.get("marks") or {}).get("created_count"),
             (record.get("marks") or {}).get("expected_count")),
     }
+    # S4: the passes the capture ran (vop_interwoven/capture_passes.py),
+    # present once it read the view's membership.
+    for key in ("capture_passes", "skipped_pass", "capture_pass_decision"):
+        if key in view_result:
+            summary[key] = view_result[key]
+    return summary
 
 
 class StreamingExporter:
