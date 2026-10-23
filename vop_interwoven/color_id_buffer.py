@@ -2334,8 +2334,15 @@ def _gs_element_ref(doc, element_id, diag=None, callsite=None, view_id=None):
     }
 
 
-def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
+def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None,
+                                 timings_out=None):
     """Read-only record of the graphics state that governs THIS view.
+
+    ``timings_out``: optional dict, FILLED with each entry's read time in ms
+    (``{"view_phase": ms, ...}``, C3) -- the step is timed as one lap
+    (model_graphics_state), and stall B (batch 2026-10-21, run 7, LEVEL 1:
+    2,432 s) could not be placed inside it. Telemetry only; the record is the
+    same with or without it.
 
     Captured BEFORE Stage A detaches the view template and before any
     suppression runs, so it records the state that actually governed what the
@@ -2640,25 +2647,33 @@ def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
             out.append(entry)
         return out
 
-    return {
+    # In the record's key order; each read timed on its own (C3).
+    entries = (
+        ("view_phase", "graphics_state_view_phase", _read_view_phase),
+        ("phase_filter", "graphics_state_phase_filter", _read_phase_filter),
+        ("phase_status_presentation", "graphics_state_phase_status_presentation",
+         _read_phase_status_presentation),
+        ("category_overrides", "graphics_state_category_overrides",
+         _read_category_overrides),
+        ("view_filters", "graphics_state_view_filters", _read_view_filters),
+        ("underlay", "graphics_state_underlay", _read_underlay),
+        ("view_template_id", "graphics_state_view_template", _read_view_template),
+        ("detail_level", "graphics_state_detail_level",
+         lambda: _read_enum_property("DetailLevel")),
+        ("display_style", "graphics_state_display_style",
+         lambda: _read_enum_property("DisplayStyle")),
+        ("link_instances", "graphics_state_link_instances", _read_link_instances),
+    )
+    record = {
         "schema": VIEW_GRAPHICS_STATE_SCHEMA,
         "captured_at": "before_view_template_detach_and_suppression",
-        "view_phase": cap("graphics_state_view_phase", _read_view_phase),
-        "phase_filter": cap("graphics_state_phase_filter", _read_phase_filter),
-        "phase_status_presentation": cap(
-            "graphics_state_phase_status_presentation",
-            _read_phase_status_presentation),
-        "category_overrides": cap(
-            "graphics_state_category_overrides", _read_category_overrides),
-        "view_filters": cap("graphics_state_view_filters", _read_view_filters),
-        "underlay": cap("graphics_state_underlay", _read_underlay),
-        "view_template_id": cap("graphics_state_view_template", _read_view_template),
-        "detail_level": cap(
-            "graphics_state_detail_level", lambda: _read_enum_property("DetailLevel")),
-        "display_style": cap(
-            "graphics_state_display_style", lambda: _read_enum_property("DisplayStyle")),
-        "link_instances": cap("graphics_state_link_instances", _read_link_instances),
     }
+    for key, callsite, reader in entries:
+        t_read = time.time()
+        record[key] = cap(callsite, reader)
+        if timings_out is not None:
+            timings_out[key] = round((time.time() - t_read) * 1000.0, 3)
+    return record
 
 
 # --- Neutral-phase-swap element-set audit -----------------------------------
@@ -3744,6 +3759,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # not nonlocal: IronPython 2.
     steps_ms = {}
     _lap_at = [t0]
+    # C3: what one step spends inside itself, keyed "<step>.<part>" (nested in
+    # its step: never summed with the laps). Telemetry only.
+    substeps_ms = {}
+
+    def _sub(step, part, since):
+        substeps_ms["{0}.{1}".format(step, part)] = round((time.time() - since) * 1000.0, 3)
 
     def _lap(step):
         now = time.time()
@@ -4040,9 +4061,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # would describe Stage A's own scratch state instead. Purely additive: it
     # feeds one sidecar key and nothing else.
     _lap("setup")
+    _gs_timings = {}
     try:
         view_graphics_state = _capture_view_graphics_state(
-            doc, view, elements, diag=diag, view_id=view_id)
+            doc, view, elements, diag=diag, view_id=view_id, timings_out=_gs_timings)
     except Exception as ex:
         # A record that could not be built at all is itself three-valued
         # rather than absent -- a missing key would be indistinguishable from
@@ -4069,6 +4091,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # C: the primary's template for a dependent view, and the read-back is
     # the record (_detach_view_template).
     _lap("graphics_state")
+    for _part, _ms in _gs_timings.items():
+        substeps_ms["graphics_state.{0}".format(_part)] = _ms
     view_template_detach, view_template_handle = _detach_view_template(
         doc, view, "VOP Stage A DETACH view template", diag=diag, view_id=view_id,
         callsite="detach_view_template")
@@ -4814,10 +4838,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # before.
             host_only_cfg = copy.copy(cfg)
             host_only_cfg.include_linked_rvt = False
+            _t_sub = time.time()
+            _expand_timings = {}
             expanded = _expand_elements(
                 doc, view, recollected, host_only_cfg, diag=diag,
                 elem_cache=elem_cache, dwg_omitted_out=dwg_imports_omitted,
+                timings_out=_expand_timings,
             )
+            _sub("expand", "expand_elements", _t_sub)
+            for _part, _ms in _expand_timings.items():
+                substeps_ms["expand.expand_elements.{0}".format(_part)] = _ms
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -4839,17 +4869,25 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # the sidecar. Nothing about which elements are collected, painted or
         # colored changes -- this is a read carried alongside the same set.
         host_source_types = {}
+        _t_sub = time.time()
         host_elements, _link_entries = _split_expanded_elements(
             expanded, source_out=host_source_types,
         )
+        _sub("expand", "split_expanded", _t_sub)
+        _t_sub = time.time()
         resolved_ids = resolve_all(doc, host_elements)
+        _sub("expand", "resolve_all", _t_sub)
         # A view-specific import is ANNOTATION -- out of the paint set, the
         # palette and every per-element record below.
+        _t_sub = time.time()
         resolved_ids, view_specific_imports = _partition_view_specific_imports(
             doc, resolved_ids, diag=diag, view_id=view_id,
         )
+        _sub("expand", "partition_view_specific_imports", _t_sub)
+        _t_sub = time.time()
         _scan_view_specific_imports(doc, view, view_specific_imports,
                                     diag=diag, view_id=view_id)
+        _sub("expand", "scan_view_specific_imports", _t_sub)
         _lap("expand")
         count_host = len(resolved_ids)
 
@@ -5594,7 +5632,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # steps_ms: the contiguous per-step laps above (model_<step>).
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
                     "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms,
-                    "steps_ms": dict(steps_ms)},
+                    "steps_ms": dict(steps_ms), "substeps_ms": dict(substeps_ms)},
         "metadata": state_out,
     }
 

@@ -9,7 +9,13 @@ reports, per view:
   * ``outside_capture_ms``  -- elapsed - total: pipeline work around the
     capture (collection, raster init, the frame-B extent, the registration
     sidecar writes);
-  * ``unaccounted_ms``      -- what total holds beyond its partition phases.
+  * ``unaccounted_ms``      -- what total holds beyond its partition phases;
+  * ``mem_<point>_*``       -- C2: the sidecar's ``registration_marks.
+    process_memory`` samples at the pipeline's view start and the capture's
+    start and end: working set, private bytes and the managed heap in MB,
+    cumulative page faults and CLR collection counts; ``mem_read_ms`` is what
+    the samples cost. Blank when the sidecar predates C2 or a value was
+    unreadable (the JSON keeps the samples whole, ``errors`` included).
 
 ONE RUN ONLY (Codex, PR #222). A sidecar carries no run id, so a join on
 ViewId alone would hand a historical views_core row -- or a view whose capture
@@ -94,6 +100,40 @@ _CORE_NAME = re.compile(r"^views_core_(.+)\.csv$")
 CSV_COLUMNS = ("run_id", "view_id", "view_name", "elapsed_ms", "capture_total_ms",
                "outside_capture_ms", "unaccounted_ms", "reason")
 
+# C2: the memory columns, after the fixed ones and before the phases.
+MEMORY_POINTS = ("view_start", "capture_start", "capture_end")
+_MB = 1024.0 * 1024.0
+_MEMORY_FIELDS = (("ws_mb", "working_set_bytes", _MB), ("private_mb", "private_bytes", _MB),
+                  ("managed_mb", "managed_heap_bytes", _MB), ("page_faults", "page_faults", None))
+MEMORY_COLUMNS = tuple(
+    ["mem_{0}_{1}".format(p, f[0]) for p in MEMORY_POINTS for f in _MEMORY_FIELDS]
+    + ["mem_{0}_gc{1}".format(p, g) for p in MEMORY_POINTS for g in (0, 1, 2)]
+    + ["mem_read_ms"])
+
+
+def memory_cells(process_memory):
+    """PURE. ``{column: value}`` for MEMORY_COLUMNS from one sidecar's
+    ``process_memory`` (None for anything absent or unreadable)."""
+    cells = dict((c, None) for c in MEMORY_COLUMNS)
+    if not isinstance(process_memory, dict):
+        return cells
+    read_ms = []
+    for point in MEMORY_POINTS:
+        sample = process_memory.get(point)
+        if not isinstance(sample, dict):
+            continue
+        for column, key, scale in _MEMORY_FIELDS:
+            value = sample.get(key)
+            if value is not None:
+                cells["mem_{0}_{1}".format(point, column)] = (
+                    round(float(value) / scale, 3) if scale else value)
+        for gen, count in enumerate(sample.get("gc_collections") or []):
+            cells["mem_{0}_gc{1}".format(point, gen)] = count
+        if sample.get("read_ms") is not None:
+            read_ms.append(float(sample["read_ms"]))
+    cells["mem_read_ms"] = round(sum(read_ms), 3) if read_ms else None
+    return cells
+
 
 def _run_meta_path(run_dir):
     """The run's one record, either layout's name. FileNotFoundError when
@@ -162,10 +202,13 @@ def write_report(run_dir, rows):
     phases = _phase_keys(rows)
     with open(csv_path, "w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(list(CSV_COLUMNS) + ["phase_{0}_ms".format(k) for k in phases])
+        writer.writerow(list(CSV_COLUMNS) + list(MEMORY_COLUMNS)
+                        + ["phase_{0}_ms".format(k) for k in phases])
         for row in rows:
             timed = row.get("phases_ms") or {}
+            memory = memory_cells(row.get("process_memory"))
             writer.writerow([("" if row.get(c) is None else row.get(c)) for c in CSV_COLUMNS]
+                            + [("" if memory[c] is None else memory[c]) for c in MEMORY_COLUMNS]
                             + [("" if timed.get(k) is None else timed.get(k)) for k in phases])
     with open(json_path, "w") as handle:
         json.dump({"run_id": _run_identity(run_dir)[0],
@@ -222,8 +265,10 @@ def timing_rows(run_dir):
                         "more than one model sidecar claims this view; not guessed")
                     rows.append(row)
                     continue
-                timings = ((sidecars.get(view_id) or {}).get("registration_marks") or {}
-                           ).get("timings_ms")
+                marks = (sidecars.get(view_id) or {}).get("registration_marks") or {}
+                timings = marks.get("timings_ms")
+                if marks.get("process_memory") is not None:
+                    row["process_memory"] = marks["process_memory"]
                 if not timings or timings.get("total") is None:
                     row["reason"] = row["reason"] or (
                         "no model sidecar" if view_id not in sidecars else

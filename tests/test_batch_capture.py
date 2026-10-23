@@ -610,3 +610,23 @@ def test_the_pyrevit_button_is_thin_and_opens_detached_with_worksets_open():
     # zero-doc; the script is meant to run exactly then (Codex, PR #236).
     bundle = open(os.path.join(os.path.dirname(path), "bundle.yaml"), encoding="utf-8").read()
     assert "context: zero-doc" in bundle.splitlines()
+
+
+def test_the_button_answers_known_dialogs_and_cleans_warnings_only_while_opening():
+    """Greg's in-use copy (2026-10-20, brought back 2026-10-23): dialogs are
+    answered by id, warnings are deleted ONLY during the open (the handler is
+    removed in a finally, so the capture's transactions never see it), and
+    every dialog reaches the batch log through DialogLog (C4)."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyrevit",
+                        "VOP.extension", "VOP.tab", "StageA.panel", "BatchCapture.pushbutton",
+                        "script.py")
+    src = open(path, encoding="utf-8").read()
+    for dialog in ("Dialog_Revit_DocWarnDialog", "TaskDialog_Elements_Lost_On_Import",
+                   "TaskDialog_Unresolved_References"):
+        assert '"{0}":'.format(dialog) in src
+    opener = src.split("def open_doc(job):")[1].split("def close_doc")[0]
+    assert "app.FailuresProcessing += _on_failures_processing" in opener
+    assert "finally:\n        app.FailuresProcessing -= _on_failures_processing" in opener
+    assert "_dialog_log[0].record(dialog_id, answered)" in src
+    assert "dialog_log=_dialog_log[0]" in src
+    assert '"reason": t.get("reason")' in src

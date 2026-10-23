@@ -896,6 +896,12 @@ def process_document_views(
                 mem_tracker.mark("view_start_{}".format(view_id_int))
             except Exception as e:
                 print("[pipeline] view_start memory mark failed: {}".format(e))
+        # C2: the registered capture's view-start memory sample (telemetry;
+        # process_memory_sample never raises).
+        view_start_memory = None
+        if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+            from .memory_telemetry import process_memory_sample
+            view_start_memory = process_memory_sample()
 
         try:
             # Convert int to ElementId if needed
@@ -1213,6 +1219,7 @@ def process_document_views(
                         out = export_registered_stage_a_view(
                             doc, view, elements, cfg, diag=diag,
                             raster=raster, elem_cache=elem_cache,
+                            view_start_memory=view_start_memory,
                         )
                     else:
                         out = export_color_id_buffer_view(
