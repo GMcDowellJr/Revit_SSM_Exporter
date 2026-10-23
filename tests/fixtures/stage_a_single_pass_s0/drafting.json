@@ -1,0 +1,2501 @@
+{
+ "_membership": {
+  "annotation": 3,
+  "model": 0,
+  "unresolved": 0
+ },
+ "annotation": {
+  "annotation_bbox_map": {
+   "2001": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       25.0,
+       20.0
+      ],
+      [
+       31.0,
+       20.0
+      ],
+      [
+       31.0,
+       23.0
+      ],
+      [
+       25.0,
+       23.0
+      ]
+     ]
+    },
+    "category": "Door Tags",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "2002": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       40.0,
+       30.0
+      ],
+      [
+       47.0,
+       30.0
+      ],
+      [
+       47.0,
+       34.0
+      ],
+      [
+       40.0,
+       34.0
+      ]
+     ]
+    },
+    "category": "Door Tags",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "3001": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       22.0,
+       18.0
+      ],
+      [
+       70.0,
+       18.0
+      ],
+      [
+       70.0,
+       18.0
+      ],
+      [
+       22.0,
+       18.0
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5001": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.70515097690941,
+       16.27886323268206
+      ],
+      [
+       23.410301953818827,
+       16.27886323268206
+      ],
+      [
+       23.410301953818827,
+       16.27886323268206
+      ],
+      [
+       21.70515097690941,
+       16.27886323268206
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5002": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.27886323268206,
+       16.70515097690941
+      ],
+      [
+       21.27886323268206,
+       16.70515097690941
+      ],
+      [
+       21.27886323268206,
+       18.410301953818827
+      ],
+      [
+       21.27886323268206,
+       18.410301953818827
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5003": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       46.58969804618117,
+       16.27886323268206
+      ],
+      [
+       48.294849023090585,
+       16.27886323268206
+      ],
+      [
+       48.294849023090585,
+       16.27886323268206
+      ],
+      [
+       46.58969804618117,
+       16.27886323268206
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5004": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       48.72113676731794,
+       18.410301953818827
+      ],
+      [
+       48.72113676731794,
+       18.410301953818827
+      ],
+      [
+       48.72113676731794,
+       20.115452930728242
+      ],
+      [
+       48.72113676731794,
+       20.115452930728242
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5005": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.70515097690941,
+       35.72113676731794
+      ],
+      [
+       23.410301953818827,
+       35.72113676731794
+      ],
+      [
+       23.410301953818827,
+       35.72113676731794
+      ],
+      [
+       21.70515097690941,
+       35.72113676731794
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5006": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.27886323268206,
+       33.58969804618117
+      ],
+      [
+       21.27886323268206,
+       33.58969804618117
+      ],
+      [
+       21.27886323268206,
+       35.294849023090585
+      ],
+      [
+       21.27886323268206,
+       35.294849023090585
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5007": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       46.58969804618117,
+       35.72113676731794
+      ],
+      [
+       48.294849023090585,
+       35.72113676731794
+      ],
+      [
+       48.294849023090585,
+       35.72113676731794
+      ],
+      [
+       46.58969804618117,
+       35.72113676731794
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5008": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       48.72113676731794,
+       33.58969804618117
+      ],
+      [
+       48.72113676731794,
+       33.58969804618117
+      ],
+      [
+       48.72113676731794,
+       35.294849023090585
+      ],
+      [
+       48.72113676731794,
+       35.294849023090585
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5009": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.70515097690941,
+       23.8
+      ],
+      [
+       23.410301953818827,
+       23.8
+      ],
+      [
+       23.410301953818827,
+       23.8
+      ],
+      [
+       21.70515097690941,
+       23.8
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5010": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       46.58969804618117,
+       23.8
+      ],
+      [
+       48.294849023090585,
+       23.8
+      ],
+      [
+       48.294849023090585,
+       23.8
+      ],
+      [
+       46.58969804618117,
+       23.8
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5011": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       32.0,
+       18.410301953818827
+      ],
+      [
+       32.0,
+       18.410301953818827
+      ],
+      [
+       32.0,
+       20.115452930728242
+      ],
+      [
+       32.0,
+       20.115452930728242
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5012": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       32.0,
+       33.58969804618117
+      ],
+      [
+       32.0,
+       33.58969804618117
+      ],
+      [
+       32.0,
+       35.294849023090585
+      ],
+      [
+       32.0,
+       35.294849023090585
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5013": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       20.0,
+       15.0
+      ],
+      [
+       20.426287744227352,
+       15.0
+      ],
+      [
+       20.426287744227352,
+       15.0
+      ],
+      [
+       20.0,
+       15.0
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5014": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       49.57371225577265,
+       37.0
+      ],
+      [
+       50.0,
+       37.0
+      ],
+      [
+       50.0,
+       37.0
+      ],
+      [
+       49.57371225577265,
+       37.0
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   }
+  },
+  "annotation_bbox_status": {
+   "bbox_source_counts": {
+    "model": 0,
+    "none": 0,
+    "view": 17
+   },
+   "count": 17,
+   "membership_basis_counts": {
+    "datum_category": 0,
+    "owner_view": 17,
+    "unknown": 0,
+    "view_reference_category": 0
+   },
+   "status": "value",
+   "view_basis_source": {
+    "state": "value",
+    "value": "raster"
+   }
+  },
+  "applied_display_style": "FlatColors",
+  "applied_smooth_edges": false,
+  "capture_integrity": {
+   "capture_faults": [],
+   "completed_by": [
+    "annotation_pass",
+    "registered_capture"
+   ],
+   "marks_still_in_project": 0,
+   "paint_failures": 0,
+   "restore_failures": 0,
+   "rolled_back": true,
+   "status": "value"
+  },
+  "color_assignment_count": 3,
+  "color_assignment_map": {
+   "2001": [
+    252,
+    0,
+    0
+   ],
+   "2002": [
+    0,
+    72,
+    252
+   ],
+   "3001": [
+    252,
+    0,
+    222
+   ]
+  },
+  "failure_reason": null,
+  "frame": {
+   "achieved_export_dpi": 150.13333333333333,
+   "actual_h": 563,
+   "actual_w": 563,
+   "backoff_stop_reason": null,
+   "dim_check": "pass",
+   "dim_check_attempts": [
+    {
+     "accepted_px": 563,
+     "actual_h": 563,
+     "actual_w": 563,
+     "dim_check": "pass",
+     "dim_read_error": null,
+     "requested_px": 563
+    }
+   ],
+   "dim_check_ceiling_px": 10000,
+   "dim_read_error": null,
+   "fit_direction": "horizontal",
+   "pixel_size": 563,
+   "view_scale": 96.0
+  },
+  "membership": {
+   "annotation_count": 17,
+   "basis_counts": {
+    "datum_categories_resolved": [
+     -2000241,
+     -2000240,
+     -2000221,
+     -2000220
+    ],
+    "datum_category": 0,
+    "datum_category_counts": {
+     "OST_GridHeads": 0,
+     "OST_Grids": 0,
+     "OST_LevelHeads": 0,
+     "OST_Levels": 0
+    },
+    "datum_resolution_error": null,
+    "import_not_owned_by_view": 0,
+    "import_owner_unreadable": 0,
+    "no_owner_view": 0,
+    "own_view_reference": 0,
+    "owner_view": 17,
+    "view_reference_categories_resolved": [
+     -2006045,
+     -2000535,
+     -2000279,
+     -2000200,
+     -2000197,
+     -2000196
+    ],
+    "view_reference_category": 0,
+    "view_reference_category_counts": {
+     "OST_CalloutHeads": 0,
+     "OST_Elev": 0,
+     "OST_ElevationMarks": 0,
+     "OST_ReferenceViewer": 0,
+     "OST_SectionHeads": 0,
+     "OST_Viewers": 0
+    },
+    "view_reference_name_unreadable": 0,
+    "view_reference_resolution_error": null
+   },
+   "import_owner_unreadable": [],
+   "membership_rule": "OwnerViewId+datum_category+view_reference_category",
+   "model_count": 0,
+   "schema": "vop.stage_a.pass_membership.v1",
+   "unresolved": [],
+   "unresolved_count": 0
+  },
+  "model_suppression_mode": "external",
+  "not_painted": {
+   "annotation_categories_hidden": {
+    "reason": "AttributeError: '_NoCropView' object has no attribute 'AreAnnotationCategoriesHidden'",
+    "state": "unavailable"
+   },
+   "count_relationship": "not_visible_by_rule and not_visible_in_view count the SAME not_visible_total elements: by_rule is the reason (one per element), not_visible_in_view the per-category breakdown. visibility_unreadable is disjoint: those are painted.",
+   "not_visible_by_rule": {},
+   "not_visible_in_view": {},
+   "not_visible_total": 0,
+   "visibility_unreadable": {}
+  },
+  "orig_view_template_id": -1,
+  "paint_failed_element_ids": [],
+  "palette_reservation": {
+   "blank_ids_painted": [
+    5013,
+    5014
+   ],
+   "excluded_count": 1,
+   "mark_ids_painted": [
+    5001,
+    5002,
+    5003,
+    5004,
+    5005,
+    5006,
+    5007,
+    5008,
+    5009,
+    5010,
+    5011,
+    5012
+   ],
+   "reserved_tick_colour": [
+    139,
+    251,
+    11
+   ],
+   "step": 6,
+   "step_requested": 6
+  },
+  "pass": "annotation",
+  "registration": {
+   "achieved_fpp_ft": 0.05328596802841918,
+   "authored_crop_active": null,
+   "crop_applied": "none",
+   "crop_mode": "authored_else_crop_a",
+   "crop_write": null,
+   "model_crop_px": [
+    563,
+    413
+   ],
+   "model_crop_snapped_uv": [
+    20.0,
+    15.0,
+    50.0,
+    37.00710479573712
+   ],
+   "rendered_uv": null,
+   "rendered_uv_reason": "the view has no crop region (a drafting view or a legend), so the export renders everything it draws and the rendered rectangle must be MEASURED (registration marks)",
+   "requested_px_source": "model_crop_px",
+   "sizing_frame": "crop_a"
+  },
+  "registration_marks": {
+   "anno_extent_variant": null,
+   "annotation_crop_mode": "authored_else_crop_a",
+   "annotation_extent_prediction": {
+    "avoid_rects_used": 3,
+    "crop_a_px": [
+     563.0,
+     412.9
+    ],
+    "exceeds_cap": false,
+    "growth": [
+     1.6667,
+     1.0
+    ],
+    "max_axis_px": 10000.0,
+    "state": "value",
+    "union_px": [
+     938.3,
+     412.9
+    ],
+    "union_uv": [
+     20.0,
+     15.0,
+     70.0,
+     37.0
+    ]
+   },
+   "co_sizing": null,
+   "colour_mode": "shared",
+   "colour_source": "MARK_COLOUR, one reserved colour for every tick; each tick is its own connected component",
+   "crop_shape": {
+    "reason": "no crop region",
+    "state": "not_read"
+   },
+   "faults": [],
+   "frame_bounds": {
+    "colour": [
+     139,
+     251,
+     11
+    ],
+    "created": [
+     {
+      "corner": "left_bottom",
+      "id": 5013,
+      "key": "bound_min",
+      "level_uv": 15.0,
+      "line_style_applied": true,
+      "orientation": "horizontal",
+      "painted": true,
+      "readback_max_deviation_ft": 0.0,
+      "readback_uv": [
+       [
+        20.0,
+        15.0
+       ],
+       [
+        20.426287744227352,
+        15.0
+       ]
+      ],
+      "span_uv": [
+       20.0,
+       20.426287744227352
+      ],
+      "uv0": [
+       20.0,
+       15.0
+      ],
+      "uv1": [
+       20.426287744227352,
+       15.0
+      ]
+     },
+     {
+      "corner": "right_top",
+      "id": 5014,
+      "key": "bound_max",
+      "level_uv": 37.0,
+      "line_style_applied": true,
+      "orientation": "horizontal",
+      "painted": true,
+      "readback_max_deviation_ft": 0.0,
+      "readback_uv": [
+       [
+        49.57371225577265,
+        37.0
+       ],
+       [
+        50.0,
+        37.0
+       ]
+      ],
+      "span_uv": [
+       49.57371225577265,
+       50.0
+      ],
+      "uv0": [
+       49.57371225577265,
+       37.0
+      ],
+      "uv1": [
+       50.0,
+       37.0
+      ]
+     }
+    ],
+    "created_count": 2,
+    "expected_count": 2,
+    "failed": [],
+    "layout": {
+     "colour": [
+      255,
+      255,
+      255
+     ],
+     "length_ft": 0.42628774422735344,
+     "reference_uv": [
+      20.0,
+      15.0,
+      50.0,
+      37.0
+     ],
+     "state": "value"
+    },
+    "line_style": {
+     "candidates": 3,
+     "default_style": {
+      "id": 7001,
+      "name": "Lines",
+      "projection_line_weight": 3
+     },
+     "hidden": [],
+     "hidden_unreadable": [],
+     "id": 7002,
+     "name": "<Thin Lines>",
+     "not_solid": [
+      {
+       "id": 7004,
+       "name": "<Overhead>",
+       "projection_line_weight": 1
+      }
+     ],
+     "projection_line_weight": 1,
+     "state": "value",
+     "subcategory_hidden_in_view": false,
+     "unreadable": []
+    },
+    "lines_category_hidden_in_view": false,
+    "readback_max_deviation_ft": 0.0,
+    "short_curve_tolerance": "fallback (AttributeError: '_SizedDoc' object has no attribute 'Application')",
+    "state": "value"
+   },
+   "is_documentation_content": false,
+   "layout": {
+    "arm_px": 32.0,
+    "colour": [
+     139,
+     251,
+     11
+    ],
+    "fpp_ft": 0.05328596802841918,
+    "gap_px": 8.0,
+    "inset_px": 24.0,
+    "reference_uv": [
+     20.0,
+     15.0,
+     50.0,
+     37.0
+    ],
+    "relocation": {
+     "avoid_rects": 3,
+     "blocked": 0,
+     "moved": 2
+    },
+    "state": "value"
+   },
+   "line_style": {
+    "candidates": 3,
+    "default_style": {
+     "id": 7001,
+     "name": "Lines",
+     "projection_line_weight": 3
+    },
+    "hidden": [],
+    "hidden_unreadable": [],
+    "id": 7002,
+    "name": "<Thin Lines>",
+    "not_solid": [
+     {
+      "id": 7004,
+      "name": "<Overhead>",
+      "projection_line_weight": 1
+     }
+    ],
+    "projection_line_weight": 1,
+    "state": "value",
+    "subcategory_hidden_in_view": false,
+    "unreadable": []
+   },
+   "lines_unhidden": {
+    "lines_category_hidden_before": false,
+    "state": "not_needed"
+   },
+   "mark_avoidance": {
+    "annotation_elements": 3,
+    "avoid_rects": 3,
+    "calls_over_threshold": 0,
+    "calls_timed": 3,
+    "excluded_imports": 0,
+    "first_error": null,
+    "no_bbox": 0,
+    "read_errors": 0
+   },
+   "marks": [
+    {
+     "corner": "left_bottom",
+     "id": 5001,
+     "key": "left_bottom_h",
+     "level_uv": 16.27886323268206,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.70515097690941,
+       16.27886323268206
+      ],
+      [
+       23.410301953818827,
+       16.27886323268206
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.70515097690941,
+      23.410301953818827
+     ],
+     "uv0": [
+      21.70515097690941,
+      16.27886323268206
+     ],
+     "uv1": [
+      23.410301953818827,
+      16.27886323268206
+     ]
+    },
+    {
+     "corner": "left_bottom",
+     "id": 5002,
+     "key": "left_bottom_v",
+     "level_uv": 21.27886323268206,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.27886323268206,
+       16.70515097690941
+      ],
+      [
+       21.27886323268206,
+       18.410301953818827
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.70515097690941,
+      18.410301953818827
+     ],
+     "uv0": [
+      21.27886323268206,
+      16.70515097690941
+     ],
+     "uv1": [
+      21.27886323268206,
+      18.410301953818827
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5003,
+     "key": "right_bottom_h",
+     "level_uv": 16.27886323268206,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       46.58969804618117,
+       16.27886323268206
+      ],
+      [
+       48.294849023090585,
+       16.27886323268206
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      46.58969804618117,
+      48.294849023090585
+     ],
+     "uv0": [
+      46.58969804618117,
+      16.27886323268206
+     ],
+     "uv1": [
+      48.294849023090585,
+      16.27886323268206
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5004,
+     "key": "right_bottom_v",
+     "level_uv": 48.72113676731794,
+     "line_style_applied": true,
+     "moved_from_uv": [
+      [
+       48.72113676731794,
+       16.70515097690941
+      ],
+      [
+       48.72113676731794,
+       18.410301953818827
+      ]
+     ],
+     "moved_px": [
+      0.0,
+      32.0
+     ],
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "moved",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       48.72113676731794,
+       18.410301953818827
+      ],
+      [
+       48.72113676731794,
+       20.115452930728242
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      18.410301953818827,
+      20.115452930728242
+     ],
+     "uv0": [
+      48.72113676731794,
+      18.410301953818827
+     ],
+     "uv1": [
+      48.72113676731794,
+      20.115452930728242
+     ],
+     "was_covered_by": [
+      3001
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5005,
+     "key": "left_top_h",
+     "level_uv": 35.72113676731794,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.70515097690941,
+       35.72113676731794
+      ],
+      [
+       23.410301953818827,
+       35.72113676731794
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.70515097690941,
+      23.410301953818827
+     ],
+     "uv0": [
+      21.70515097690941,
+      35.72113676731794
+     ],
+     "uv1": [
+      23.410301953818827,
+      35.72113676731794
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5006,
+     "key": "left_top_v",
+     "level_uv": 21.27886323268206,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.27886323268206,
+       33.58969804618117
+      ],
+      [
+       21.27886323268206,
+       35.294849023090585
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      33.58969804618117,
+      35.294849023090585
+     ],
+     "uv0": [
+      21.27886323268206,
+      33.58969804618117
+     ],
+     "uv1": [
+      21.27886323268206,
+      35.294849023090585
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5007,
+     "key": "right_top_h",
+     "level_uv": 35.72113676731794,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       46.58969804618117,
+       35.72113676731794
+      ],
+      [
+       48.294849023090585,
+       35.72113676731794
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      46.58969804618117,
+      48.294849023090585
+     ],
+     "uv0": [
+      46.58969804618117,
+      35.72113676731794
+     ],
+     "uv1": [
+      48.294849023090585,
+      35.72113676731794
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5008,
+     "key": "right_top_v",
+     "level_uv": 48.72113676731794,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       48.72113676731794,
+       33.58969804618117
+      ],
+      [
+       48.72113676731794,
+       35.294849023090585
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      33.58969804618117,
+      35.294849023090585
+     ],
+     "uv0": [
+      48.72113676731794,
+      33.58969804618117
+     ],
+     "uv1": [
+      48.72113676731794,
+      35.294849023090585
+     ]
+    },
+    {
+     "corner": "left_mid",
+     "id": 5009,
+     "key": "left_mid_h",
+     "level_uv": 23.8,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.70515097690941,
+       23.8
+      ],
+      [
+       23.410301953818827,
+       23.8
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.70515097690941,
+      23.410301953818827
+     ],
+     "uv0": [
+      21.70515097690941,
+      23.8
+     ],
+     "uv1": [
+      23.410301953818827,
+      23.8
+     ]
+    },
+    {
+     "corner": "right_mid",
+     "id": 5010,
+     "key": "right_mid_h",
+     "level_uv": 23.8,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       46.58969804618117,
+       23.8
+      ],
+      [
+       48.294849023090585,
+       23.8
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      46.58969804618117,
+      48.294849023090585
+     ],
+     "uv0": [
+      46.58969804618117,
+      23.8
+     ],
+     "uv1": [
+      48.294849023090585,
+      23.8
+     ]
+    },
+    {
+     "corner": "mid_bottom",
+     "id": 5011,
+     "key": "mid_bottom_v",
+     "level_uv": 32.0,
+     "line_style_applied": true,
+     "moved_from_uv": [
+      [
+       32.0,
+       16.70515097690941
+      ],
+      [
+       32.0,
+       18.410301953818827
+      ]
+     ],
+     "moved_px": [
+      0.0,
+      32.0
+     ],
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "moved",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       32.0,
+       18.410301953818827
+      ],
+      [
+       32.0,
+       20.115452930728242
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      18.410301953818827,
+      20.115452930728242
+     ],
+     "uv0": [
+      32.0,
+      18.410301953818827
+     ],
+     "uv1": [
+      32.0,
+      20.115452930728242
+     ],
+     "was_covered_by": [
+      3001
+     ]
+    },
+    {
+     "corner": "mid_top",
+     "id": 5012,
+     "key": "mid_top_v",
+     "level_uv": 32.0,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       32.0,
+       33.58969804618117
+      ],
+      [
+       32.0,
+       35.294849023090585
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      33.58969804618117,
+      35.294849023090585
+     ],
+     "uv0": [
+      32.0,
+      33.58969804618117
+     ],
+     "uv1": [
+      32.0,
+      35.294849023090585
+     ]
+    }
+   ],
+   "model_suppression": {
+    "element_override_count": 0,
+    "link_category_filters": {
+     "categories": [],
+     "created_filter_ids": [],
+     "failed_categories": [],
+     "reused_filter_ids": [],
+     "state": "not_attempted"
+    },
+    "unreached": [],
+    "unreached_count": 0
+   },
+   "must_be_subtracted": true,
+   "pass": "annotation",
+   "recapture": null,
+   "reference_source": "no_crop_region_frame",
+   "restore": {
+    "detail_lines": {
+     "left_hidden": [],
+     "unreadable": []
+    },
+    "element_overrides": {
+     "left_behind": [],
+     "non_blank_after": 0,
+     "non_blank_before": 0,
+     "unreadable_after": 0
+    },
+    "marks_still_in_project": [],
+    "mode": "transaction_group_rollback",
+    "rolled_back": true,
+    "status": "RolledBack",
+    "view_membership": {
+     "added": [],
+     "added_count": 0,
+     "after": {
+      "count": 3,
+      "sha1": "eb2f3d93e25865d45095e0ad32176a879ecdf91e"
+     },
+     "before": {
+      "count": 3,
+      "sha1": "eb2f3d93e25865d45095e0ad32176a879ecdf91e"
+     },
+     "removed": [],
+     "removed_count": 0,
+     "status": "unchanged"
+    },
+    "view_state": {
+     "display_style": {
+      "status": "restored"
+     },
+     "view_template_id": {
+      "status": "restored"
+     }
+    }
+   },
+   "schema": "vop.stage_a.registered_capture.v1",
+   "split_crop": {
+    "state": "no_crop_region"
+   },
+   "ticks_outside_crop_loop": null,
+   "timing_partition": [
+    "authored_override_scan",
+    "split_remove",
+    "lines_unhide",
+    "co_sizing_first_attempt",
+    "mark_layout",
+    "marks_create",
+    "model_pass",
+    "suppression",
+    "annotation_pass",
+    "attempt_rollback",
+    "rollback",
+    "restore_element_overrides",
+    "view_membership_readback"
+   ]
+  },
+  "schema": "vop.stage_a.annotation_pass.v1",
+  "smooth_edges_read_error": null,
+  "view_id": 77,
+  "view_template_detach": {
+   "commit_status": null,
+   "detached": false,
+   "detached_on": null,
+   "fault": null,
+   "orig_view_template_id": -1,
+   "primary_view_id": {
+    "reason": "AttributeError: '_NoCropView' object has no attribute 'GetPrimaryViewId'",
+    "state": "unavailable"
+   },
+   "read_back_view_template_id": -1,
+   "target_orig_view_template_id": -1,
+   "target_view_id": 77
+  },
+  "view_template_detached": false
+ },
+ "model": {
+  "applied_display_style": "FlatColors",
+  "applied_show_shadows": "unchanged",
+  "applied_smooth_edges": false,
+  "capture_integrity": {
+   "capture_faults": [],
+   "completed_by": [
+    "model_pass",
+    "registered_capture"
+   ],
+   "marks_still_in_project": 0,
+   "paint_failures": 0,
+   "restore_failures": 0,
+   "rolled_back": true,
+   "status": "value"
+  },
+  "color_assignment_map": {},
+  "dwg_imports_omitted": [
+   {
+    "element_id": null,
+    "reason": "DWG import scan failed; no import was examined (AttributeError: 'list' object has no attribute 'ToElements')",
+    "state": "unavailable"
+   }
+  ],
+  "failed_link_categories": [],
+  "failure_reason": null,
+  "frame": {
+   "achieved_export_dpi": 150.13333333333333,
+   "achieved_fpp_ft": 0.05328596802841918,
+   "actual_h": 563,
+   "actual_w": 563,
+   "backoff_floor_px": 64,
+   "backoff_max_retries": 2,
+   "backoff_stop_reason": null,
+   "cap_applied": false,
+   "cap_applied_by_cap_axes": false,
+   "crop_px": [
+    563,
+    413
+   ],
+   "crop_uv": [
+    20.0,
+    15.0,
+    50.0,
+    37.0
+   ],
+   "crop_write": {
+    "rendered_extent": "bounded_by_registration_marks",
+    "source": "no_crop_region",
+    "written": false
+   },
+   "dim_check": "pass",
+   "dim_check_attempts": [
+    {
+     "accepted_px": 563,
+     "actual_h": 563,
+     "actual_w": 563,
+     "dim_check": "pass",
+     "dim_read_error": null,
+     "requested_px": 563
+    }
+   ],
+   "dim_check_ceiling_px": 10000,
+   "dim_read_error": null,
+   "fit_direction": "horizontal",
+   "floor_applied_to_crop": false,
+   "lattice_corrections": 0,
+   "max_axis_px": 10000,
+   "min_axis_px": 64,
+   "pixel_size": 563,
+   "pre_cap_px": 563,
+   "predicted_derived_px": 413,
+   "sizing_frame": "crop_a",
+   "status": "value",
+   "verified_against_revit": false,
+   "view_scale": 96.0
+  },
+  "link_category_color_map": {},
+  "model_crop_offset_uv": [
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "model_lines_visible": true,
+  "near_face_w_map": {
+   "host": {},
+   "link": {}
+  },
+  "orig_view_template_id": -1,
+  "paint_failed_element_ids": [],
+  "palette_reservation": {
+   "excluded_count": 0,
+   "reserved_tick_colour": [
+    139,
+    251,
+    11
+   ],
+   "step": 6,
+   "step_requested": 6
+  },
+  "registration_marks": {
+   "anno_extent_variant": null,
+   "annotation_crop_mode": "authored_else_crop_a",
+   "annotation_extent_prediction": {
+    "avoid_rects_used": 3,
+    "crop_a_px": [
+     563.0,
+     412.9
+    ],
+    "exceeds_cap": false,
+    "growth": [
+     1.6667,
+     1.0
+    ],
+    "max_axis_px": 10000.0,
+    "state": "value",
+    "union_px": [
+     938.3,
+     412.9
+    ],
+    "union_uv": [
+     20.0,
+     15.0,
+     70.0,
+     37.0
+    ]
+   },
+   "co_sizing": null,
+   "colour_mode": "shared",
+   "colour_source": "MARK_COLOUR, one reserved colour for every tick; each tick is its own connected component",
+   "crop_shape": {
+    "reason": "no crop region",
+    "state": "not_read"
+   },
+   "faults": [],
+   "frame_bounds": {
+    "colour": [
+     139,
+     251,
+     11
+    ],
+    "created": [
+     {
+      "corner": "left_bottom",
+      "id": 5013,
+      "key": "bound_min",
+      "level_uv": 15.0,
+      "line_style_applied": true,
+      "orientation": "horizontal",
+      "painted": true,
+      "readback_max_deviation_ft": 0.0,
+      "readback_uv": [
+       [
+        20.0,
+        15.0
+       ],
+       [
+        20.426287744227352,
+        15.0
+       ]
+      ],
+      "span_uv": [
+       20.0,
+       20.426287744227352
+      ],
+      "uv0": [
+       20.0,
+       15.0
+      ],
+      "uv1": [
+       20.426287744227352,
+       15.0
+      ]
+     },
+     {
+      "corner": "right_top",
+      "id": 5014,
+      "key": "bound_max",
+      "level_uv": 37.0,
+      "line_style_applied": true,
+      "orientation": "horizontal",
+      "painted": true,
+      "readback_max_deviation_ft": 0.0,
+      "readback_uv": [
+       [
+        49.57371225577265,
+        37.0
+       ],
+       [
+        50.0,
+        37.0
+       ]
+      ],
+      "span_uv": [
+       49.57371225577265,
+       50.0
+      ],
+      "uv0": [
+       49.57371225577265,
+       37.0
+      ],
+      "uv1": [
+       50.0,
+       37.0
+      ]
+     }
+    ],
+    "created_count": 2,
+    "expected_count": 2,
+    "failed": [],
+    "layout": {
+     "colour": [
+      255,
+      255,
+      255
+     ],
+     "length_ft": 0.42628774422735344,
+     "reference_uv": [
+      20.0,
+      15.0,
+      50.0,
+      37.0
+     ],
+     "state": "value"
+    },
+    "line_style": {
+     "candidates": 3,
+     "default_style": {
+      "id": 7001,
+      "name": "Lines",
+      "projection_line_weight": 3
+     },
+     "hidden": [],
+     "hidden_unreadable": [],
+     "id": 7002,
+     "name": "<Thin Lines>",
+     "not_solid": [
+      {
+       "id": 7004,
+       "name": "<Overhead>",
+       "projection_line_weight": 1
+      }
+     ],
+     "projection_line_weight": 1,
+     "state": "value",
+     "subcategory_hidden_in_view": false,
+     "unreadable": []
+    },
+    "lines_category_hidden_in_view": false,
+    "readback_max_deviation_ft": 0.0,
+    "short_curve_tolerance": "fallback (AttributeError: '_SizedDoc' object has no attribute 'Application')",
+    "state": "value"
+   },
+   "is_documentation_content": false,
+   "layout": {
+    "arm_px": 32.0,
+    "colour": [
+     139,
+     251,
+     11
+    ],
+    "fpp_ft": 0.05328596802841918,
+    "gap_px": 8.0,
+    "inset_px": 24.0,
+    "reference_uv": [
+     20.0,
+     15.0,
+     50.0,
+     37.0
+    ],
+    "relocation": {
+     "avoid_rects": 3,
+     "blocked": 0,
+     "moved": 2
+    },
+    "state": "value"
+   },
+   "line_style": {
+    "candidates": 3,
+    "default_style": {
+     "id": 7001,
+     "name": "Lines",
+     "projection_line_weight": 3
+    },
+    "hidden": [],
+    "hidden_unreadable": [],
+    "id": 7002,
+    "name": "<Thin Lines>",
+    "not_solid": [
+     {
+      "id": 7004,
+      "name": "<Overhead>",
+      "projection_line_weight": 1
+     }
+    ],
+    "projection_line_weight": 1,
+    "state": "value",
+    "subcategory_hidden_in_view": false,
+    "unreadable": []
+   },
+   "lines_unhidden": {
+    "lines_category_hidden_before": false,
+    "state": "not_needed"
+   },
+   "mark_avoidance": {
+    "annotation_elements": 3,
+    "avoid_rects": 3,
+    "calls_over_threshold": 0,
+    "calls_timed": 3,
+    "excluded_imports": 0,
+    "first_error": null,
+    "no_bbox": 0,
+    "read_errors": 0
+   },
+   "marks": [
+    {
+     "corner": "left_bottom",
+     "id": 5001,
+     "key": "left_bottom_h",
+     "level_uv": 16.27886323268206,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.70515097690941,
+       16.27886323268206
+      ],
+      [
+       23.410301953818827,
+       16.27886323268206
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.70515097690941,
+      23.410301953818827
+     ],
+     "uv0": [
+      21.70515097690941,
+      16.27886323268206
+     ],
+     "uv1": [
+      23.410301953818827,
+      16.27886323268206
+     ]
+    },
+    {
+     "corner": "left_bottom",
+     "id": 5002,
+     "key": "left_bottom_v",
+     "level_uv": 21.27886323268206,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.27886323268206,
+       16.70515097690941
+      ],
+      [
+       21.27886323268206,
+       18.410301953818827
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.70515097690941,
+      18.410301953818827
+     ],
+     "uv0": [
+      21.27886323268206,
+      16.70515097690941
+     ],
+     "uv1": [
+      21.27886323268206,
+      18.410301953818827
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5003,
+     "key": "right_bottom_h",
+     "level_uv": 16.27886323268206,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       46.58969804618117,
+       16.27886323268206
+      ],
+      [
+       48.294849023090585,
+       16.27886323268206
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      46.58969804618117,
+      48.294849023090585
+     ],
+     "uv0": [
+      46.58969804618117,
+      16.27886323268206
+     ],
+     "uv1": [
+      48.294849023090585,
+      16.27886323268206
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5004,
+     "key": "right_bottom_v",
+     "level_uv": 48.72113676731794,
+     "line_style_applied": true,
+     "moved_from_uv": [
+      [
+       48.72113676731794,
+       16.70515097690941
+      ],
+      [
+       48.72113676731794,
+       18.410301953818827
+      ]
+     ],
+     "moved_px": [
+      0.0,
+      32.0
+     ],
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "moved",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       48.72113676731794,
+       18.410301953818827
+      ],
+      [
+       48.72113676731794,
+       20.115452930728242
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      18.410301953818827,
+      20.115452930728242
+     ],
+     "uv0": [
+      48.72113676731794,
+      18.410301953818827
+     ],
+     "uv1": [
+      48.72113676731794,
+      20.115452930728242
+     ],
+     "was_covered_by": [
+      3001
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5005,
+     "key": "left_top_h",
+     "level_uv": 35.72113676731794,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.70515097690941,
+       35.72113676731794
+      ],
+      [
+       23.410301953818827,
+       35.72113676731794
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.70515097690941,
+      23.410301953818827
+     ],
+     "uv0": [
+      21.70515097690941,
+      35.72113676731794
+     ],
+     "uv1": [
+      23.410301953818827,
+      35.72113676731794
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5006,
+     "key": "left_top_v",
+     "level_uv": 21.27886323268206,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.27886323268206,
+       33.58969804618117
+      ],
+      [
+       21.27886323268206,
+       35.294849023090585
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      33.58969804618117,
+      35.294849023090585
+     ],
+     "uv0": [
+      21.27886323268206,
+      33.58969804618117
+     ],
+     "uv1": [
+      21.27886323268206,
+      35.294849023090585
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5007,
+     "key": "right_top_h",
+     "level_uv": 35.72113676731794,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       46.58969804618117,
+       35.72113676731794
+      ],
+      [
+       48.294849023090585,
+       35.72113676731794
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      46.58969804618117,
+      48.294849023090585
+     ],
+     "uv0": [
+      46.58969804618117,
+      35.72113676731794
+     ],
+     "uv1": [
+      48.294849023090585,
+      35.72113676731794
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5008,
+     "key": "right_top_v",
+     "level_uv": 48.72113676731794,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       48.72113676731794,
+       33.58969804618117
+      ],
+      [
+       48.72113676731794,
+       35.294849023090585
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      33.58969804618117,
+      35.294849023090585
+     ],
+     "uv0": [
+      48.72113676731794,
+      33.58969804618117
+     ],
+     "uv1": [
+      48.72113676731794,
+      35.294849023090585
+     ]
+    },
+    {
+     "corner": "left_mid",
+     "id": 5009,
+     "key": "left_mid_h",
+     "level_uv": 23.8,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.70515097690941,
+       23.8
+      ],
+      [
+       23.410301953818827,
+       23.8
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.70515097690941,
+      23.410301953818827
+     ],
+     "uv0": [
+      21.70515097690941,
+      23.8
+     ],
+     "uv1": [
+      23.410301953818827,
+      23.8
+     ]
+    },
+    {
+     "corner": "right_mid",
+     "id": 5010,
+     "key": "right_mid_h",
+     "level_uv": 23.8,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       46.58969804618117,
+       23.8
+      ],
+      [
+       48.294849023090585,
+       23.8
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      46.58969804618117,
+      48.294849023090585
+     ],
+     "uv0": [
+      46.58969804618117,
+      23.8
+     ],
+     "uv1": [
+      48.294849023090585,
+      23.8
+     ]
+    },
+    {
+     "corner": "mid_bottom",
+     "id": 5011,
+     "key": "mid_bottom_v",
+     "level_uv": 32.0,
+     "line_style_applied": true,
+     "moved_from_uv": [
+      [
+       32.0,
+       16.70515097690941
+      ],
+      [
+       32.0,
+       18.410301953818827
+      ]
+     ],
+     "moved_px": [
+      0.0,
+      32.0
+     ],
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "moved",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       32.0,
+       18.410301953818827
+      ],
+      [
+       32.0,
+       20.115452930728242
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      18.410301953818827,
+      20.115452930728242
+     ],
+     "uv0": [
+      32.0,
+      18.410301953818827
+     ],
+     "uv1": [
+      32.0,
+      20.115452930728242
+     ],
+     "was_covered_by": [
+      3001
+     ]
+    },
+    {
+     "corner": "mid_top",
+     "id": 5012,
+     "key": "mid_top_v",
+     "level_uv": 32.0,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "placement": "original",
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       32.0,
+       33.58969804618117
+      ],
+      [
+       32.0,
+       35.294849023090585
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      33.58969804618117,
+      35.294849023090585
+     ],
+     "uv0": [
+      32.0,
+      33.58969804618117
+     ],
+     "uv1": [
+      32.0,
+      35.294849023090585
+     ]
+    }
+   ],
+   "model_suppression": {
+    "element_override_count": 0,
+    "link_category_filters": {
+     "categories": [],
+     "created_filter_ids": [],
+     "failed_categories": [],
+     "reused_filter_ids": [],
+     "state": "not_attempted"
+    },
+    "unreached": [],
+    "unreached_count": 0
+   },
+   "must_be_subtracted": true,
+   "pass": "model",
+   "recapture": null,
+   "reference_source": "no_crop_region_frame",
+   "restore": {
+    "detail_lines": {
+     "left_hidden": [],
+     "unreadable": []
+    },
+    "element_overrides": {
+     "left_behind": [],
+     "non_blank_after": 0,
+     "non_blank_before": 0,
+     "unreadable_after": 0
+    },
+    "marks_still_in_project": [],
+    "mode": "transaction_group_rollback",
+    "rolled_back": true,
+    "status": "RolledBack",
+    "view_membership": {
+     "added": [],
+     "added_count": 0,
+     "after": {
+      "count": 3,
+      "sha1": "eb2f3d93e25865d45095e0ad32176a879ecdf91e"
+     },
+     "before": {
+      "count": 3,
+      "sha1": "eb2f3d93e25865d45095e0ad32176a879ecdf91e"
+     },
+     "removed": [],
+     "removed_count": 0,
+     "status": "unchanged"
+    },
+    "view_state": {
+     "display_style": {
+      "status": "restored"
+     },
+     "view_template_id": {
+      "status": "restored"
+     }
+    }
+   },
+   "schema": "vop.stage_a.registered_capture.v1",
+   "split_crop": {
+    "state": "no_crop_region"
+   },
+   "ticks_outside_crop_loop": null,
+   "timing_partition": [
+    "authored_override_scan",
+    "split_remove",
+    "lines_unhide",
+    "co_sizing_first_attempt",
+    "mark_layout",
+    "marks_create",
+    "model_pass",
+    "suppression",
+    "annotation_pass",
+    "attempt_rollback",
+    "rollback",
+    "restore_element_overrides",
+    "view_membership_readback"
+   ]
+  },
+  "rotation_read": {
+   "elements_read": 0,
+   "no_single_rotation": 0,
+   "no_single_rotation_by_reason": {},
+   "rotated": 0,
+   "unavailable": 0
+  },
+  "smooth_edges_read_error": null,
+  "uncolorable_link_categories": [],
+  "view_graphics_state": {
+   "captured_at": "before_view_template_detach_and_suppression",
+   "category_overrides": {
+    "state": "value",
+    "value": {
+     "basis": "categories of the elements the pipeline collected, UNION every top-level category this view reports hidden; the second source is what explains an absence, since a hidden category's elements never reach the view-scoped collection",
+     "categories": {},
+     "categories_unreadable_in_document_scan": 0,
+     "document_categories_scanned": {
+      "state": "value",
+      "value": 2
+     },
+     "elements_with_unreadable_category": 0
+    }
+   },
+   "detail_level": {
+    "state": "value",
+    "value": "Fine"
+   },
+   "display_style": {
+    "state": "value",
+    "value": "Wireframe"
+   },
+   "link_instances": {
+    "reason": "no RevitLinkInstance is visible in this view",
+    "state": "not_applicable"
+   },
+   "phase_filter": {
+    "reason": "view exposes no VIEW_PHASE_FILTER parameter",
+    "state": "not_applicable"
+   },
+   "phase_status_presentation": {
+    "reason": "view exposes no VIEW_PHASE_FILTER parameter",
+    "state": "not_applicable"
+   },
+   "schema": "vop.stage_a.view_graphics_state.v1",
+   "underlay": {
+    "state": "value",
+    "value": {
+     "base_level": {
+      "reason": "no underlay level is set on this view",
+      "state": "not_applicable"
+     },
+     "orientation": {
+      "state": "value",
+      "value": "LookingDown"
+     },
+     "top_level": {
+      "reason": "no underlay level is set on this view",
+      "state": "not_applicable"
+     }
+    }
+   },
+   "view_filters": {
+    "reason": "no view filters are applied to this view",
+    "state": "not_applicable"
+   },
+   "view_phase": {
+    "reason": "view exposes no VIEW_PHASE parameter",
+    "state": "not_applicable"
+   },
+   "view_template_id": {
+    "reason": "view has no view template applied",
+    "state": "not_applicable"
+   }
+  },
+  "view_id": 77,
+  "view_specific_imports": [],
+  "view_template_detach": {
+   "commit_status": null,
+   "detached": false,
+   "detached_on": null,
+   "fault": null,
+   "orig_view_template_id": -1,
+   "primary_view_id": {
+    "reason": "AttributeError: '_NoCropView' object has no attribute 'GetPrimaryViewId'",
+    "state": "unavailable"
+   },
+   "read_back_view_template_id": -1,
+   "target_orig_view_template_id": -1,
+   "target_view_id": 77
+  },
+  "view_template_detached": false
+ }
+}
