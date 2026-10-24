@@ -71,6 +71,25 @@ offline by `tools/analyze_capture_state_probe.py`. See
 [`PROBE_CAPTURE_STATE.md`](PROBE_CAPTURE_STATE.md) for the questions, the view
 ids, the node inputs and what the outputs mean.
 
+## Change-detection and export-cap probes (Q1, Q2; diagnostic, standalone)
+
+`probe_change_detection.py` (Q1) confirms by reflection whether
+`Document.GetDocumentVersion` / `GetChangedElements` exist, then opens two
+archive versions the batch's way (detached), and copies of them not
+detached, and records what `GetChangedElements` returns and what it implies
+per view. It writes nothing to any document; the archives' hashes before and
+after are the evidence. `tools/analyze_change_detection_probe.py` checks its
+verdict against captures already made. See
+[`PROBE_CHANGE_DETECTION.md`](PROBE_CHANGE_DETECTION.md).
+
+`probe_export_cap.py` (Q2) captures each chosen view with production's
+`run_capture` at several values of `color_id_buffer_cap_axis_px`, repeated
+and in a seeded order. `tools/analyze_export_cap_probe.py` fits export time
+against megapixels and grids every cap with `tools/stage_a_grid.py`
+unchanged. See [`PROBE_EXPORT_CAP.md`](PROBE_EXPORT_CAP.md).
+
+Both are standalone (not in `revit_probe_registry.py`); `OUT` is the JSON path.
+
 ## Usage
 
 1. **Open Dynamo** in Revit with your test model loaded
