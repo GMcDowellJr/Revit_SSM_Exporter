@@ -583,3 +583,22 @@ def test_the_timing_report_reads_an_annotation_only_view_from_its_sidecar(tmp_pa
         total = json.load(handle)["registration_marks"]["timings_ms"]["total"]
     assert rows["d"]["capture_total_ms"] == total, rows["d"]
     assert rows["d"]["reason"] in (None, "")
+
+
+def test_a_stale_annotation_sidecar_beside_a_model_only_recapture_is_not_registered(tmp_path):
+    """Codex, PR #249: a two-pass view recaptured model-only leaves its old
+    _anno.json. Registration must not pair it with the new tickless model
+    sidecar (a refusal, exit 1) but record the view as the single pass its
+    model sidecar declares. Control: the undeclared model sidecar still
+    refuses, as before."""
+    _old_model, anno, _m = write_s0_view(tmp_path)
+    model = _model_only_view(tmp_path, declare=True)      # overwrites the model sidecar
+    rec = reg.register(anno)
+    assert rec["status"] == "single_pass", rec.get("refusals")
+    assert rec["skipped_pass"]["skipped"] == "annotation"
+    assert rec["superseded_annotation_sidecar"]["model_sidecar"] == str(model)
+    assert reg.register_job(anno)[0] == 0
+    assert not reg.output_paths(anno)[0].exists()
+    # Control: the same pair with the model sidecar undeclared.
+    _model_only_view(tmp_path, declare=False)
+    assert reg.register(anno)["status"] == "refused"

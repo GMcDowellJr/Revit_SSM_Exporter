@@ -344,3 +344,39 @@ def test_an_element_of_unknown_pass_runs_both(tmp_path):
     assert plan["counts"]["unresolved_count"] == 1
     assert plan["decision"] == "membership_unresolved"
     assert out["capture_passes"] == ["model", "annotation"]
+
+
+@pytest.mark.parametrize("passes,unhide_runs", [
+    (["model"], True),                  # no crop region: frame bounds need Lines
+    (["annotation"], True),             # the ticks need Lines
+])
+def test_lines_are_unhidden_for_the_captures_own_lines(tmp_path, monkeypatch,
+                                                       passes, unhide_runs):
+    """Codex, PR #249: a capture of a view with no crop region draws the two
+    frame-bound lines even with no ticks, and they do not render while the
+    view hides OST_Lines. The drafting fixture forced to model-only (no such
+    view was seen in the field, where drafting views hold no model member)
+    must still run the unhide. Mutation: skip it whenever no ticks are drawn
+    -> the model-only case red."""
+    from vop_interwoven import stage_a_registered_capture as rc
+    from vop_interwoven import capture_passes as cp_mod
+    calls = []
+    real_unhide = rc.unhide_lines_for_ticks
+
+    def _spy(*a, **k):
+        calls.append(1)
+        return real_unhide(*a, **k)
+    monkeypatch.setattr(rc, "unhide_lines_for_ticks", _spy)
+    real_plan = cp_mod.plan_capture_passes
+
+    def _forced(counts):
+        plan = real_plan(counts)
+        skipped = [p for p in cp.BOTH_PASSES if p not in passes][0]
+        return dict(plan, passes=list(passes), decision=cp.SKIP_REASON,
+                    skipped_pass=cp.skip_record(skipped, plan["counts"]))
+    monkeypatch.setattr(rc, "plan_capture_passes", _forced)
+    out = fx.run_fixture("drafting", tmp_path)[0]
+    assert out["capture_passes"] == passes
+    assert bool(calls) is unhide_runs
+    assert out["registration"]["lines_unhidden"].get("reason") != \
+        "single_pass: model-only, no ticks are drawn"

@@ -315,6 +315,14 @@ def register(anno_sidecar_path, model_sidecar_path=None):
             anno_sidecar_path, model_sidecar_path))
     model_sidecar_path = Path(model_sidecar_path)
     model_sidecar = legacy_view(json.loads(model_sidecar_path.read_text(encoding="utf-8")))
+    model_passes, model_skipped, _model_error = cp.declared_passes(model_sidecar)
+    if model_passes == [cp.PASS_MODEL]:
+        # The view's CURRENT capture is model-only (its annotation pass was
+        # skipped); this annotation sidecar is an earlier capture's, left by a
+        # recapture (Codex, PR #249). Not registered against a tickless model.
+        return _single_pass_record(anno_sidecar_path, anno_sidecar, model_passes,
+                                   model_skipped, None, tiff_out, json_out,
+                                   superseded_by=model_sidecar_path)
     anno_tiff = resolve_tiff(anno_sidecar_path, anno_sidecar)
     model_tiff = resolve_tiff(model_sidecar_path, model_sidecar)
 
@@ -444,12 +452,15 @@ def register(anno_sidecar_path, model_sidecar_path=None):
 
 
 def _single_pass_record(anno_sidecar_path, anno_sidecar, passes, skipped,
-                        declaration_error, tiff_out, json_out):
-    """The record of an annotation capture that DECLARES the model pass
-    skipped (vop_interwoven/capture_passes.py): status ``single_pass``, no
+                        declaration_error, tiff_out, json_out, superseded_by=None):
+    """The record of a view whose capture DECLARES one pass skipped
+    (vop_interwoven/capture_passes.py): status ``single_pass``, no
     registered TIFF -- there is no second image to register onto, and the
-    grid reads this capture directly. A malformed declaration is refused,
-    never read as a single pass."""
+    grid reads the one capture directly. Either the annotation sidecar
+    declares the model pass skipped, or (``superseded_by``) the view's model
+    sidecar declares the ANNOTATION pass skipped and this annotation sidecar
+    is an earlier capture's, named as such. A malformed declaration is
+    refused, never read as a single pass."""
     anno_tiff = resolve_tiff(anno_sidecar_path, anno_sidecar)
     record = {
         "schema": SCHEMA, "tool_version": TOOL_VERSION,
@@ -468,6 +479,14 @@ def _single_pass_record(anno_sidecar_path, anno_sidecar, passes, skipped,
         record.update(status="single_pass", capture_passes=passes, skipped_pass=skipped,
                       capture_faults=list((anno_sidecar.get("registration_marks") or {})
                                           .get("faults") or []))
+        if superseded_by is not None:
+            record["capture_faults"] = []
+            record["superseded_annotation_sidecar"] = {
+                "model_sidecar": str(superseded_by),
+                "model_sidecar_sha256": sha256_file(superseded_by),
+                "reason": "the model sidecar declares a model-only capture; this "
+                          "annotation sidecar is from an earlier capture of the view "
+                          "and is not registered"}
     if tiff_out.exists():
         tiff_out.unlink()
         record["stale_registered_tiff_removed"] = True

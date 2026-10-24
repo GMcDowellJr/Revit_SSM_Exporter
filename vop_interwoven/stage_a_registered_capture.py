@@ -1103,9 +1103,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ("Category cannot be hidden" otherwise) -- and hides, one by one,
         # every line that unhiding REVEALED, so both captures still show
         # the view as authored. All inside the group: the rollback undoes it.
-        if not draw_ticks:
-            # Only the ticks need OST_Lines drawn; a single pass draws none,
-            # so the view is captured with Lines as authored. Not timed.
+        if not draw_ticks and has_crop_region:
+            # The capture's own lines need OST_Lines drawn: the ticks, and on
+            # a view with no crop region the frame-bound lines that fix the
+            # export's extent (Codex, PR #249). A model-only capture of a
+            # cropped view draws neither, so Lines stay as authored. Not timed.
             record["lines_unhidden"] = {"state": "not_needed",
                                         "reason": "single_pass: model-only, no ticks are drawn"}
         else:
