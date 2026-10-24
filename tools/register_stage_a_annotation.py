@@ -51,8 +51,16 @@ USAGE
     python tools/register_stage_a_annotation.py <color_id_buffer dir>/
     python tools/register_stage_a_annotation.py <anno.json> --model <View_123.json>
 
-Exit 0 when every capture registered, 1 when any was refused, 2 when an input
-could not be read at all.
+Exit 0 when every capture registered (or is a declared single pass), 1 when
+any was refused, 2 when an input could not be read at all.
+
+1.1.0 (2026-10-22): an annotation sidecar that DECLARES the model pass
+skipped (``capture_passes: ["annotation"]``, vop_interwoven/capture_passes.py)
+gets a record with status ``single_pass``, its ``capture_passes`` and
+``skipped_pass``, and no registered TIFF: there is no model image to
+register onto. Without the declaration a missing model sidecar is still
+unreadable (exit 2); a malformed declaration is refused. Records of
+two-pass captures are unchanged.
 
 1.0.1 (2026-10-22): the record no longer carries ``elapsed_ms``. It was wall
 time, so re-registering an unchanged capture rewrote every record with new
@@ -79,10 +87,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import registration_marks as rm  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
+from vop_interwoven import capture_passes as cp  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
-TOOL_VERSION = "1.0.1"
+TOOL_VERSION = "1.1.0"
 SCHEMA = "vop.stage_a.registered_annotation.v1"
 ANNO_SUFFIX = "_anno"
 
@@ -293,6 +302,12 @@ def register(anno_sidecar_path, model_sidecar_path=None):
     anno_sidecar_path = Path(anno_sidecar_path)
     tiff_out, json_out = output_paths(anno_sidecar_path)
     anno_sidecar = legacy_view(json.loads(anno_sidecar_path.read_text(encoding="utf-8")))
+    passes, skipped, declaration_error = cp.declared_passes(anno_sidecar)
+    if declaration_error is not None or passes == [cp.PASS_ANNOTATION]:
+        # Decided by the sidecar's DECLARATION, before any model sidecar is
+        # looked for: a missing model sidecar alone is still unreadable.
+        return _single_pass_record(anno_sidecar_path, anno_sidecar, passes, skipped,
+                                   declaration_error, tiff_out, json_out)
     if model_sidecar_path is None:
         model_sidecar_path = model_sidecar_for(anno_sidecar_path, anno_sidecar)
     if model_sidecar_path is None or not Path(model_sidecar_path).exists():
@@ -300,6 +315,14 @@ def register(anno_sidecar_path, model_sidecar_path=None):
             anno_sidecar_path, model_sidecar_path))
     model_sidecar_path = Path(model_sidecar_path)
     model_sidecar = legacy_view(json.loads(model_sidecar_path.read_text(encoding="utf-8")))
+    model_passes, model_skipped, _model_error = cp.declared_passes(model_sidecar)
+    if model_passes == [cp.PASS_MODEL]:
+        # The view's CURRENT capture is model-only (its annotation pass was
+        # skipped); this annotation sidecar is an earlier capture's, left by a
+        # recapture (Codex, PR #249). Not registered against a tickless model.
+        return _single_pass_record(anno_sidecar_path, anno_sidecar, model_passes,
+                                   model_skipped, None, tiff_out, json_out,
+                                   superseded_by=model_sidecar_path)
     anno_tiff = resolve_tiff(anno_sidecar_path, anno_sidecar)
     model_tiff = resolve_tiff(model_sidecar_path, model_sidecar)
 
@@ -428,6 +451,49 @@ def register(anno_sidecar_path, model_sidecar_path=None):
     return record
 
 
+def _single_pass_record(anno_sidecar_path, anno_sidecar, passes, skipped,
+                        declaration_error, tiff_out, json_out, superseded_by=None):
+    """The record of a view whose capture DECLARES one pass skipped
+    (vop_interwoven/capture_passes.py): status ``single_pass``, no
+    registered TIFF -- there is no second image to register onto, and the
+    grid reads the one capture directly. Either the annotation sidecar
+    declares the model pass skipped, or (``superseded_by``) the view's model
+    sidecar declares the ANNOTATION pass skipped and this annotation sidecar
+    is an earlier capture's, named as such. A malformed declaration is
+    refused, never read as a single pass."""
+    anno_tiff = resolve_tiff(anno_sidecar_path, anno_sidecar)
+    record = {
+        "schema": SCHEMA, "tool_version": TOOL_VERSION,
+        "view_id": anno_sidecar.get("view_id"),
+        "source_annotation_sidecar": str(anno_sidecar_path),
+        "source_annotation_sidecar_sha256": sha256_file(anno_sidecar_path),
+        "source_annotation_tiff": str(anno_tiff),
+        "source_annotation_tiff_sha256": sha256_file(anno_tiff),
+        "refusals": [], "registered_tiff": None, "registered_tiff_sha256": None,
+    }
+    if declaration_error is not None:
+        record["refusals"].append("the annotation sidecar's pass declaration is "
+                                  "malformed: " + declaration_error)
+        record["status"] = "refused"
+    else:
+        record.update(status="single_pass", capture_passes=passes, skipped_pass=skipped,
+                      capture_faults=list((anno_sidecar.get("registration_marks") or {})
+                                          .get("faults") or []))
+        if superseded_by is not None:
+            record["capture_faults"] = []
+            record["superseded_annotation_sidecar"] = {
+                "model_sidecar": str(superseded_by),
+                "model_sidecar_sha256": sha256_file(superseded_by),
+                "reason": "the model sidecar declares a model-only capture; this "
+                          "annotation sidecar is from an earlier capture of the view "
+                          "and is not registered"}
+    if tiff_out.exists():
+        tiff_out.unlink()
+        record["stale_registered_tiff_removed"] = True
+    json_out.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+    return record
+
+
 def collect(paths):
     out = []
     for arg in paths:
@@ -452,6 +518,10 @@ def register_job(path, model=None):
         return 2, "unreadable {0}: {1}: {2}  {3:.2f}s".format(
             path, type(ex).__name__, ex, time.perf_counter() - start), None
     seconds = time.perf_counter() - start
+    if record["status"] == "single_pass":
+        return 0, "single_pass {0}: the {1} pass was skipped ({2}); nothing to register  " \
+                  "{3:.2f}s".format(path, record["skipped_pass"]["skipped"],
+                                    record["skipped_pass"]["reason"], seconds), None
     if record["status"] == "registered":
         t = record["annotation_to_model_px"]
         return 0, ("registered {0} -> {1}  x' = {2:.6f} x {3:+.2f}, y' = {4:.6f} y "

@@ -57,7 +57,8 @@ import os
 
 from . import output_layout
 from .run_meta import (
-    _replace, clock_stamp, provenance_fields, provenance_session, view_outcomes,
+    _replace, clock_stamp, provenance_fields, provenance_session, single_pass_views,
+    view_outcomes,
 )
 
 RECAPTURE_REASON = "ticks_outside_crop_loop"
@@ -221,6 +222,8 @@ def merge_recapture_into_run_meta(meta, record, view_summaries):
     entry["refused_view_ids"].extend(
         v for v in (_vid(o.get("view_id")) for o in refused)
         if v not in entry["refused_view_ids"])
+    if "single_pass_views" in meta or any("capture_passes" in v for v in views):
+        meta["single_pass_views"] = single_pass_views(views)
     meta["finalized"] = True
     return meta
 

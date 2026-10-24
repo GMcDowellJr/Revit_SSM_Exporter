@@ -29,6 +29,11 @@ refused.
 Nothing is hidden: a view whose sidecar carries no timings (a run before P2)
 is reported with the reason, never dropped. Standard library only.
 
+A view whose capture DECLARED the model pass skipped (an annotation-only
+view, vop_interwoven/capture_passes.py) has no model sidecar; its timings are
+read from its annotation sidecar, which carries the same
+``registration_marks`` record. Its skipped phases are absent from it.
+
 Every run writes the report into the run directory, beside views_core, named
 as the run's other dated files are: ``views_timing_<suffix>.csv`` and
 ``views_timing_<suffix>.json``, where ``<suffix>`` is whatever the
@@ -57,6 +62,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vop_interwoven import output_layout  # noqa: E402
+from vop_interwoven.capture_passes import PASS_ANNOTATION, is_single_pass  # noqa: E402
 
 
 # The production MODEL sidecar's own name: "<view name>_<view id>.json".
@@ -64,6 +70,7 @@ from vop_interwoven import output_layout  # noqa: E402
 # the annotation sidecar (<x>_anno.json) carry the same view_id, so matching
 # on "*.json" let whichever the filesystem listed last win (Codex, PR #222).
 _MODEL_SIDECAR_NAME = re.compile(r"_(\d+)\.json$")
+_ANNO_SIDECAR_NAME = re.compile(r"_(\d+)_anno\.json$")
 
 
 def _model_sidecars(run_dir):
@@ -77,13 +84,24 @@ def _model_sidecars(run_dir):
     folder = names[0] if names else output_layout.CAPTURE_DIR[output_layout.V1]
     for path in sorted(glob.glob(os.path.join(run_dir, folder, "*.json"))):
         match = _MODEL_SIDECAR_NAME.search(os.path.basename(path))
-        if match is None:
+        anno = _ANNO_SIDECAR_NAME.search(os.path.basename(path))
+        if anno is not None:
+            # A declared ANNOTATION-ONLY view has no model sidecar; its
+            # annotation sidecar carries the same registration_marks timings
+            # (vop_interwoven/capture_passes.py). Read only when no model
+            # sidecar is beside it, and only on the declaration.
+            if os.path.exists(path[:-len("_anno.json")] + ".json"):
+                continue
+            match = anno
+        elif match is None:
             continue
         try:
             with open(path) as handle:
                 sidecar = json.load(handle)
         except (OSError, ValueError) as ex:
             out.setdefault("_unreadable", []).append("{0}: {1}".format(path, ex))
+            continue
+        if anno is not None and not is_single_pass(sidecar, PASS_ANNOTATION):
             continue
         view_id = sidecar.get("view_id")
         if view_id is None or str(view_id) != match.group(1):

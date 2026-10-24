@@ -1148,10 +1148,12 @@ def process_document_views(
             # captured by the colour-ID process too, not by the geometry
             # annotation raster below. They take the same capture as a model
             # view with NO model elements: nothing is collected for the model
-            # pass (there is no model truth in these views), so its capture is
-            # the registration ticks on white, and the annotation pass paints
-            # the view's own content -- every element in a drafting view or a
-            # legend is owned by the view, so membership puts all of it there.
+            # pass (there is no model truth in these views), and the annotation
+            # pass paints the view's own content -- every element in a drafting
+            # view or a legend is owned by the view, so membership puts all of
+            # it there. When the capture READS the model membership as empty it
+            # runs the annotation pass alone, with no ticks, and declares the
+            # skip (vop_interwoven/capture_passes.py); otherwise both passes.
             stage_a_annotation_only = bool(
                 stage_a_color_id_mode and view_mode == VIEW_MODE_ANNOTATION_ONLY)
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION or stage_a_annotation_only:

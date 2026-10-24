@@ -1,0 +1,2205 @@
+{
+ "_membership": {
+  "annotation": 0,
+  "model": 3,
+  "unresolved": 0
+ },
+ "annotation": {
+  "annotation_bbox_map": {
+   "5001": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.706666666666667,
+       16.28
+      ],
+      [
+       23.413333333333334,
+       16.28
+      ],
+      [
+       23.413333333333334,
+       16.28
+      ],
+      [
+       21.706666666666667,
+       16.28
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5002": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.28,
+       16.706666666666667
+      ],
+      [
+       21.28,
+       16.706666666666667
+      ],
+      [
+       21.28,
+       18.413333333333334
+      ],
+      [
+       21.28,
+       18.413333333333334
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5003": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       76.58666666666666,
+       16.28
+      ],
+      [
+       78.29333333333334,
+       16.28
+      ],
+      [
+       78.29333333333334,
+       16.28
+      ],
+      [
+       76.58666666666666,
+       16.28
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5004": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       78.72,
+       16.706666666666667
+      ],
+      [
+       78.72,
+       16.706666666666667
+      ],
+      [
+       78.72,
+       18.413333333333334
+      ],
+      [
+       78.72,
+       18.413333333333334
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5005": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.706666666666667,
+       58.72
+      ],
+      [
+       23.413333333333334,
+       58.72
+      ],
+      [
+       23.413333333333334,
+       58.72
+      ],
+      [
+       21.706666666666667,
+       58.72
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5006": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.28,
+       56.586666666666666
+      ],
+      [
+       21.28,
+       56.586666666666666
+      ],
+      [
+       21.28,
+       58.29333333333333
+      ],
+      [
+       21.28,
+       58.29333333333333
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5007": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       76.58666666666666,
+       58.72
+      ],
+      [
+       78.29333333333334,
+       58.72
+      ],
+      [
+       78.29333333333334,
+       58.72
+      ],
+      [
+       76.58666666666666,
+       58.72
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5008": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       78.72,
+       56.586666666666666
+      ],
+      [
+       78.72,
+       56.586666666666666
+      ],
+      [
+       78.72,
+       58.29333333333333
+      ],
+      [
+       78.72,
+       58.29333333333333
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5009": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       21.706666666666667,
+       33.0
+      ],
+      [
+       23.413333333333334,
+       33.0
+      ],
+      [
+       23.413333333333334,
+       33.0
+      ],
+      [
+       21.706666666666667,
+       33.0
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5010": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       76.58666666666666,
+       33.0
+      ],
+      [
+       78.29333333333334,
+       33.0
+      ],
+      [
+       78.29333333333334,
+       33.0
+      ],
+      [
+       76.58666666666666,
+       33.0
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5011": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       44.0,
+       16.706666666666667
+      ],
+      [
+       44.0,
+       16.706666666666667
+      ],
+      [
+       44.0,
+       18.413333333333334
+      ],
+      [
+       44.0,
+       18.413333333333334
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   },
+   "5012": {
+    "bbox_3d": {
+     "reason": "annotation is view-specific 2D graphics; it has no model-space extent",
+     "state": "not_applicable"
+    },
+    "bbox_source": "view",
+    "bbox_uv": {
+     "state": "value",
+     "value": [
+      [
+       44.0,
+       56.586666666666666
+      ],
+      [
+       44.0,
+       56.586666666666666
+      ],
+      [
+       44.0,
+       58.29333333333333
+      ],
+      [
+       44.0,
+       58.29333333333333
+      ]
+     ]
+    },
+    "category": "Lines",
+    "element_class": "FakeElement",
+    "membership_basis": "owner_view"
+   }
+  },
+  "annotation_bbox_status": {
+   "bbox_source_counts": {
+    "model": 0,
+    "none": 0,
+    "view": 12
+   },
+   "count": 12,
+   "membership_basis_counts": {
+    "datum_category": 0,
+    "owner_view": 12,
+    "unknown": 0,
+    "view_reference_category": 0
+   },
+   "status": "value",
+   "view_basis_source": {
+    "state": "value",
+    "value": "raster"
+   }
+  },
+  "applied_display_style": "FlatColors",
+  "applied_smooth_edges": false,
+  "capture_integrity": {
+   "capture_faults": [],
+   "completed_by": [
+    "annotation_pass",
+    "registered_capture"
+   ],
+   "marks_still_in_project": 0,
+   "paint_failures": 0,
+   "restore_failures": 0,
+   "rolled_back": true,
+   "status": "value"
+  },
+  "color_assignment_count": 0,
+  "color_assignment_map": {},
+  "failure_reason": null,
+  "frame": {
+   "achieved_export_dpi": 150.0,
+   "actual_h": 1125,
+   "actual_w": 1125,
+   "backoff_stop_reason": null,
+   "dim_check": "pass",
+   "dim_check_attempts": [
+    {
+     "accepted_px": 1125,
+     "actual_h": 1125,
+     "actual_w": 1125,
+     "dim_check": "pass",
+     "dim_read_error": null,
+     "requested_px": 1125
+    }
+   ],
+   "dim_check_ceiling_px": 10000,
+   "dim_read_error": null,
+   "fit_direction": "horizontal",
+   "pixel_size": 1125,
+   "view_scale": 96.0
+  },
+  "membership": {
+   "annotation_count": 12,
+   "basis_counts": {
+    "datum_categories_resolved": [
+     -2000241,
+     -2000240,
+     -2000221,
+     -2000220
+    ],
+    "datum_category": 0,
+    "datum_category_counts": {
+     "OST_GridHeads": 0,
+     "OST_Grids": 0,
+     "OST_LevelHeads": 0,
+     "OST_Levels": 0
+    },
+    "datum_resolution_error": null,
+    "import_not_owned_by_view": 0,
+    "import_owner_unreadable": 0,
+    "no_owner_view": 3,
+    "own_view_reference": 0,
+    "owner_view": 12,
+    "view_reference_categories_resolved": [
+     -2006045,
+     -2000535,
+     -2000279,
+     -2000200,
+     -2000197,
+     -2000196
+    ],
+    "view_reference_category": 0,
+    "view_reference_category_counts": {
+     "OST_CalloutHeads": 0,
+     "OST_Elev": 0,
+     "OST_ElevationMarks": 0,
+     "OST_ReferenceViewer": 0,
+     "OST_SectionHeads": 0,
+     "OST_Viewers": 0
+    },
+    "view_reference_name_unreadable": 0,
+    "view_reference_resolution_error": null
+   },
+   "import_owner_unreadable": [],
+   "membership_rule": "OwnerViewId+datum_category+view_reference_category",
+   "model_count": 3,
+   "schema": "vop.stage_a.pass_membership.v1",
+   "unresolved": [],
+   "unresolved_count": 0
+  },
+  "model_suppression_mode": "external",
+  "not_painted": {
+   "annotation_categories_hidden": {
+    "reason": "AttributeError: '_ProbeView' object has no attribute 'AreAnnotationCategoriesHidden'",
+    "state": "unavailable"
+   },
+   "count_relationship": "not_visible_by_rule and not_visible_in_view count the SAME not_visible_total elements: by_rule is the reason (one per element), not_visible_in_view the per-category breakdown. visibility_unreadable is disjoint: those are painted.",
+   "not_visible_by_rule": {},
+   "not_visible_in_view": {},
+   "not_visible_total": 0,
+   "visibility_unreadable": {}
+  },
+  "orig_view_template_id": -1,
+  "paint_failed_element_ids": [],
+  "palette_reservation": {
+   "blank_ids_painted": [],
+   "excluded_count": 0,
+   "mark_ids_painted": [
+    5001,
+    5002,
+    5003,
+    5004,
+    5005,
+    5006,
+    5007,
+    5008,
+    5009,
+    5010,
+    5011,
+    5012
+   ],
+   "reserved_tick_colour": [
+    139,
+    251,
+    11
+   ],
+   "step": 6,
+   "step_requested": 6
+  },
+  "pass": "annotation",
+  "registration": {
+   "achieved_fpp_ft": 0.05333333333333334,
+   "authored_crop_active": true,
+   "crop_applied": "none",
+   "crop_mode": "authored_else_crop_a",
+   "crop_write": null,
+   "model_crop_px": [
+    1125,
+    844
+   ],
+   "model_crop_snapped_uv": [
+    20.0,
+    15.0,
+    80.0,
+    60.013333333333335
+   ],
+   "rendered_uv": null,
+   "rendered_uv_reason": "the view's authored crop was left as found and no rectangle was handed to Revit, so the rendered rectangle is Revit's choice and must be MEASURED (registration marks), not read from this record",
+   "requested_px_source": "model_crop_px",
+   "sizing_frame": "crop_a"
+  },
+  "registration_marks": {
+   "anno_extent_variant": null,
+   "annotation_crop_mode": "authored_else_crop_a",
+   "annotation_extent_prediction": {
+    "avoid_rects_used": 0,
+    "crop_a_px": [
+     1125.0,
+     843.8
+    ],
+    "exceeds_cap": false,
+    "growth": [
+     1.0,
+     1.0
+    ],
+    "max_axis_px": 10000.0,
+    "state": "value",
+    "union_px": [
+     1125.0,
+     843.8
+    ],
+    "union_uv": [
+     20.0,
+     15.0,
+     80.0,
+     60.0
+    ]
+   },
+   "co_sizing": null,
+   "colour_mode": "shared",
+   "colour_source": "MARK_COLOUR, one reserved colour for every tick; each tick is its own connected component",
+   "crop_shape": {
+    "classification": {
+     "axis_aligned": true,
+     "bbox_matches_crop": true,
+     "bbox_uv": [
+      20.0,
+      15.0,
+      80.0,
+      60.0
+     ],
+     "rectangular": true,
+     "rotation_deg": 0.0,
+     "vertex_count": 4
+    },
+    "loop_count": 1,
+    "loops_uv": [
+     [
+      [
+       20.0,
+       15.0
+      ],
+      [
+       80.0,
+       15.0
+      ],
+      [
+       80.0,
+       60.0
+      ],
+      [
+       20.0,
+       60.0
+      ]
+     ]
+    ],
+    "non_line_curves": 4,
+    "reference": "crop_box",
+    "shape_set": {
+     "state": "value",
+     "value": false
+    },
+    "state": "value",
+    "vertex_count": 4
+   },
+   "faults": [],
+   "frame_bounds": null,
+   "is_documentation_content": false,
+   "layout": {
+    "arm_px": 32.0,
+    "colour": [
+     139,
+     251,
+     11
+    ],
+    "fpp_ft": 0.05333333333333334,
+    "gap_px": 8.0,
+    "inset_px": 24.0,
+    "reference_uv": [
+     20.0,
+     15.0,
+     80.0,
+     60.0
+    ],
+    "state": "value"
+   },
+   "line_style": {
+    "candidates": 3,
+    "default_style": {
+     "id": 7001,
+     "name": "Lines",
+     "projection_line_weight": 3
+    },
+    "hidden": [],
+    "hidden_unreadable": [],
+    "id": 7002,
+    "name": "<Thin Lines>",
+    "not_solid": [
+     {
+      "id": 7004,
+      "name": "<Overhead>",
+      "projection_line_weight": 1
+     }
+    ],
+    "projection_line_weight": 1,
+    "state": "value",
+    "subcategory_hidden_in_view": false,
+    "unreadable": []
+   },
+   "lines_unhidden": {
+    "lines_category_hidden_before": false,
+    "state": "not_needed"
+   },
+   "mark_avoidance": {
+    "annotation_elements": 0,
+    "avoid_rects": 0,
+    "calls_over_threshold": 0,
+    "calls_timed": 0,
+    "excluded_imports": 0,
+    "first_error": null,
+    "no_bbox": 0,
+    "read_errors": 0
+   },
+   "marks": [
+    {
+     "corner": "left_bottom",
+     "id": 5001,
+     "key": "left_bottom_h",
+     "level_uv": 16.28,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.706666666666667,
+       16.28
+      ],
+      [
+       23.413333333333334,
+       16.28
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.706666666666667,
+      23.413333333333334
+     ],
+     "uv0": [
+      21.706666666666667,
+      16.28
+     ],
+     "uv1": [
+      23.413333333333334,
+      16.28
+     ]
+    },
+    {
+     "corner": "left_bottom",
+     "id": 5002,
+     "key": "left_bottom_v",
+     "level_uv": 21.28,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.28,
+       16.706666666666667
+      ],
+      [
+       21.28,
+       18.413333333333334
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.706666666666667,
+      18.413333333333334
+     ],
+     "uv0": [
+      21.28,
+      16.706666666666667
+     ],
+     "uv1": [
+      21.28,
+      18.413333333333334
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5003,
+     "key": "right_bottom_h",
+     "level_uv": 16.28,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       76.58666666666666,
+       16.28
+      ],
+      [
+       78.29333333333334,
+       16.28
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      76.58666666666666,
+      78.29333333333334
+     ],
+     "uv0": [
+      76.58666666666666,
+      16.28
+     ],
+     "uv1": [
+      78.29333333333334,
+      16.28
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5004,
+     "key": "right_bottom_v",
+     "level_uv": 78.72,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       78.72,
+       16.706666666666667
+      ],
+      [
+       78.72,
+       18.413333333333334
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.706666666666667,
+      18.413333333333334
+     ],
+     "uv0": [
+      78.72,
+      16.706666666666667
+     ],
+     "uv1": [
+      78.72,
+      18.413333333333334
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5005,
+     "key": "left_top_h",
+     "level_uv": 58.72,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.706666666666667,
+       58.72
+      ],
+      [
+       23.413333333333334,
+       58.72
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.706666666666667,
+      23.413333333333334
+     ],
+     "uv0": [
+      21.706666666666667,
+      58.72
+     ],
+     "uv1": [
+      23.413333333333334,
+      58.72
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5006,
+     "key": "left_top_v",
+     "level_uv": 21.28,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.28,
+       56.586666666666666
+      ],
+      [
+       21.28,
+       58.29333333333333
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      56.586666666666666,
+      58.29333333333333
+     ],
+     "uv0": [
+      21.28,
+      56.586666666666666
+     ],
+     "uv1": [
+      21.28,
+      58.29333333333333
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5007,
+     "key": "right_top_h",
+     "level_uv": 58.72,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       76.58666666666666,
+       58.72
+      ],
+      [
+       78.29333333333334,
+       58.72
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      76.58666666666666,
+      78.29333333333334
+     ],
+     "uv0": [
+      76.58666666666666,
+      58.72
+     ],
+     "uv1": [
+      78.29333333333334,
+      58.72
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5008,
+     "key": "right_top_v",
+     "level_uv": 78.72,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       78.72,
+       56.586666666666666
+      ],
+      [
+       78.72,
+       58.29333333333333
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      56.586666666666666,
+      58.29333333333333
+     ],
+     "uv0": [
+      78.72,
+      56.586666666666666
+     ],
+     "uv1": [
+      78.72,
+      58.29333333333333
+     ]
+    },
+    {
+     "corner": "left_mid",
+     "id": 5009,
+     "key": "left_mid_h",
+     "level_uv": 33.0,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.706666666666667,
+       33.0
+      ],
+      [
+       23.413333333333334,
+       33.0
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.706666666666667,
+      23.413333333333334
+     ],
+     "uv0": [
+      21.706666666666667,
+      33.0
+     ],
+     "uv1": [
+      23.413333333333334,
+      33.0
+     ]
+    },
+    {
+     "corner": "right_mid",
+     "id": 5010,
+     "key": "right_mid_h",
+     "level_uv": 33.0,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       76.58666666666666,
+       33.0
+      ],
+      [
+       78.29333333333334,
+       33.0
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      76.58666666666666,
+      78.29333333333334
+     ],
+     "uv0": [
+      76.58666666666666,
+      33.0
+     ],
+     "uv1": [
+      78.29333333333334,
+      33.0
+     ]
+    },
+    {
+     "corner": "mid_bottom",
+     "id": 5011,
+     "key": "mid_bottom_v",
+     "level_uv": 44.0,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       44.0,
+       16.706666666666667
+      ],
+      [
+       44.0,
+       18.413333333333334
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.706666666666667,
+      18.413333333333334
+     ],
+     "uv0": [
+      44.0,
+      16.706666666666667
+     ],
+     "uv1": [
+      44.0,
+      18.413333333333334
+     ]
+    },
+    {
+     "corner": "mid_top",
+     "id": 5012,
+     "key": "mid_top_v",
+     "level_uv": 44.0,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       44.0,
+       56.586666666666666
+      ],
+      [
+       44.0,
+       58.29333333333333
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      56.586666666666666,
+      58.29333333333333
+     ],
+     "uv0": [
+      44.0,
+      56.586666666666666
+     ],
+     "uv1": [
+      44.0,
+      58.29333333333333
+     ]
+    }
+   ],
+   "model_suppression": {
+    "element_override_count": 3,
+    "link_category_filters": {
+     "categories": [],
+     "created_filter_ids": [],
+     "failed_categories": [],
+     "reused_filter_ids": [],
+     "state": "not_attempted"
+    },
+    "unreached": [],
+    "unreached_count": 0
+   },
+   "must_be_subtracted": true,
+   "pass": "annotation",
+   "recapture": null,
+   "reference_source": "authored_crop",
+   "restore": {
+    "element_overrides": {
+     "left_behind": [],
+     "non_blank_after": 0,
+     "non_blank_before": 0,
+     "unreadable_after": 0
+    },
+    "marks_still_in_project": [],
+    "mode": "transaction_group_rollback",
+    "rolled_back": true,
+    "status": "RolledBack",
+    "view_membership": {
+     "added": [],
+     "added_count": 0,
+     "after": {
+      "count": 3,
+      "sha1": "30106fe80a55ea8999ea515c940c363dd3407873"
+     },
+     "before": {
+      "count": 3,
+      "sha1": "30106fe80a55ea8999ea515c940c363dd3407873"
+     },
+     "removed": [],
+     "removed_count": 0,
+     "status": "unchanged"
+    },
+    "view_state": {
+     "crop_box": {
+      "status": "restored"
+     },
+     "crop_box_active": {
+      "status": "restored"
+     },
+     "crop_box_visible": {
+      "status": "restored"
+     },
+     "display_style": {
+      "status": "restored"
+     },
+     "split_crop": {
+      "status": "restored"
+     },
+     "view_template_id": {
+      "status": "restored"
+     }
+    }
+   },
+   "schema": "vop.stage_a.registered_capture.v1",
+   "split_crop": {
+    "state": "not_split"
+   },
+   "ticks_outside_crop_loop": [],
+   "timing_partition": [
+    "authored_override_scan",
+    "split_remove",
+    "lines_unhide",
+    "co_sizing_first_attempt",
+    "mark_layout",
+    "marks_create",
+    "model_pass",
+    "suppression",
+    "annotation_pass",
+    "attempt_rollback",
+    "rollback",
+    "restore_element_overrides",
+    "view_membership_readback"
+   ]
+  },
+  "schema": "vop.stage_a.annotation_pass.v1",
+  "smooth_edges_read_error": null,
+  "view_id": 77,
+  "view_template_detach": {
+   "commit_status": null,
+   "detached": false,
+   "detached_on": null,
+   "fault": null,
+   "orig_view_template_id": -1,
+   "primary_view_id": {
+    "reason": "AttributeError: '_ProbeView' object has no attribute 'GetPrimaryViewId'",
+    "state": "unavailable"
+   },
+   "read_back_view_template_id": -1,
+   "target_orig_view_template_id": -1,
+   "target_view_id": 77
+  },
+  "view_template_detached": false
+ },
+ "model": {
+  "applied_display_style": "FlatColors",
+  "applied_show_shadows": "unchanged",
+  "applied_smooth_edges": false,
+  "capture_integrity": {
+   "capture_faults": [],
+   "completed_by": [
+    "model_pass",
+    "registered_capture"
+   ],
+   "marks_still_in_project": 0,
+   "paint_failures": 0,
+   "restore_failures": 0,
+   "rolled_back": true,
+   "status": "value"
+  },
+  "color_assignment_map": {
+   "1001": [
+    252,
+    0,
+    0
+   ],
+   "1002": [
+    0,
+    72,
+    252
+   ],
+   "1003": [
+    252,
+    0,
+    222
+   ]
+  },
+  "dwg_imports_omitted": [
+   {
+    "element_id": null,
+    "reason": "DWG import scan failed; no import was examined (AttributeError: 'list' object has no attribute 'ToElements')",
+    "state": "unavailable"
+   }
+  ],
+  "failed_link_categories": [],
+  "failure_reason": null,
+  "frame": {
+   "achieved_export_dpi": 150.0,
+   "achieved_fpp_ft": 0.05333333333333334,
+   "actual_h": 1125,
+   "actual_w": 1125,
+   "backoff_floor_px": 64,
+   "backoff_max_retries": 2,
+   "backoff_stop_reason": null,
+   "cap_applied": false,
+   "cap_applied_by_cap_axes": false,
+   "crop_px": [
+    1125,
+    844
+   ],
+   "crop_uv": [
+    20.0,
+    15.0,
+    80.0,
+    60.0
+   ],
+   "crop_write": {
+    "authored_crop_active": true,
+    "read_back": {
+     "matches_request": true,
+     "max_deviation_ft": 0.0,
+     "read_back_uv": [
+      20.0,
+      15.0,
+      80.0,
+      60.0
+     ],
+     "requested_uv": [
+      20.0,
+      15.0,
+      80.0,
+      60.0
+     ],
+     "tolerance_ft": 0.002666666666666667
+    },
+    "source": "authored_read",
+    "written": false
+   },
+   "dim_check": "pass",
+   "dim_check_attempts": [
+    {
+     "accepted_px": 1125,
+     "actual_h": 1125,
+     "actual_w": 1125,
+     "dim_check": "pass",
+     "dim_read_error": null,
+     "requested_px": 1125
+    }
+   ],
+   "dim_check_ceiling_px": 10000,
+   "dim_read_error": null,
+   "fit_direction": "horizontal",
+   "floor_applied_to_crop": false,
+   "lattice_corrections": 0,
+   "max_axis_px": 10000,
+   "min_axis_px": 64,
+   "pixel_size": 1125,
+   "pre_cap_px": 1125,
+   "predicted_derived_px": 844,
+   "sizing_frame": "crop_a",
+   "status": "value",
+   "verified_against_revit": false,
+   "view_scale": 96.0
+  },
+  "link_category_color_map": {},
+  "model_crop_offset_uv": [
+   20.0,
+   15.0,
+   -40.0,
+   -30.0
+  ],
+  "model_lines_visible": true,
+  "near_face_w_map": {
+   "host": {
+    "1001": {
+     "bbox_3d": {
+      "reason": "no bbox resolvable for this element",
+      "state": "unavailable"
+     },
+     "category": "Walls",
+     "near_face_w": null,
+     "rotation": {
+      "reason": "no_location",
+      "state": "no_single_rotation"
+     },
+     "source": "HOST",
+     "uv_rect": {
+      "reason": "no bbox resolvable for this element",
+      "state": "unavailable"
+     }
+    },
+    "1002": {
+     "bbox_3d": {
+      "reason": "no bbox resolvable for this element",
+      "state": "unavailable"
+     },
+     "category": "Floors",
+     "near_face_w": null,
+     "rotation": {
+      "reason": "no_location",
+      "state": "no_single_rotation"
+     },
+     "source": "HOST",
+     "uv_rect": {
+      "reason": "no bbox resolvable for this element",
+      "state": "unavailable"
+     }
+    },
+    "1003": {
+     "bbox_3d": {
+      "reason": "no bbox resolvable for this element",
+      "state": "unavailable"
+     },
+     "category": "Walls",
+     "near_face_w": null,
+     "rotation": {
+      "reason": "no_location",
+      "state": "no_single_rotation"
+     },
+     "source": "HOST",
+     "uv_rect": {
+      "reason": "no bbox resolvable for this element",
+      "state": "unavailable"
+     }
+    }
+   },
+   "link": {}
+  },
+  "orig_view_template_id": -1,
+  "paint_failed_element_ids": [],
+  "palette_reservation": {
+   "excluded_count": 1,
+   "reserved_tick_colour": [
+    139,
+    251,
+    11
+   ],
+   "step": 6,
+   "step_requested": 6
+  },
+  "registration_marks": {
+   "anno_extent_variant": null,
+   "annotation_crop_mode": "authored_else_crop_a",
+   "annotation_extent_prediction": {
+    "avoid_rects_used": 0,
+    "crop_a_px": [
+     1125.0,
+     843.8
+    ],
+    "exceeds_cap": false,
+    "growth": [
+     1.0,
+     1.0
+    ],
+    "max_axis_px": 10000.0,
+    "state": "value",
+    "union_px": [
+     1125.0,
+     843.8
+    ],
+    "union_uv": [
+     20.0,
+     15.0,
+     80.0,
+     60.0
+    ]
+   },
+   "co_sizing": null,
+   "colour_mode": "shared",
+   "colour_source": "MARK_COLOUR, one reserved colour for every tick; each tick is its own connected component",
+   "crop_shape": {
+    "classification": {
+     "axis_aligned": true,
+     "bbox_matches_crop": true,
+     "bbox_uv": [
+      20.0,
+      15.0,
+      80.0,
+      60.0
+     ],
+     "rectangular": true,
+     "rotation_deg": 0.0,
+     "vertex_count": 4
+    },
+    "loop_count": 1,
+    "loops_uv": [
+     [
+      [
+       20.0,
+       15.0
+      ],
+      [
+       80.0,
+       15.0
+      ],
+      [
+       80.0,
+       60.0
+      ],
+      [
+       20.0,
+       60.0
+      ]
+     ]
+    ],
+    "non_line_curves": 4,
+    "reference": "crop_box",
+    "shape_set": {
+     "state": "value",
+     "value": false
+    },
+    "state": "value",
+    "vertex_count": 4
+   },
+   "faults": [],
+   "frame_bounds": null,
+   "is_documentation_content": false,
+   "layout": {
+    "arm_px": 32.0,
+    "colour": [
+     139,
+     251,
+     11
+    ],
+    "fpp_ft": 0.05333333333333334,
+    "gap_px": 8.0,
+    "inset_px": 24.0,
+    "reference_uv": [
+     20.0,
+     15.0,
+     80.0,
+     60.0
+    ],
+    "state": "value"
+   },
+   "line_style": {
+    "candidates": 3,
+    "default_style": {
+     "id": 7001,
+     "name": "Lines",
+     "projection_line_weight": 3
+    },
+    "hidden": [],
+    "hidden_unreadable": [],
+    "id": 7002,
+    "name": "<Thin Lines>",
+    "not_solid": [
+     {
+      "id": 7004,
+      "name": "<Overhead>",
+      "projection_line_weight": 1
+     }
+    ],
+    "projection_line_weight": 1,
+    "state": "value",
+    "subcategory_hidden_in_view": false,
+    "unreadable": []
+   },
+   "lines_unhidden": {
+    "lines_category_hidden_before": false,
+    "state": "not_needed"
+   },
+   "mark_avoidance": {
+    "annotation_elements": 0,
+    "avoid_rects": 0,
+    "calls_over_threshold": 0,
+    "calls_timed": 0,
+    "excluded_imports": 0,
+    "first_error": null,
+    "no_bbox": 0,
+    "read_errors": 0
+   },
+   "marks": [
+    {
+     "corner": "left_bottom",
+     "id": 5001,
+     "key": "left_bottom_h",
+     "level_uv": 16.28,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.706666666666667,
+       16.28
+      ],
+      [
+       23.413333333333334,
+       16.28
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.706666666666667,
+      23.413333333333334
+     ],
+     "uv0": [
+      21.706666666666667,
+      16.28
+     ],
+     "uv1": [
+      23.413333333333334,
+      16.28
+     ]
+    },
+    {
+     "corner": "left_bottom",
+     "id": 5002,
+     "key": "left_bottom_v",
+     "level_uv": 21.28,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.28,
+       16.706666666666667
+      ],
+      [
+       21.28,
+       18.413333333333334
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.706666666666667,
+      18.413333333333334
+     ],
+     "uv0": [
+      21.28,
+      16.706666666666667
+     ],
+     "uv1": [
+      21.28,
+      18.413333333333334
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5003,
+     "key": "right_bottom_h",
+     "level_uv": 16.28,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       76.58666666666666,
+       16.28
+      ],
+      [
+       78.29333333333334,
+       16.28
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      76.58666666666666,
+      78.29333333333334
+     ],
+     "uv0": [
+      76.58666666666666,
+      16.28
+     ],
+     "uv1": [
+      78.29333333333334,
+      16.28
+     ]
+    },
+    {
+     "corner": "right_bottom",
+     "id": 5004,
+     "key": "right_bottom_v",
+     "level_uv": 78.72,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       78.72,
+       16.706666666666667
+      ],
+      [
+       78.72,
+       18.413333333333334
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.706666666666667,
+      18.413333333333334
+     ],
+     "uv0": [
+      78.72,
+      16.706666666666667
+     ],
+     "uv1": [
+      78.72,
+      18.413333333333334
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5005,
+     "key": "left_top_h",
+     "level_uv": 58.72,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.706666666666667,
+       58.72
+      ],
+      [
+       23.413333333333334,
+       58.72
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.706666666666667,
+      23.413333333333334
+     ],
+     "uv0": [
+      21.706666666666667,
+      58.72
+     ],
+     "uv1": [
+      23.413333333333334,
+      58.72
+     ]
+    },
+    {
+     "corner": "left_top",
+     "id": 5006,
+     "key": "left_top_v",
+     "level_uv": 21.28,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.28,
+       56.586666666666666
+      ],
+      [
+       21.28,
+       58.29333333333333
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      56.586666666666666,
+      58.29333333333333
+     ],
+     "uv0": [
+      21.28,
+      56.586666666666666
+     ],
+     "uv1": [
+      21.28,
+      58.29333333333333
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5007,
+     "key": "right_top_h",
+     "level_uv": 58.72,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       76.58666666666666,
+       58.72
+      ],
+      [
+       78.29333333333334,
+       58.72
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      76.58666666666666,
+      78.29333333333334
+     ],
+     "uv0": [
+      76.58666666666666,
+      58.72
+     ],
+     "uv1": [
+      78.29333333333334,
+      58.72
+     ]
+    },
+    {
+     "corner": "right_top",
+     "id": 5008,
+     "key": "right_top_v",
+     "level_uv": 78.72,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       78.72,
+       56.586666666666666
+      ],
+      [
+       78.72,
+       58.29333333333333
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      56.586666666666666,
+      58.29333333333333
+     ],
+     "uv0": [
+      78.72,
+      56.586666666666666
+     ],
+     "uv1": [
+      78.72,
+      58.29333333333333
+     ]
+    },
+    {
+     "corner": "left_mid",
+     "id": 5009,
+     "key": "left_mid_h",
+     "level_uv": 33.0,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       21.706666666666667,
+       33.0
+      ],
+      [
+       23.413333333333334,
+       33.0
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      21.706666666666667,
+      23.413333333333334
+     ],
+     "uv0": [
+      21.706666666666667,
+      33.0
+     ],
+     "uv1": [
+      23.413333333333334,
+      33.0
+     ]
+    },
+    {
+     "corner": "right_mid",
+     "id": 5010,
+     "key": "right_mid_h",
+     "level_uv": 33.0,
+     "line_style_applied": true,
+     "orientation": "horizontal",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       76.58666666666666,
+       33.0
+      ],
+      [
+       78.29333333333334,
+       33.0
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      76.58666666666666,
+      78.29333333333334
+     ],
+     "uv0": [
+      76.58666666666666,
+      33.0
+     ],
+     "uv1": [
+      78.29333333333334,
+      33.0
+     ]
+    },
+    {
+     "corner": "mid_bottom",
+     "id": 5011,
+     "key": "mid_bottom_v",
+     "level_uv": 44.0,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       44.0,
+       16.706666666666667
+      ],
+      [
+       44.0,
+       18.413333333333334
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      16.706666666666667,
+      18.413333333333334
+     ],
+     "uv0": [
+      44.0,
+      16.706666666666667
+     ],
+     "uv1": [
+      44.0,
+      18.413333333333334
+     ]
+    },
+    {
+     "corner": "mid_top",
+     "id": 5012,
+     "key": "mid_top_v",
+     "level_uv": 44.0,
+     "line_style_applied": true,
+     "orientation": "vertical",
+     "painted": true,
+     "readback_max_deviation_ft": 0.0,
+     "readback_uv": [
+      [
+       44.0,
+       56.586666666666666
+      ],
+      [
+       44.0,
+       58.29333333333333
+      ]
+     ],
+     "rgb": [
+      139,
+      251,
+      11
+     ],
+     "span_uv": [
+      56.586666666666666,
+      58.29333333333333
+     ],
+     "uv0": [
+      44.0,
+      56.586666666666666
+     ],
+     "uv1": [
+      44.0,
+      58.29333333333333
+     ]
+    }
+   ],
+   "model_suppression": {
+    "element_override_count": 3,
+    "link_category_filters": {
+     "categories": [],
+     "created_filter_ids": [],
+     "failed_categories": [],
+     "reused_filter_ids": [],
+     "state": "not_attempted"
+    },
+    "unreached": [],
+    "unreached_count": 0
+   },
+   "must_be_subtracted": true,
+   "pass": "model",
+   "recapture": null,
+   "reference_source": "authored_crop",
+   "restore": {
+    "element_overrides": {
+     "left_behind": [],
+     "non_blank_after": 0,
+     "non_blank_before": 0,
+     "unreadable_after": 0
+    },
+    "marks_still_in_project": [],
+    "mode": "transaction_group_rollback",
+    "rolled_back": true,
+    "status": "RolledBack",
+    "view_membership": {
+     "added": [],
+     "added_count": 0,
+     "after": {
+      "count": 3,
+      "sha1": "30106fe80a55ea8999ea515c940c363dd3407873"
+     },
+     "before": {
+      "count": 3,
+      "sha1": "30106fe80a55ea8999ea515c940c363dd3407873"
+     },
+     "removed": [],
+     "removed_count": 0,
+     "status": "unchanged"
+    },
+    "view_state": {
+     "crop_box": {
+      "status": "restored"
+     },
+     "crop_box_active": {
+      "status": "restored"
+     },
+     "crop_box_visible": {
+      "status": "restored"
+     },
+     "display_style": {
+      "status": "restored"
+     },
+     "split_crop": {
+      "status": "restored"
+     },
+     "view_template_id": {
+      "status": "restored"
+     }
+    }
+   },
+   "schema": "vop.stage_a.registered_capture.v1",
+   "split_crop": {
+    "state": "not_split"
+   },
+   "ticks_outside_crop_loop": [],
+   "timing_partition": [
+    "authored_override_scan",
+    "split_remove",
+    "lines_unhide",
+    "co_sizing_first_attempt",
+    "mark_layout",
+    "marks_create",
+    "model_pass",
+    "suppression",
+    "annotation_pass",
+    "attempt_rollback",
+    "rollback",
+    "restore_element_overrides",
+    "view_membership_readback"
+   ]
+  },
+  "rotation_read": {
+   "elements_read": 3,
+   "no_single_rotation": 3,
+   "no_single_rotation_by_reason": {
+    "no_location": 3
+   },
+   "rotated": 0,
+   "unavailable": 0
+  },
+  "smooth_edges_read_error": null,
+  "uncolorable_link_categories": [],
+  "view_graphics_state": {
+   "captured_at": "before_view_template_detach_and_suppression",
+   "category_overrides": {
+    "state": "value",
+    "value": {
+     "basis": "categories of the elements the pipeline collected, UNION every top-level category this view reports hidden; the second source is what explains an absence, since a hidden category's elements never reach the view-scoped collection",
+     "categories": {
+      "10": {
+       "halftone": {
+        "state": "value",
+        "value": false
+       },
+       "hidden": {
+        "state": "value",
+        "value": false
+       },
+       "name": {
+        "state": "value",
+        "value": "Walls"
+       },
+       "source": "collected_element"
+      },
+      "11": {
+       "halftone": {
+        "state": "value",
+        "value": false
+       },
+       "hidden": {
+        "state": "value",
+        "value": false
+       },
+       "name": {
+        "state": "value",
+        "value": "Floors"
+       },
+       "source": "collected_element"
+      }
+     },
+     "categories_unreadable_in_document_scan": 0,
+     "document_categories_scanned": {
+      "state": "value",
+      "value": 4
+     },
+     "elements_with_unreadable_category": 0
+    }
+   },
+   "detail_level": {
+    "state": "value",
+    "value": "Fine"
+   },
+   "display_style": {
+    "state": "value",
+    "value": "Wireframe"
+   },
+   "link_instances": {
+    "reason": "no RevitLinkInstance is visible in this view",
+    "state": "not_applicable"
+   },
+   "phase_filter": {
+    "reason": "view exposes no VIEW_PHASE_FILTER parameter",
+    "state": "not_applicable"
+   },
+   "phase_status_presentation": {
+    "reason": "view exposes no VIEW_PHASE_FILTER parameter",
+    "state": "not_applicable"
+   },
+   "schema": "vop.stage_a.view_graphics_state.v1",
+   "underlay": {
+    "state": "value",
+    "value": {
+     "base_level": {
+      "reason": "no underlay level is set on this view",
+      "state": "not_applicable"
+     },
+     "orientation": {
+      "state": "value",
+      "value": "LookingDown"
+     },
+     "top_level": {
+      "reason": "no underlay level is set on this view",
+      "state": "not_applicable"
+     }
+    }
+   },
+   "view_filters": {
+    "reason": "no view filters are applied to this view",
+    "state": "not_applicable"
+   },
+   "view_phase": {
+    "reason": "view exposes no VIEW_PHASE parameter",
+    "state": "not_applicable"
+   },
+   "view_template_id": {
+    "reason": "view has no view template applied",
+    "state": "not_applicable"
+   }
+  },
+  "view_id": 77,
+  "view_specific_imports": [],
+  "view_template_detach": {
+   "commit_status": null,
+   "detached": false,
+   "detached_on": null,
+   "fault": null,
+   "orig_view_template_id": -1,
+   "primary_view_id": {
+    "reason": "AttributeError: '_ProbeView' object has no attribute 'GetPrimaryViewId'",
+    "state": "unavailable"
+   },
+   "read_back_view_template_id": -1,
+   "target_orig_view_template_id": -1,
+   "target_view_id": 77
+  },
+  "view_template_detached": false
+ }
+}

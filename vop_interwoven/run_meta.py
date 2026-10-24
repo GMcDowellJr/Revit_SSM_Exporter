@@ -493,14 +493,45 @@ def view_outcomes(view_summaries):
         if status == "registration_failed" and not reason:
             # A view SUMMARY carries the fault names, not the record.
             reason = ";".join(str(f) for f in s.get("registration_faults") or [])
-        views.append({"view_id": s.get("view_id"), "view_name": s.get("view_name"),
-                      "capture_status": status, "capture_failure_reason": reason})
+        entry = {"view_id": s.get("view_id"), "view_name": s.get("view_name"),
+                 "capture_status": status, "capture_failure_reason": reason}
+        # S4 (vop_interwoven/capture_passes.py): the passes the capture ran
+        # and, on a single pass, the declared skip; why both ran otherwise.
+        # Absent for a view that never read its membership.
+        for key in ("capture_passes", "skipped_pass", "capture_pass_decision"):
+            if key in s:
+                entry[key] = s[key]
+        views.append(entry)
     return views
+
+
+def single_pass_views(views):
+    """PURE. The run-level count of declared single-pass views, by the pass
+    skipped and by reason, from run_meta's ``views``; with the denominator
+    (views whose passes were decided) and why the rest ran both."""
+    decided = [v for v in views or [] if isinstance(v, dict) and "capture_passes" in v]
+    single = [v for v in decided if isinstance(v.get("skipped_pass"), dict)]
+    by_skipped, by_reason, both = {}, {}, {}
+    for v in single:
+        skipped = v["skipped_pass"].get("skipped")
+        reason = v["skipped_pass"].get("reason")
+        by_skipped[skipped] = by_skipped.get(skipped, 0) + 1
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+    for v in decided:
+        if v not in single:
+            key = v.get("capture_pass_decision") or "unrecorded"
+            both[key] = both.get(key, 0) + 1
+    return {"count": len(single), "denominator": len(decided),
+            "denominator_rule": "views whose capture read its membership and decided "
+                                "its passes (capture_passes recorded)",
+            "by_skipped_pass": by_skipped, "by_reason": by_reason,
+            "both_passes_by_decision": both}
 
 
 def finalize_run_meta(meta, view_summaries):
     """The run's per-view outcomes, then ``finalized: true``."""
     meta["views"] = view_outcomes(view_summaries)
+    meta["single_pass_views"] = single_pass_views(meta["views"])
     meta["finalized"] = True
     return meta
 
@@ -523,6 +554,8 @@ def merge_run_metas(metas):
                     key, first.get(key), m.get(key)))
     first["views_requested"] = [v for m in metas for v in m.get("views_requested") or []]
     first["views"] = [v for m in metas for v in m.get("views") or []]
+    if any("single_pass_views" in m for m in metas):
+        first["single_pass_views"] = single_pass_views(first["views"])
     first["finalized"] = all(m.get("finalized") for m in metas)
     first["batches"] = len(metas)
     return first

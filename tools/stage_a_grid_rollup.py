@@ -94,8 +94,20 @@ summary sits beside its denominator.
 
     python tools/stage_a_grid_rollup.py <run> [<run> ...] [--out DIR]
 
+SINGLE-PASS VIEWS (1.4.0, vop_interwoven/capture_passes.py). A view whose
+capture DECLARED one pass skipped is a row like any other, found by the
+grid's own selector (``stage_a_grid.view_sidecars``: the model sidecar, or
+for an annotation-only view its declared ``<view>_anno.json``). Its
+registration_state is ``single_pass`` -- its own state, never ``absent`` --
+and the summary counts these rows under ``single_pass_count`` (by skipped
+pass and reason), out of ``model_only_count``. The appended columns
+``capture_passes``, ``skipped_pass`` and ``skipped_pass_reason`` carry the
+declaration; they are blank for a capture that declared nothing (every run
+before it: both passes). Rows, statuses and the count invariant are
+otherwise unchanged.
+
 Exit 0 when no run is refused and every row is ``gridded`` with registration
-``registered``; 1 for any other row or a refused run; 2 when every run is
+``registered`` or ``single_pass``; 1 for any other row or a refused run; 2 when every run is
 refused, when the count invariant does not hold, or on bad arguments. Rolled
 up per run (no ``--out``), the worst of the runs' codes.
 """
@@ -113,11 +125,12 @@ from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
+from vop_interwoven import capture_passes as cp  # noqa: E402
 from vop_interwoven import capture_floor  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA = "vop.stage_a.grid_rollup.v1"
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.4.0"
 
 CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
@@ -125,7 +138,7 @@ SUMMARY_NAME = "grid_rollup.summary.json"
 ROW_STATUSES = ("gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable",
                 "not_this_run", "no_stage_a_capture", "orphan_sidecar",
                 "sidecar_ambiguous", "below_capture_floor")
-REGISTRATION_STATES = ("registered", "refused", "absent", "unusable")
+REGISTRATION_STATES = ("registered", "refused", "absent", "unusable", "single_pass")
 VIEWS_CORE_STATES = ("value", "absent", "ambiguous", "unreadable", "duplicate_rows",
                      "conflicting")
 
@@ -181,7 +194,10 @@ COLUMNS += (
      # the derivation (<view>.kinds.json)
      "kinds_state", "kinds_reason", "class_map_sha256"]
     + ANNO_CLASS_COLUMNS + MODEL_CLASS_COLUMNS
-    + LEGACY_PARTITION_COLUMNS + LEGACY_SHAPE_COLUMNS)
+    + LEGACY_PARTITION_COLUMNS + LEGACY_SHAPE_COLUMNS
+    # 1.4.0: appended. The passes the capture DECLARED (blank: an undeclared,
+    # pre-single-pass capture, which ran both) and the skipped pass's reason.
+    + ["capture_passes", "skipped_pass", "skipped_pass_reason"])
 
 
 def _err(ex):
@@ -209,7 +225,7 @@ def run_layout(run_arg):
     using the grid's own selector and the grid's own default output folder
     (``output_layout.grid_dir_for_capture``: ``grid/`` beside ``color_id/``,
     ``analysis_grid/`` beside ``color_id_buffer/``)."""
-    sidecars, folder = grid.model_sidecars(run_arg)
+    sidecars, folder = grid.view_sidecars(run_arg)
     folder = Path(folder)
     return sidecars, folder, folder.parent, Path(output_layout.grid_dir_for_capture(folder))
 
@@ -224,9 +240,25 @@ def output_names(capture_folder):
 
 
 def registration_record_path(model_sidecar_path):
-    """``<view>_anno.registered.json``, named by the registration tool."""
+    """``<view>_anno.registered.json``, named by the registration tool, for
+    a view's sidecar: its model sidecar, or a declared annotation-only one."""
     p = Path(model_sidecar_path)
+    if p.stem.endswith(grid.ANNO_SUFFIX):
+        return reg.output_paths(p)[1]
     return reg.output_paths(p.with_name(p.stem + "_anno.json"))[1]
+
+
+def declared_columns(sidecar):
+    """``(columns, single_pass)`` from a sidecar's pass declaration
+    (vop_interwoven/capture_passes.py): blank for an undeclared capture."""
+    passes, skipped, error = cp.declared_passes(sidecar if isinstance(sidecar, dict)
+                                                else {})
+    if passes is None:
+        return {"capture_passes": None, "skipped_pass": None,
+                "skipped_pass_reason": error}, False
+    return {"capture_passes": "|".join(passes),
+            "skipped_pass": (skipped or {}).get("skipped"),
+            "skipped_pass_reason": (skipped or {}).get("reason")}, skipped is not None
 
 
 # --- views_core ------------------------------------------------------------------
@@ -384,6 +416,22 @@ def staleness(model_sidecar_path, record, reg_path, run_id=None, grid_json=None)
     if run_id is not None and record.get("run_id") != run_id:
         reasons.append("the grid was made under run_id {0!r}, not {1!r}".format(
             record.get("run_id"), run_id))
+    if record.get("annotation_sidecar_sha256") is not None and \
+            record.get("capture_passes") == [cp.PASS_ANNOTATION]:
+        # A declared annotation-only grid: its one sidecar and TIFF, and no
+        # registration -- there was nothing to register.
+        if record["annotation_sidecar_sha256"] != grid.sha256_file(model_sidecar_path):
+            reasons.append("annotation_sidecar_sha256 does not match the annotation "
+                           "sidecar on disk")
+        try:
+            tiff = dsc._resolve_tiff_path(Path(model_sidecar_path),
+                                          _load_json(model_sidecar_path))
+            if grid.sha256_file(tiff) != record.get("annotation_tiff_sha256"):
+                reasons.append("annotation_tiff_sha256 does not match the annotation "
+                               "TIFF on disk")
+        except (OSError, ValueError) as ex:
+            reasons.append("the annotation TIFF cannot be hashed now ({0})".format(_err(ex)))
+        return reasons
     if record.get("model_sidecar_sha256") != grid.sha256_file(model_sidecar_path):
         reasons.append("model_sidecar_sha256 does not match the model sidecar on disk")
     if "model_tiff_sha256" in record:
@@ -431,7 +479,8 @@ def staleness(model_sidecar_path, record, reg_path, run_id=None, grid_json=None)
             if usable:
                 reasons.append("the registration record is now registered; the grid "
                                "was made when it was not")
-    elif ra is None and record.get("status") == "value" and reg_now is not None:
+    elif ra is None and record.get("status") == "value" and reg_now is not None \
+            and record.get("capture_passes") != [cp.PASS_MODEL]:
         # A "value" grid reads any record present, so it saw none.
         reasons.append("a registration record exists that the grid was made without")
     elif (ra is None and record.get("status") != "value" and reg_now is not None
@@ -758,11 +807,15 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome, with_key
     """One row for the one model sidecar of a requested view. Every key of
     COLUMNS is present."""
     model_sidecar_path = Path(model_sidecar_path)
-    stem = model_sidecar_path.stem
+    stem = grid.view_stem(model_sidecar_path)
     row = dict((c, None) for c in COLUMNS)
     row.update(run_id=run_id, view_stem=stem)
+    single_pass = False
     try:
-        row["view_id"] = _load_json(model_sidecar_path).get("view_id")
+        sidecar = _load_json(model_sidecar_path)
+        row["view_id"] = sidecar.get("view_id")
+        declared, single_pass = declared_columns(sidecar)
+        row.update(declared)
     except (OSError, ValueError, AttributeError) as ex:
         row["view_id"] = None
         row["reason"] = "the model sidecar cannot be read: " + _err(ex)
@@ -822,8 +875,15 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome, with_key
             row["row_status"] = "grid_refused"
             row["reason"] = record.get("reason") or "grid status {0!r}".format(
                 record.get("status"))
-    row["registration_state"], row["registration_reason"] = registration_state(
-        reg_path)
+    if single_pass:
+        # Its own state: the capture DECLARED one pass skipped, so there is
+        # nothing to register -- not "absent", not "refused".
+        row["registration_state"] = "single_pass"
+        row["registration_reason"] = "the {0} pass was skipped ({1})".format(
+            row["skipped_pass"], row["skipped_pass_reason"])
+    else:
+        row["registration_state"], row["registration_reason"] = registration_state(
+            reg_path)
     state, by_id = views_core
     row.update(views_core_columns(state, by_id, row["view_id"]))
     return row
@@ -872,7 +932,9 @@ def summarise(runs, rows, csv_path):
                   for run in runs for vid, times in sorted(run["duplicate_requested_ids"].items())]
     core_dupes = [r for r in rows if r["views_core_state"] in ("duplicate_rows", "conflicting")]
     gridded = [r for r in rows if r["row_status"] == "gridded"]
-    model_only = [r for r in gridded if r["registration_state"] != "registered"]
+    single = [r for r in gridded if r["registration_state"] == "single_pass"]
+    model_only = [r for r in gridded if r["registration_state"] not in ("registered",
+                                                                          "single_pass")]
     flags = {}
     for r in gridded:
         for f in (r["flags"] or "").split("|"):
@@ -933,6 +995,14 @@ def summarise(runs, rows, csv_path):
             "denominator": len(gridded), "denominator_rule": "gridded rows",
             "count": len(model_only),
             "rule": "gridded rows whose registration_state is not registered"},
+        # 1.4.0: declared single-pass views, their own category.
+        "single_pass_count": {
+            "denominator": len(gridded), "denominator_rule": "gridded rows",
+            "count": len(single),
+            "by_skipped_pass": _counts(single, "skipped_pass", ("model", "annotation")),
+            "by_reason": _counts(single, "skipped_pass_reason", ()),
+            "rule": "gridded rows whose capture declared one pass skipped "
+                    "(registration_state single_pass); not in model_only_count"},
         "flag_counts": {"denominator": len(gridded),
                         "denominator_rule": "gridded rows", "counts": flags},
         "filled_region_views": {
@@ -1055,8 +1125,8 @@ def _report(summary, rows, out, names):
     if refused == len(summary["runs"]):
         print("every run was refused; nothing was rolled up")
         return 2
-    every = all(r["row_status"] == "gridded" and r["registration_state"] == "registered"
-                for r in rows)
+    every = all(r["row_status"] == "gridded"
+                and r["registration_state"] in ("registered", "single_pass") for r in rows)
     return 0 if every and not refused else 1
 
 
