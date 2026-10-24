@@ -360,7 +360,8 @@ def test_a_refused_registration_is_refused_and_the_view_is_model_only(tmp_path):
         "denominator": 3, "denominator_rule": "gridded rows", "count": 2,
         "rule": "gridded rows whose registration_state is not registered"}
     assert summary["registration_state"]["counts"] == {
-        "registered": 1, "refused": 1, "absent": 1, "unusable": 0}
+        "registered": 1, "refused": 1, "absent": 1, "unusable": 0,
+        "single_pass": 0}   # 1.4.0: appended; none of these captures declared one pass
     assert summary["flag_counts"]["counts"]["no_registered_annotation"] == 2
 
 

@@ -30,6 +30,12 @@ geometry path's channel shape (A4), labelled legacy.
 
 A ``<run>`` is a run directory, its capture folder (``color_id/`` or
 ``color_id_buffer/``), or a grid directory (``grid/`` or ``analysis_grid/``).
+
+1.1.0: a grid of a declared single-pass view (vop_interwoven/capture_passes.py)
+holds both layers, the skipped pass's as zeros, so it is derived like any
+other; ``<view>.kinds.json`` carries its ``capture_passes`` / ``skipped_pass``
+and the inventory record counts such views under
+``grid_records.single_pass``, by the pass skipped. Nothing else changes.
 """
 from __future__ import annotations
 
@@ -50,7 +56,7 @@ from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA_KINDS = "vop.stage_a.kinds.v1"
 SCHEMA_INVENTORY = "vop.stage_a.kinds_inventory.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 DEFAULT_CLASS_MAP = Path(__file__).resolve().parent / "maps" / "stage_a_class_map.v1.json"
 INVENTORY_CSV = "kinds_inventory.csv"
@@ -252,7 +258,9 @@ def inventory(grid_dirs, cmap):
             except KindsRefusal as ex:
                 views.append(dict(entry, used=False, reason=str(ex)))
                 continue
-            entry.update(used=True, run_id=rec.get("run_id"), view_id=rec.get("view_id"))
+            entry.update(used=True, run_id=rec.get("run_id"), view_id=rec.get("view_id"),
+                         capture_passes=rec.get("capture_passes"),
+                         skipped_pass=(rec.get("skipped_pass") or {}).get("skipped"))
             views.append(entry)
             keys = rec["ec_keys"]
             sums = dict((f, _key_sums(arr, len(keys), "ec_" + f))
@@ -304,7 +312,12 @@ def write_inventory(rows, views, cmap_info, out_dir, names=None):
         "class_map": {"path": str(cmap_path), "sha256": cmap_sha,
                       "version": cmap.get("version")},
         "grid_records": {"denominator": len(views), "used": len(used),
-                         "not_used": [v for v in views if not v["used"]]},
+                         "not_used": [v for v in views if not v["used"]],
+                         # 1.1.0: used records of a declared single-pass view,
+                         # their own category, by the pass that was skipped.
+                         "single_pass": dict(
+                             (p, sum(1 for v in used if v.get("skipped_pass") == p))
+                             for p in ("model", "annotation"))},
         "kinds": len(rows),
         "kinds_by_layer": dict((lay, sum(1 for r in rows if r["layer"] == lay))
                                for lay in ("model", "annotation")),
@@ -647,6 +660,12 @@ def derive_view(grid_json, cmap_info, out_dir=None):
         record.update(run_id=rec.get("run_id"), view_id=rec.get("view_id"),
                       grid_npz_sha256=rec.get("npz_sha256"),
                       lattice_anchor=rec["grid"].get("lattice_anchor"))
+        if "capture_passes" in rec:
+            # 1.1.0: the capture's declared passes, carried through; the
+            # skipped pass's families are derived from its zero channels.
+            record["capture_passes"] = rec["capture_passes"]
+            if rec.get("skipped_pass") is not None:
+                record["skipped_pass"] = rec["skipped_pass"]
         out, families = class_arrays(rec, arr, cmap)
         derived = derivations(families, out, arr, cmap)
         part, shape = legacy_channel_shape(arr)

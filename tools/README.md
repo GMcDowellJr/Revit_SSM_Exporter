@@ -209,6 +209,11 @@ python tools/register_stage_a_annotation.py path/to/color_id_buffer/
 **Output:** `<anno-stem>.registered.tiff` and `<anno-stem>.registered.json`
 beside the annotation sidecar; the JSON is written last and names the TIFF's
 hash. Exit 0 all registered, 1 any refused, 2 an input unreadable.
+An annotation sidecar that DECLARES the model pass skipped
+(`capture_passes: ["annotation"]`, a single-pass capture,
+`vop_interwoven/capture_passes.py`) gets a record with status `single_pass`
+and no TIFF (exit 0); without the declaration a missing model sidecar is
+still unreadable.
 `decode_stage_a_color_id.py` removes the marks from its own decode of either
 capture (`registration_marks` in its output).
 
@@ -258,9 +263,20 @@ What was NOT gridded is a row like any other:
 | `grid_stale` | a hash the grid recorded (model sidecar, model TIFF, registration record, registered TIFF) no longer matches, the grid was made under another run id, or a registration appeared or became usable after the grid was made |
 | `unreadable` | the grid JSON cannot be parsed; the exception |
 
-`registration_state` is `registered`, `refused` (its refusals), `absent` or
-`unusable`; a gridded row that is not `registered` is counted as model-only
-and keeps the grid's `no_registered_annotation` flag. `frame_predicted_px`,
+`registration_state` is `registered`, `refused` (its refusals), `absent`,
+`unusable` or `single_pass`; a gridded row that is neither `registered` nor
+`single_pass` is counted as model-only and keeps the grid's
+`no_registered_annotation` flag. A `single_pass` row is a view whose capture
+DECLARED one pass skipped (its membership was empty): the grid read its one
+image, flagged it `single_pass` and wrote the skipped pass's channels as
+zeros; the summary counts these under `single_pass_count` and the CSV's
+appended `capture_passes`, `skipped_pass` and `skipped_pass_reason` columns
+carry the declaration. An annotation-only view has no model sidecar; the
+grid's selector (`stage_a_grid.view_sidecars`) finds its declared
+`<view>_anno.json` instead, and places its pixels by the fit of the
+capture's own twelve ticks (whitened before counting); one whose ticks
+cannot be fitted is `grid_refused`, never placed on the nominal crop alone.
+`frame_predicted_px`,
 `frame_actual_px` and `frame_delta_px` are the grid's non-fit-axis frame
 check (blank when unmeasured); `frame_mismatch` and `frame_unmeasured`
 arrive through `flags` and are counted in `flag_counts`. View name, type, scale
