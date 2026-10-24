@@ -1349,6 +1349,48 @@ def _load_json(path):
         return json.load(handle)
 
 
+def _grid_tail(spec, arrays, inputs, record, out_dir, stem, png_px_per_cell):
+    """The accounting, the npz, the PNG and the record's numbers: the end of
+    every gridded view. ``inputs`` is the list ``[model_in, anno_in]``,
+    emptied here so the pixel masks it holds are freed once the accounting
+    has read them (G2)."""
+    model_in, anno_in = inputs
+    del inputs[:]
+    # A1: the element x cell accounting, checked against the dense
+    # channels BEFORE anything is written; a mismatch refuses the view.
+    ec, ec_keys, ec_info = element_cell_accounting(spec, model_in, anno_in)
+    del model_in, anno_in
+    ec_info["invariants"] = ec_invariants(spec, ec, ec_keys, arrays)
+    arrays["inside_crop_a"] = inside_crop_a(spec)
+    arrays["occupancy"] = occupancy(arrays)
+    npz_path = out_dir / (stem + ".grid.npz")
+    npz_write.savez_compressed(npz_path, dict(arrays, **ec))
+    png_path = out_dir / (stem + ".grid.png")
+    render_png(spec, arrays, png_path, px_per_cell=png_px_per_cell)
+    record.update({
+        "status": "value", "grid": spec,
+        "image_totals": dict((k, int(v.sum())) for k, v in arrays.items()
+                             if k not in ("inside_crop_a", "occupancy")),
+        "crop_a_coverage": crop_a_coverage(arrays),
+        "occupancy": dict(occupancy_summary(arrays["occupancy"],
+                                            arrays["inside_crop_a"]),
+                          codes=OCCUPANCY_CODES,
+                          rule="ink: an element pixel with a 4-neighbour of a "
+                               "different colour; occupied at >= {0} ink px per "
+                               "layer".format(OCCUPANCY_MIN_INK_PX)),
+        "npz": npz_path.name, "npz_sha256": sha256_file(npz_path),
+        "npz_bytes": npz_path.stat().st_size,
+        "png": png_path.name,
+        "ec_keys": ec_keys, "ec_rows": ec_info["rows"],
+        "element_cell": dict(ec_info, fields=EC_RULES,
+                             layout="ec_* are 1-D, one entry per (key, cell) "
+                                    "row with any nonzero field; ec_key indexes "
+                                    "ec_keys; ec_i, ec_j are signed cell indices"),
+        "layout": "dense arrays are (cells_h, cells_w); row 0 is j_range[0] (the "
+                  "LOWEST v), column 0 is i_range[0]. ec_* arrays are the "
+                  "element x cell rows (see element_cell)"})
+
+
 def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
     """Grid one view; returns the record written. A refusal is a record too."""
     model_sidecar_path = Path(model_sidecar_path)
@@ -1475,39 +1517,9 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             record["registered_annotation"] = {
                 "record": str(reg_path), "record_sha256": sha256_file(reg_path),
                 "tiff_sha256": registered.get("registered_tiff_sha256")}
-        # A1: the element x cell accounting, checked against the dense
-        # channels BEFORE anything is written; a mismatch refuses the view.
-        ec, ec_keys, ec_info = element_cell_accounting(spec, model_in, anno_in)
+        inputs = [model_in, anno_in]
         del model_in, anno_in, model_masks, model_packed, model_ink
-        ec_info["invariants"] = ec_invariants(spec, ec, ec_keys, arrays)
-        arrays["inside_crop_a"] = inside_crop_a(spec)
-        arrays["occupancy"] = occupancy(arrays)
-        npz_path = out_dir / (stem + ".grid.npz")
-        npz_write.savez_compressed(npz_path, dict(arrays, **ec))
-        png_path = out_dir / (stem + ".grid.png")
-        render_png(spec, arrays, png_path, px_per_cell=png_px_per_cell)
-        record.update({
-            "status": "value", "grid": spec,
-            "image_totals": dict((k, int(v.sum())) for k, v in arrays.items()
-                                 if k not in ("inside_crop_a", "occupancy")),
-            "crop_a_coverage": crop_a_coverage(arrays),
-            "occupancy": dict(occupancy_summary(arrays["occupancy"],
-                                                arrays["inside_crop_a"]),
-                              codes=OCCUPANCY_CODES,
-                              rule="ink: an element pixel with a 4-neighbour of a "
-                                   "different colour; occupied at >= {0} ink px per "
-                                   "layer".format(OCCUPANCY_MIN_INK_PX)),
-            "npz": npz_path.name, "npz_sha256": sha256_file(npz_path),
-            "npz_bytes": npz_path.stat().st_size,
-            "png": png_path.name,
-            "ec_keys": ec_keys, "ec_rows": ec_info["rows"],
-            "element_cell": dict(ec_info, fields=EC_RULES,
-                                 layout="ec_* are 1-D, one entry per (key, cell) "
-                                        "row with any nonzero field; ec_key indexes "
-                                        "ec_keys; ec_i, ec_j are signed cell indices"),
-            "layout": "dense arrays are (cells_h, cells_w); row 0 is j_range[0] (the "
-                      "LOWEST v), column 0 is i_range[0]. ec_* arrays are the "
-                      "element x cell rows (see element_cell)"})
+        _grid_tail(spec, arrays, inputs, record, out_dir, stem, png_px_per_cell)
     except GridRefusal as ex:
         record.update({"status": "refused", "reason": str(ex)})
     with open(json_path, "w", encoding="utf-8") as handle:
