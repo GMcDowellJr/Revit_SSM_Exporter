@@ -606,9 +606,15 @@ def census_run(run_arg):
     # keeping them all for every run of a series is what memory cannot hold.
     # Views are folded in view-id order, so "first seen" is order-free.
     for vid, stem in sorted(gridded, key=lambda vs: _vid_sort(vs[0])):
+        # The view's sidecar: its model sidecar, or for a declared
+        # annotation-only view (no model pass) its annotation sidecar, which
+        # holds no model element.
+        sidecar = folder / (stem + ".json")
+        if not sidecar.exists() and grid.annotation_only_sidecar(
+                folder / (stem + grid.ANNO_SUFFIX + ".json")):
+            sidecar = folder / (stem + grid.ANNO_SUFFIX + ".json")
         try:
-            view = view_census(folder / (stem + ".json"),
-                               Path(grid_dir) / (stem + ".grid.json"))
+            view = view_census(sidecar, Path(grid_dir) / (stem + ".grid.json"))
         except CensusRefusal as ex:
             refusals.append(str(ex))
             continue
@@ -1192,9 +1198,13 @@ def _tiffs(sidecar, reg_path, located=None):
         unresolved["model TIFF of " + sidecar.name] = _err(ex)
     if Path(reg_path).is_file():
         try:
-            found.append(grid._resolve_recorded(_field(reg_path, "registered_tiff"),
-                                                Path(reg_path).parent,
-                                                "the registered annotation TIFF"))
+            recorded = _field(reg_path, "registered_tiff")
+            # A declared single-pass view's record names no TIFF by design:
+            # there was nothing to register (vop_interwoven/capture_passes.py).
+            if not (recorded is None
+                    and _load_json(reg_path).get("status") == "single_pass"):
+                found.append(grid._resolve_recorded(recorded, Path(reg_path).parent,
+                                                    "the registered annotation TIFF"))
         except (OSError, ValueError, AttributeError, grid.GridRefusal) as ex:
             unresolved["registered TIFF of " + Path(reg_path).name] = _err(ex)
     return found, unresolved, locators
@@ -1250,8 +1260,9 @@ def census_inputs(files, previous=None, locators_out=None):
         sidecar = Path(sidecar)
         paths.add(str(sidecar))
         reg_path = rollup.registration_record_path(sidecar)
-        for extra in (reg_path, files.grid_dir / (sidecar.stem + ".grid.json"),
-                      files.grid_dir / (sidecar.stem + ".grid.npz")):
+        stem = grid.view_stem(sidecar)
+        for extra in (reg_path, files.grid_dir / (stem + ".grid.json"),
+                      files.grid_dir / (stem + ".grid.npz")):
             if Path(extra).is_file():
                 paths.add(str(extra))
         views.append((sidecar, reg_path))

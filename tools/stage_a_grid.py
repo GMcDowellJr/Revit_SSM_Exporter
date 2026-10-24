@@ -39,6 +39,17 @@ OCCUPANCY (item 3): a cell is model and/or annotation by INK -- element pixels
 with a differently coloured neighbour -- not by filled area. See
 OCCUPANCY_MIN_INK_PX.
 
+SINGLE-PASS VIEWS (2.1.0, vop_interwoven/capture_passes.py): a view whose
+capture DECLARES one pass skipped is gridded from its one image and flagged
+``single_pass`` (never ``no_registered_annotation``); the skipped pass's
+channels are written as zeros and the record carries ``capture_passes`` and
+``skipped_pass``. A model-only view keeps its model sidecar and gains zero
+``anno_*`` channels. An annotation-only view has no model sidecar: its
+``<view>_anno.json`` is selected (view_sidecars), the grid files are named by
+the view stem, its pixels are placed by ``single_pass_frame.crop_uv`` and the
+image size (the nominal mapping), and its model layer is an empty model
+pass's white image. Two-pass views grid exactly as in 2.0.0.
+
     python tools/stage_a_grid.py <run dir | color_id_buffer dir> [--out DIR]
 """
 from __future__ import annotations
@@ -63,11 +74,12 @@ from vop_interwoven import output_layout  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
 from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa: E402
+from vop_interwoven import capture_passes as cp  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.stage_a.analysis_grid.v2"
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = "2.1.0"
 
 # Greg, 2026-09-30: 2 and 8 px per cell "for starters", expressed as what they
 # are -- a cell must hold whole pixels to be measured at all, and a mapping
@@ -119,6 +131,7 @@ PNG_OVERLAP = (255, 165, 0)
 PNG_CROP_A_EDGE = (128, 128, 128)
 
 _MODEL_SIDECAR_NAME = re.compile(r"_(\d+)\.json$")
+ANNO_SUFFIX = "_anno"
 
 
 class GridRefusal(Exception):
@@ -416,9 +429,12 @@ def lattice_origin(crop_min_uv, cell_ft):
     return out
 
 
-def build_spec(sidecar, rgb, run_config, lattice=None, located=None):
+def build_spec(sidecar, rgb, run_config, lattice=None, located=None, single_pass=False):
     """The GridSpec for one view, or raises GridRefusal. ``located``: as
-    choose_mapping takes it."""
+    choose_mapping takes it. ``single_pass``: the capture DECLARES one pass
+    (vop_interwoven/capture_passes.py), so the view has no second image to
+    register and is flagged ``single_pass``, never
+    ``no_registered_annotation``."""
     frame = frame_record(sidecar)
     scale = frame.get("view_scale")
     crop = frame.get("crop_uv")
@@ -477,7 +493,9 @@ def build_spec(sidecar, rgb, run_config, lattice=None, located=None):
         flags.append("coarse")
     if frame.get("cap_applied"):
         flags.append("capped")
-    if lattice is None:
+    if single_pass:
+        flags.append("single_pass")
+    elif lattice is None:
         flags.append("no_registered_annotation")
     if spec["split_bands_uv"] is not None:
         flags.append("split_crop")
@@ -1351,9 +1369,9 @@ def _load_json(path):
 
 def _grid_tail(spec, arrays, inputs, record, out_dir, stem, png_px_per_cell):
     """The accounting, the npz, the PNG and the record's numbers: the end of
-    every gridded view. ``inputs`` is the list ``[model_in, anno_in]``,
-    emptied here so the pixel masks it holds are freed once the accounting
-    has read them (G2)."""
+    every gridded view, whichever passes it holds. ``inputs`` is the list
+    ``[model_in, anno_in]``, emptied here so the pixel masks it holds are
+    freed once the accounting has read them (G2)."""
     model_in, anno_in = inputs
     del inputs[:]
     # A1: the element x cell accounting, checked against the dense
@@ -1391,8 +1409,201 @@ def _grid_tail(spec, arrays, inputs, record, out_dir, stem, png_px_per_cell):
                   "element x cell rows (see element_cell)"})
 
 
+# --- single-pass captures (vop_interwoven/capture_passes.py) -------------------
+#
+# A view whose membership proved one pass empty was captured by the other pass
+# alone, and its sidecar DECLARES it (``capture_passes``, ``skipped_pass``).
+# The grid reads that one image directly. The skipped pass's channels are
+# written as ZEROS -- the pass was measured empty by its membership -- so every
+# reader sees both layers, and the record carries the declaration through.
+# A missing file is never read as a single pass: without the declaration a
+# model sidecar with no registration is ``no_registered_annotation`` and an
+# annotation sidecar with no model sidecar is not gridded, as before.
+
+def declared_single_pass(sidecar, record, kept):
+    """True when ``sidecar`` declares a single pass that kept ``kept``; the
+    declaration goes into ``record``. A malformed declaration is refused."""
+    passes, skipped, error = cp.declared_passes(sidecar)
+    if error is not None:
+        raise GridRefusal("the sidecar's pass declaration is malformed: " + error)
+    if passes is None:
+        return False
+    record["capture_passes"] = passes
+    if skipped is not None:
+        record["skipped_pass"] = skipped
+    return passes == [kept]
+
+
+def view_stem(sidecar_path):
+    """The view's file stem: a model sidecar's own, or an annotation-only
+    sidecar's without its ``_anno`` suffix -- what the grid files are named by."""
+    stem = Path(sidecar_path).stem
+    return stem[:-len(ANNO_SUFFIX)] if stem.endswith(ANNO_SUFFIX) else stem
+
+
+def annotation_only_sidecar(path):
+    """True when ``path`` is an ``<x>_anno.json`` that DECLARES an
+    annotation-only capture and has no model sidecar beside it."""
+    path = Path(path)
+    if not path.stem.endswith(ANNO_SUFFIX) or path.with_name(
+            view_stem(path) + ".json").exists():
+        return False
+    try:
+        return cp.is_single_pass(_load_json(path), cp.PASS_ANNOTATION)
+    except (OSError, ValueError):
+        return False
+
+
+def refuse_beside_annotation_only(model_sidecar_path):
+    """A model sidecar beside an annotation sidecar that declares the model
+    pass skipped is from another capture of the view; neither is guessed."""
+    p = Path(model_sidecar_path)
+    anno = p.with_name(p.stem + ANNO_SUFFIX + ".json")
+    if anno.exists():
+        try:
+            declared = cp.is_single_pass(_load_json(anno), cp.PASS_ANNOTATION)
+        except (OSError, ValueError):
+            declared = False
+        if declared:
+            raise GridRefusal("{0} declares an annotation-only capture of this view, so "
+                              "this model sidecar is from another capture".format(anno.name))
+
+
+def empty_annotation_layer(spec, arrays, shape, record, model_ink):
+    """The annotation channels of a declared model-only view: zero in every
+    cell, with zero black / filled-region / overlap records."""
+    zeros = np.zeros(shape, dtype=bool)
+    names = ("element", "element_ink", "filled_region", "white", "black",
+             "black_assigned", "residual", "total")
+    arrays.update(("anno_" + k, v) for k, v in count_cells(
+        spec, dict((k, zeros) for k in names)).items())
+    arrays.update(count_cells(spec, {"model_ink_under_anno": zeros,
+                                     "model_ink_under_filled_region": zeros}))
+    reason = "single_pass: the annotation pass was skipped (membership_empty)"
+    record["black"] = {"total": 0, "assigned": 0, "unassigned": 0, "ambiguous": 0,
+                       "reason": reason}
+    record["filled_region"] = {"element_class_recorded": None, "elements": 0, "px": 0,
+                               "reason": reason}
+    record["model_ink_under_annotation"] = {
+        "model_ink_px": int(model_ink.sum()), "under_annotation_px": 0,
+        "under_filled_region_px": 0, "fraction_under_annotation": (
+            0.0 if int(model_ink.sum()) else None),
+        "per_cell": "model_ink_under_anno / (model_host_ink + model_dwg_ink "
+                    "+ model_link_ink) in the npz"}
+    record["registered_annotation"] = {"status": "single_pass", "reason": reason}
+
+
+# The model sidecar an annotation-only view's empty model layer is decoded
+# from: no colours, no links, no ticks.
+_EMPTY_MODEL_SIDECAR = {"color_assignment_map": {}, "link_category_color_map": {},
+                        "near_face_w_map": {"host": {}, "link": {}}}
+
+
+def grid_annotation_only(anno_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
+    """Grid a declared ANNOTATION-ONLY view from its one image.
+
+    The image is its own lattice: ``single_pass_frame.crop_uv`` (the
+    rectangle the capture's frame-bound lines fix the export to) and the
+    image's size give the nominal mapping, exactly as a model image's
+    recorded crop does. No tick fit exists, so the uncertainty is
+    unmeasured, and ``frame_check`` measures the non-fit axis against
+    ``crop_px``. The model layer is the white image an empty model pass
+    renders: every model channel but ``white`` and ``total`` counts zero."""
+    anno_sidecar_path = Path(anno_sidecar_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = view_stem(anno_sidecar_path)
+    run_meta = run_meta if run_meta is not None else dsc.find_run_meta(anno_sidecar_path)
+    run_config = (run_meta or {}).get("config") or {}
+    record = {"schema": SCHEMA, "tool_version": TOOL_VERSION,
+              "run_id": (run_meta or {}).get("run_id"),
+              "annotation_sidecar": str(anno_sidecar_path),
+              "annotation_sidecar_sha256": sha256_file(anno_sidecar_path),
+              "png_rule": "the occupancy classes (ink, item 3)"}
+    json_path = out_dir / (stem + ".grid.json")
+    try:
+        anno = _load_json(anno_sidecar_path)
+        record["view_id"] = anno.get("view_id")
+        if not declared_single_pass(anno, record, cp.PASS_ANNOTATION):
+            raise GridRefusal("the annotation sidecar does not declare an annotation-only "
+                              "capture, and no model sidecar is beside it")
+        if anno_sidecar_path.with_name(stem + ".json").exists():
+            raise GridRefusal("a model sidecar sits beside a declared annotation-only "
+                              "capture; it is from another capture of the view")
+        frame_extra = anno.get("single_pass_frame")
+        if not isinstance(frame_extra, dict) or not frame_extra.get("crop_uv"):
+            raise GridRefusal("the annotation-only capture records no single_pass_frame, "
+                              "so its pixels have no place in view UV")
+        record["capture_faults"] = {"annotation": check_capture_integrity(
+            anno, "annotation")}
+        bbox_status = anno.get("annotation_bbox_status")
+        if not isinstance(bbox_status, dict) or bbox_status.get("status") != "value":
+            raise GridRefusal(
+                "the annotation bbox map is unavailable ({0}): black pixels and "
+                "filled regions cannot be attributed".format(
+                    (bbox_status or {}).get("reason") or bbox_status))
+        tiff = dsc._resolve_tiff_path(anno_sidecar_path, anno)
+        record["annotation_tiff_sha256"] = sha256_file(tiff)
+        rgb = dsc._load_rgb_array(tiff)
+        h, w = rgb.shape[:2]
+        # The annotation sidecar's frame, completed with the lattice it was
+        # sized on: what a model sidecar's frame carries.
+        view = dict(anno, frame=dict(frame_record(anno), **frame_extra))
+        spec = build_spec(view, rgb, run_config, single_pass=True)
+        white = np.full((h, w, 3), 255, dtype=np.uint8)
+        model_masks, _ids, model_packed, decode_map = model_pixels(
+            _EMPTY_MODEL_SIDECAR, white)
+        del white, _ids
+        arrays = dict(("model_" + k, v) for k, v in count_cells(spec, model_masks).items())
+        _keep_masks(model_masks, ACCOUNTING_MODEL_MASKS)
+        arrays["crop_a_px"] = count_cells(spec, {"crop_a_px": crop_a_pixel_mask(
+            spec, spec["crop_uv"], w, h)})["crop_a_px"]
+        model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
+        excluded = [int(m["id"]) for m in (anno.get("registration_marks") or {}).get(
+            "marks") or [] if m.get("id") is not None]
+        anno_masks, anno_info, anno_ids, black_ids, anno_colours, anno_packed = \
+            anno_pixels(anno, rgb, excluded, spec=spec, canvas_origin=(0, 0),
+                        return_packed=True, black_ids_assigned=True)
+        del rgb, anno_ids
+        arrays.update(("anno_" + k, v) for k, v in count_cells(spec, anno_masks).items())
+        cover = anno_masks["element"] | anno_masks["black_assigned"]
+        arrays.update(count_cells(spec, {
+            "model_ink_under_anno": model_ink & cover,
+            "model_ink_under_filled_region": model_ink & anno_masks["filled_region"]}))
+        _keep_masks(anno_masks, ACCOUNTING_ANNO_MASKS)
+        model_in = {"sidecar": _EMPTY_MODEL_SIDECAR, "packed": model_packed,
+                    "decode_map": decode_map, "masks": model_masks, "cover": cover}
+        anno_in = {"sidecar": anno, "packed": anno_packed,
+                   "black_ids_assigned": black_ids, "colour_map": anno_colours,
+                   "masks": anno_masks, "origin": (0, 0),
+                   "black_by_element": anno_info["black"].get("by_element") or {}}
+        del anno_packed, black_ids, anno_masks, cover
+        record["black"] = anno_info["black"]
+        record["filled_region"] = anno_info["filled_region"]
+        record["model_ink_under_annotation"] = {
+            "model_ink_px": 0, "under_annotation_px": 0, "under_filled_region_px": 0,
+            "fraction_under_annotation": None,
+            "per_cell": "model_ink_under_anno / (model_host_ink + model_dwg_ink "
+                        "+ model_link_ink) in the npz"}
+        record["registered_annotation"] = {
+            "status": "single_pass",
+            "reason": "single_pass: the model pass was skipped (membership_empty); the "
+                      "annotation image is the view's lattice"}
+        inputs = [model_in, anno_in]
+        del model_in, anno_in, model_masks, model_packed, model_ink
+        _grid_tail(spec, arrays, inputs, record, out_dir, stem, png_px_per_cell)
+    except GridRefusal as ex:
+        record.update({"status": "refused", "reason": str(ex)})
+    with open(json_path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, indent=2, sort_keys=True, default=str)
+    return record
+
+
 def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
-    """Grid one view; returns the record written. A refusal is a record too."""
+    """Grid one view; returns the record written. A refusal is a record too.
+    A declared annotation-only sidecar is gridded by grid_annotation_only."""
+    if annotation_only_sidecar(model_sidecar_path):
+        return grid_annotation_only(model_sidecar_path, out_dir, run_meta, png_px_per_cell)
     model_sidecar_path = Path(model_sidecar_path)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1408,6 +1619,9 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
     try:
         sidecar = _load_json(model_sidecar_path)
         record["view_id"] = sidecar.get("view_id")
+        model_only = declared_single_pass(sidecar, record, cp.PASS_MODEL)
+        if not model_only:
+            refuse_beside_annotation_only(model_sidecar_path)
         record["capture_faults"] = {"model": check_capture_integrity(sidecar, "model")}
         tiff = dsc._resolve_tiff_path(model_sidecar_path, sidecar)
         record["model_tiff_sha256"] = sha256_file(tiff)
@@ -1420,7 +1634,9 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                                             packed) if payload is not None else None)
         reg_path = Path(output_layout.registered_paths(
             model_sidecar_path.with_name(stem + "_anno.json"))[1])
-        registered = _load_json(reg_path) if reg_path.exists() else None
+        # A declared model-only capture has no annotation pass to register.
+        registered = (_load_json(reg_path) if reg_path.exists() and not model_only
+                      else None)
         lattice = None
         if registered is not None:
             # register_stage_a_annotation writes "registered" or "refused".
@@ -1433,7 +1649,8 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 anno_sidecar_path = _check_registration_sources(
                     registered, reg_path, model_sidecar_path,
                     record["model_tiff_sha256"])
-        spec = build_spec(sidecar, rgb, run_config, lattice=lattice, located=located)
+        spec = build_spec(sidecar, rgb, run_config, lattice=lattice, located=located,
+                          single_pass=model_only)
         model_masks, model_ids, model_packed, decode_map = model_pixels(sidecar, rgb,
                                                                         packed=packed)
         # Freed at their last use (G2): the decoded ids (the keys come from
@@ -1517,6 +1734,10 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             record["registered_annotation"] = {
                 "record": str(reg_path), "record_sha256": sha256_file(reg_path),
                 "tiff_sha256": registered.get("registered_tiff_sha256")}
+        if model_only:
+            # The skipped annotation pass counts ZERO in every annotation
+            # channel: measured empty by its membership, not unmeasured.
+            empty_annotation_layer(spec, arrays, (h, w), record, model_ink)
         inputs = [model_in, anno_in]
         del model_in, anno_in, model_masks, model_packed, model_ink
         _grid_tail(spec, arrays, inputs, record, out_dir, stem, png_px_per_cell)
@@ -1542,6 +1763,18 @@ def model_sidecars(folder):
         folder = found[0]
     return sorted(p for p in folder.glob("*.json")
                   if _MODEL_SIDECAR_NAME.search(p.name)), folder
+
+
+def view_sidecars(folder):
+    """``(paths, capture folder)``: every model sidecar (model_sidecars), and
+    every annotation sidecar that DECLARES an annotation-only capture and has
+    no model sidecar beside it -- one sidecar per captured view. Only an
+    annotation sidecar with no model sibling is opened to read its
+    declaration."""
+    paths, folder = model_sidecars(folder)
+    anno = [p for p in sorted(Path(folder).glob("*" + ANNO_SUFFIX + ".json"))
+            if annotation_only_sidecar(p)]
+    return sorted(paths + anno), folder
 
 
 def grid_job(path, out, run_meta, png_px_per_cell):
@@ -1583,7 +1816,7 @@ def plan(run, out=None, png_px_per_cell=4):
     """main()'s work as a stage_a_jobs.Plan: one grid_job per model sidecar,
     then the largest element x cell tables from the gathered results."""
     from tools import stage_a_jobs
-    paths, folder = model_sidecars(run)
+    paths, folder = view_sidecars(run)
     if not paths:
         return stage_a_jobs.Plan(lines=["no model sidecars under {0}".format(folder)],
                                  early=2)
