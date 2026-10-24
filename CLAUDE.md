@@ -237,21 +237,23 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
 - **A pass whose membership is empty is not run** (2026-10-22,
   `vop_interwoven/capture_passes.py`, the one predicate). The registered
   capture reads the membership split first; a pass whose count READS 0 is
-  skipped with no ticks, no mark layout or avoidance, no Lines unhide, no
-  suppression, and no TIFF or sidecar for it. Unknown is never empty: an
-  unreadable count, an unresolved element, a category resolution error or
-  pipeline model elements the membership lacks run both. The model pass is
-  skipped only on a view with no crop region (drafting views, legends),
-  whose frame-bound lines fix the annotation export to crop A without a
-  tick fit; a cropped view with no model members still runs both
-  (`model_empty_frame_needs_ticks`). The skip is DECLARED --
+  skipped with no TIFF or sidecar for it and no white suppression. Unknown
+  is never empty: an unreadable count, an unresolved element, a category
+  resolution error or pipeline model elements the membership lacks run
+  both. The model pass is skipped only on a view with no crop region
+  (drafting views, legends); a cropped view with no model members still
+  runs both (`model_empty_frame_needs_ticks`). An ANNOTATION-only capture
+  KEEPS its twelve ticks (and so the capture floor), and the grid places
+  its pixels by their fit, refusing it when they will not fit: the
+  frame-bound lines alone left 3 of 619 views (runs 20261023T1351/T1517)
+  14-16 % off crop A, the axes in ratio, so `frame_check` passed. A
+  MODEL-only capture draws no ticks (its export is its crop). The skip is DECLARED --
   `capture_passes` in every sidecar, `skipped_pass` (with the counts) and,
   for annotation-only, `single_pass_frame` (crop_uv, crop_px, the lattice)
   -- and run_meta carries both per view plus `single_pass_views`. Readers
   never infer a skip from a missing file: registration writes status
   `single_pass`, the grid flags `single_pass` and writes the skipped pass's
   channels as zeros, the roll-up's `registration_state` is `single_pass`.
-  A single-pass view is not refused by the capture floor (the ticks' rule).
 - **A recapture list's `run_dir` that does not exist is refused**, naming it
   and the finder's `scanned_dir` (a renamed export folder leaves every
   run_meta's recorded path stale); a list entry may carry its own `reason`.

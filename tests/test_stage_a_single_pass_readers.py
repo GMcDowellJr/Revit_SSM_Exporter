@@ -32,7 +32,7 @@ from tools import register_stage_a_annotation as reg
 from tools import stage_a_grid as grid
 from vop_interwoven import capture_passes as cp
 from vop_interwoven.stage_a_registered_capture import (
-    _no_ticks, _registration_payload, single_pass_frame)
+    _no_ticks, _registration_payload, single_pass_frame)  # noqa: F401
 from vop_interwoven.stage_a_registration import MARK_COLOUR, registration_mark_segments
 
 PX_PER_FT = 12.0
@@ -46,28 +46,41 @@ ELEMENTS = {50: ((40, 8, 16), (10.0, 10.0, 14.0, 12.0)),
 STEM = "Drafting_77"
 
 
-def px(u):
-    return PX_PER_FT * (u - CROP[0])
+# The EXPORT EXTENT the W x H image covers: crop A when the frame-bound
+# lines fix it, as they did on 616 of 619 real views; GROWN 16 % about its
+# centre, same aspect, as the other 3 exported (runs 20261023T1351, T1517 --
+# the baseline's tick fit read 15.7-16.1 px/cell where crop A says 18.7, and
+# frame_check, which compares the axes' ratio, passed).
+def grown(factor):
+    cu, cv = (CROP[0] + CROP[2]) / 2.0, (CROP[1] + CROP[3]) / 2.0
+    hw, hh = (CROP[2] - CROP[0]) * factor / 2.0, (CROP[3] - CROP[1]) * factor / 2.0
+    return (cu - hw, cv - hh, cu + hw, cv + hh)
 
 
-def py(v):
-    return -PX_PER_FT * (v - CROP[3])
+def px(u, ext=CROP):
+    return W * (u - ext[0]) / (ext[2] - ext[0])
 
 
-def _fill(img, rect, colour):
+def py(v, ext=CROP):
+    return -H * (v - ext[3]) / (ext[3] - ext[1])
+
+
+def _fill(img, rect, colour, ext=CROP):
     u0, v0, u1, v1 = rect
-    img[int(round(py(v1))):int(round(py(v0))), int(round(px(u0))):int(round(px(u1)))] = colour
+    img[int(round(py(v1, ext))):int(round(py(v0, ext))),
+        int(round(px(u0, ext))):int(round(px(u1, ext)))] = colour
 
 
-def _tick(img, seg):
+def _tick(img, seg, ext=CROP):
+    px_, py_ = (lambda u: px(u, ext)), (lambda v: py(v, ext))
     if seg["orientation"] == "horizontal":
-        yc = py(seg["level_uv"])
-        xs = sorted(px(u) for u in seg["span_uv"])
+        yc = py_(seg["level_uv"])
+        xs = sorted(px_(u) for u in seg["span_uv"])
         img[int(round(yc - 1)):int(round(yc + 1)), int(round(xs[0])):int(round(xs[1]))] = \
             MARK_COLOUR
     else:
-        xc = px(seg["level_uv"])
-        ys = sorted(py(v) for v in seg["span_uv"])
+        xc = px_(seg["level_uv"])
+        ys = sorted(py_(v) for v in seg["span_uv"])
         img[int(round(ys[0])):int(round(ys[1])), int(round(xc - 1)):int(round(xc + 1))] = \
             MARK_COLOUR
 
@@ -95,14 +108,20 @@ def _frame():
             "actual_w": W, "actual_h": H, "dim_check": "pass"}
 
 
-def _anno_image(with_ticks, marks):
+def _anno_image(with_ticks, marks, ext=CROP):
     img = np.full((H, W, 3), 255, dtype=np.uint8)
     for _eid, (colour, rect) in ELEMENTS.items():
-        _fill(img, rect, colour)
+        _fill(img, rect, colour, ext)
     if with_ticks:
         for m in marks:
-            _tick(img, m)
+            _tick(img, m, ext)
     return img
+
+
+def _marks_record(marks):
+    return {"marks": {"created": marks, "layout": {"arm_px": 32}},
+            "mark_reference_source": "no_crop_region_frame", "faults": [],
+            "restore": {"rolled_back": True}}
 
 
 def _anno_sidecar(tiff, marks_record, view_id=77):
@@ -122,20 +141,18 @@ def _run_meta(folder):
         {"run_id": "RUN_T", "config": {"cell_size_paper_in": CELL_IN}}))
 
 
-def write_s0_view(folder, stem=STEM, view_id=77, run_meta=True):
+def write_s0_view(folder, stem=STEM, view_id=77, run_meta=True, ext=CROP):
     """The two-pass shape: model = ticks on white, annotation = elements +
-    ticks, both on crop A at 12 px/ft."""
+    ticks, both W x H over the export extent ``ext``."""
     folder.mkdir(parents=True, exist_ok=True)
     marks = _marks()
-    record = {"marks": {"created": marks, "layout": {"arm_px": 32}},
-              "mark_reference_source": "no_crop_region_frame", "faults": [],
-              "restore": {"rolled_back": True}}
+    record = _marks_record(marks)
     model = np.full((H, W, 3), 255, dtype=np.uint8)
     for m in marks:
-        _tick(model, m)
+        _tick(model, m, ext)
     model_tiff, anno_tiff = folder / (stem + ".tiff"), folder / (stem + "_anno.tiff")
     Image.fromarray(model).save(str(model_tiff), format="TIFF")
-    Image.fromarray(_anno_image(True, marks)).save(str(anno_tiff), format="TIFF")
+    Image.fromarray(_anno_image(True, marks, ext)).save(str(anno_tiff), format="TIFF")
     model_side = {"view_id": view_id, "tiff_path": str(model_tiff),
                   "frame": dict(_frame(), crop_uv=list(CROP), sizing_frame="crop_a",
                                 crop_px=[W, H], status="value"),
@@ -154,14 +171,16 @@ def write_s0_view(folder, stem=STEM, view_id=77, run_meta=True):
     return folder / (stem + ".json"), folder / (stem + "_anno.json"), marks
 
 
-def write_single_pass_view(folder, declare=True, stem=STEM, view_id=77, run_meta=True):
-    """The single-pass shape: the annotation image alone, no ticks, declared."""
+def write_single_pass_view(folder, declare=True, stem=STEM, view_id=77, run_meta=True,
+                           ext=CROP, ticks_drawn=True):
+    """The single-pass shape: the annotation image alone -- elements and its
+    twelve ticks (2026-10-24), recorded -- declared. ``ticks_drawn`` False:
+    recorded but absent from the pixels (H-G010: 0 of 12 found)."""
     folder.mkdir(parents=True, exist_ok=True)
     anno_tiff = folder / (stem + "_anno.tiff")
-    Image.fromarray(_anno_image(False, [])).save(str(anno_tiff), format="TIFF")
-    side = _anno_sidecar(anno_tiff, {"marks": _no_ticks(), "faults": [],
-                                     "mark_reference_source": "no_crop_region_frame",
-                                     "restore": {"rolled_back": True}}, view_id)
+    marks = _marks()
+    Image.fromarray(_anno_image(ticks_drawn, marks, ext)).save(str(anno_tiff), format="TIFF")
+    side = _anno_sidecar(anno_tiff, _marks_record(marks), view_id)
     if declare:
         plan = cp.plan_capture_passes({
             "model_count": 0, "annotation_count": len(ELEMENTS), "unresolved_count": 0,
@@ -266,6 +285,56 @@ def test_gate3_single_pass_annotation_cells_equal_S0s_after_tick_subtraction(tmp
     # The annotation keys are the same elements with the same rows.
     assert [k for k in on_disk["ec_keys"] if k["layer"] == "annotation"] == \
         [k for k in s0["ec_keys"] if k["layer"] == "annotation"]
+
+
+@pytest.mark.parametrize("factor", [1.0, 1.16])
+def test_gate3_holds_when_the_export_covers_more_than_crop_A(tmp_path, factor):
+    """The real failure (runs 20261023T1351, T1517): 3 views exported 14-16 %
+    more than crop A with the frame-bound lines drawn, the axes in the same
+    ratio, so frame_check passed. Both shapes are drawn over that grown
+    extent; the single-pass grid must place the pixels by its own ticks and
+    equal the two-pass grid. Mutation: grid the annotation-only image on the
+    nominal crop (skip the fit) -> the 1.16 case red."""
+    ext = grown(factor)
+    s0_model, s0_anno, _m = write_s0_view(tmp_path / "s0", ext=ext)
+    reg.register(s0_anno)
+    s0 = grid.grid_view(s0_model, tmp_path / "s0" / "out")
+    assert s0["status"] == "value", s0.get("reason")
+    one = write_single_pass_view(tmp_path / "one", ext=ext)
+    rec = grid.grid_view(one, tmp_path / "one" / "out")
+    assert rec["status"] == "value", rec.get("reason")
+    a0, a1 = _grid_npz(tmp_path / "s0", s0), _grid_npz(tmp_path / "one", rec)
+    for k in sorted(k for k in a0 if k.startswith("anno_")):
+        assert np.array_equal(a0[k], a1[k]), (factor, k)
+    assert rec["grid"]["frame_check"]["delta_px"] == 0      # frame_check cannot see it
+    basis = rec["grid"]["uv_basis"]
+    assert basis["tick_fit"]["status"] == "value"
+    if factor != 1.0:
+        assert basis["chosen"] == "tick_fit"
+        assert abs(rec["grid"]["px_per_cell_u"] - PX_PER_FT / factor) < 0.05
+        # The nominal crop misses the ticks by pixels, not by a fraction.
+        assert basis["nominal_crop"]["residual_px"] > 10
+
+
+def test_an_annotation_only_view_whose_ticks_cannot_be_fitted_is_refused(tmp_path):
+    """H-G010's shape: ticks recorded, none in the pixels. Refused, never
+    placed on the nominal crop alone. Control: the same view with its ticks
+    drawn grids (the test above)."""
+    one = write_single_pass_view(tmp_path, ticks_drawn=False)
+    rec = grid.grid_view(one, tmp_path / "out")
+    assert rec["status"] == "refused"
+    assert "ticks cannot be fitted" in rec["reason"]
+    on_disk = json.loads((tmp_path / "out" / (STEM + ".grid.json")).read_text())
+    assert on_disk["status"] == "refused" and on_disk["capture_passes"] == ["annotation"]
+
+
+def test_the_ticks_are_subtracted_not_counted_as_annotation(tmp_path):
+    one = write_single_pass_view(tmp_path)
+    rec = grid.grid_view(one, tmp_path / "out")
+    assert rec["mark_subtraction"]["annotation_mark_pixels_removed"] > 0
+    arr = _grid_npz(tmp_path, rec)
+    # No residual: every non-white pixel left is an element's.
+    assert int(arr["anno_residual"].sum()) == 0
 
 
 def test_a_declared_annotation_only_view_is_its_own_state_in_the_FILE(tmp_path):

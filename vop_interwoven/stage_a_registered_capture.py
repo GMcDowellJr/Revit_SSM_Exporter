@@ -804,8 +804,9 @@ def _frame_summary(frame):
 
 
 def _no_ticks():
-    """The ``marks`` record of a single-pass capture: nothing drawn, by design."""
-    return {"state": "not_drawn", "reason": "single_pass: nothing to register",
+    """The ``marks`` record of a MODEL-ONLY capture: nothing drawn, by design
+    (its export is its crop, and there is no second image to register)."""
+    return {"state": "not_drawn", "reason": "single_pass: model-only, no ticks",
             "created": [], "created_count": 0, "expected_count": 0}
 
 
@@ -813,13 +814,14 @@ SINGLE_PASS_FRAME_SOURCE = "frame_bounds"
 
 
 def single_pass_frame(reference, source, geom, cfg):
-    """PURE. Where an ANNOTATION-ONLY capture's pixels are in view UV, with no
-    tick fit: its extent is ``crop_uv``, the rectangle the two white
-    frame-bound lines are drawn on (a view with no crop region renders its
-    drawn extent, and those lines set it; run 1005_0947 measured the export's
-    extent within 0.52 px of it). A reader maps pixel -> UV from ``crop_uv``
-    and the image's own size (``frame.actual_w`` / ``actual_h``), the model
-    pass's nominal mapping; ``crop_px`` predicts that size."""
+    """PURE. The lattice an ANNOTATION-ONLY capture was sized on: ``crop_uv``,
+    the rectangle the two white frame-bound lines are drawn on, ``crop_px``
+    the size predicted for it, and the achieved feet-per-pixel -- what a
+    model sidecar's frame records. It is the NOMINAL placement only: the
+    capture's own twelve ticks MEASURE where its pixels are (the grid fits
+    them, stage_a_grid.choose_mapping), because the frame-bound lines do not
+    always fix the extent -- 3 of 619 drafting views and legends exported
+    14-16 % more than crop A with them drawn (runs 20261023T1351, T1517)."""
     if source != "no_crop_region_frame" or reference is None:
         raise ValueError("an annotation-only capture is framed only by the frame-bound "
                          "lines of a view with no crop region (reference {0!r})".format(source))
@@ -966,6 +968,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     # Both passes until the membership is read (capture_passes.py).
     passes = list(BOTH_PASSES)
     single_pass = False
+    draw_ticks = True
     membership_before = None
     detail_lines = {"ids": [], "hidden": []}
 
@@ -1053,6 +1056,14 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         run_model = PASS_MODEL in passes
         run_annotation = PASS_ANNOTATION in passes
         single_pass = not (run_model and run_annotation)
+        # The TICKS are drawn whenever the ANNOTATION pass runs (Greg,
+        # 2026-10-24). An annotation-only capture has no model image to
+        # register onto, but its own ticks are what place its pixels in view
+        # UV: on 3 of 619 drafting views and legends (runs 20261023T1351 and
+        # T1517) the export covered 14-16 % more than crop A although the
+        # frame-bound lines were drawn, and only the ticks measured it. A
+        # model-only capture draws none: its export is its crop.
+        draw_ticks = run_annotation
         line_ids, lines_error = registration.detail_line_ids(_anno)
         if lines_error is not None:
             _fault("detail_lines_unresolved",
@@ -1092,11 +1103,11 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ("Category cannot be hidden" otherwise) -- and hides, one by one,
         # every line that unhiding REVEALED, so both captures still show
         # the view as authored. All inside the group: the rollback undoes it.
-        if single_pass:
+        if not draw_ticks:
             # Only the ticks need OST_Lines drawn; a single pass draws none,
             # so the view is captured with Lines as authored. Not timed.
             record["lines_unhidden"] = {"state": "not_needed",
-                                        "reason": "single_pass: no ticks are drawn"}
+                                        "reason": "single_pass: model-only, no ticks are drawn"}
         else:
             _t = time.time()
             record["lines_unhidden"] = unhide_lines_for_ticks(
@@ -1136,13 +1147,13 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                              view_id=view_id)
                 mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, attempt_cfg)
-                if single_pass:
-                    # No ticks: no crop-loop read, no layout, no annotation
-                    # avoidance, no capture floor (the floor is the ticks' rule).
-                    # reference and mark_fpp above still frame a view with no
-                    # crop region (the white frame-bound lines below).
+                if not draw_ticks:
+                    # Model-only: no ticks, so no crop-loop read, no layout, no
+                    # annotation avoidance and no capture floor (the floor is
+                    # the ticks' rule). reference and mark_fpp above still frame
+                    # a view with no crop region (the frame-bound lines below).
                     record["crop_shape"] = {"state": "not_read",
-                                            "reason": "single_pass: no ticks are placed"}
+                                            "reason": "single_pass: model-only, no ticks are placed"}
                     record["mark_reference_source"] = source
                     layout = None
                 else:
@@ -1251,7 +1262,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                     "loop".format(len(record["ticks_outside_crop_loop"])))
                     # P2: reference rectangle, sizing, segments and avoidance together.
                     record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
-                if single_pass and has_crop_region:
+                if not draw_ticks and has_crop_region:
                     # Nothing to draw: no ticks, and the crop frames the view.
                     marks = _no_ticks()
                 else:
@@ -1259,7 +1270,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                     tx = Transaction(doc, "VOP Stage A registration marks")
                     tx.Start()
                     try:
-                        marks = (_no_ticks() if single_pass else
+                        marks = (_no_ticks() if not draw_ticks else
                                  registration.create_registration_marks(
                                      doc, view, getattr(raster, "view_basis", None),
                                      layout, diag=diag, view_id=view_id))
@@ -1302,7 +1313,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                "draw as unassigned ink: {1}".format(
                                    len(unpainted),
                                    [(b.get("id"), b.get("paint_error")) for b in unpainted]))
-                if not single_pass:
+                if draw_ticks:
                     if marks.get("created_count") != marks.get("expected_count") or not marks.get(
                             "expected_count"):
                         _fault("registration_marks_incomplete",

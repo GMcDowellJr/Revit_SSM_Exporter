@@ -46,9 +46,11 @@ channels are written as zeros and the record carries ``capture_passes`` and
 ``skipped_pass``. A model-only view keeps its model sidecar and gains zero
 ``anno_*`` channels. An annotation-only view has no model sidecar: its
 ``<view>_anno.json`` is selected (view_sidecars), the grid files are named by
-the view stem, its pixels are placed by ``single_pass_frame.crop_uv`` and the
-image size (the nominal mapping), and its model layer is an empty model
-pass's white image. Two-pass views grid exactly as in 2.0.0.
+the view stem, its pixels are placed like a model image's -- the nominal
+mapping from ``single_pass_frame.crop_uv``, or the fit of its own ticks,
+whichever lands closer to them; no usable fit is a refusal -- its ticks are
+whitened, and its model layer is an empty model pass's white image.
+Two-pass views grid exactly as in 2.0.0.
 
     python tools/stage_a_grid.py <run dir | color_id_buffer dir> [--out DIR]
 """
@@ -1502,13 +1504,16 @@ _EMPTY_MODEL_SIDECAR = {"color_assignment_map": {}, "link_category_color_map": {
 def grid_annotation_only(anno_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
     """Grid a declared ANNOTATION-ONLY view from its one image.
 
-    The image is its own lattice: ``single_pass_frame.crop_uv`` (the
-    rectangle the capture's frame-bound lines fix the export to) and the
-    image's size give the nominal mapping, exactly as a model image's
-    recorded crop does. No tick fit exists, so the uncertainty is
-    unmeasured, and ``frame_check`` measures the non-fit axis against
-    ``crop_px``. The model layer is the white image an empty model pass
-    renders: every model channel but ``white`` and ``total`` counts zero."""
+    The image is its own lattice. Its pixels are placed exactly as a model
+    image's are (choose_mapping): the nominal mapping from
+    ``single_pass_frame.crop_uv`` and the image size, or the fit of the
+    capture's own twelve ticks, whichever lands closer to the measured
+    ticks. A capture whose ticks cannot be fitted is REFUSED, never placed
+    on the nominal crop alone: the frame-bound lines do not always fix the
+    extent (3 of 619 drafting views and legends were 14-16 % off it). The
+    ticks are then whitened, as registration whitens them. The model layer
+    is the white image an empty model pass renders: every model channel but
+    ``white`` and ``total`` counts zero."""
     anno_sidecar_path = Path(anno_sidecar_path)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1546,10 +1551,33 @@ def grid_annotation_only(anno_sidecar_path, out_dir, run_meta=None, png_px_per_c
         record["annotation_tiff_sha256"] = sha256_file(tiff)
         rgb = dsc._load_rgb_array(tiff)
         h, w = rgb.shape[:2]
+        # The capture's own twelve ticks, located once for the fit and the
+        # subtraction (the registration tool's two steps, on this one image).
+        payload, why = rm.recorded_marks(anno)
+        if payload is None:
+            raise GridRefusal("the annotation-only capture records no ticks ({0}), so "
+                              "where its pixels are cannot be measured".format(why))
+        palette = rm.palette_colours(anno)
+        packed = rm.pack_pixels(rgb)
+        located = rm.locate_recorded_marks(rgb, payload, palette, packed)
         # The annotation sidecar's frame, completed with the lattice it was
         # sized on: what a model sidecar's frame carries.
         view = dict(anno, frame=dict(frame_record(anno), **frame_extra))
-        spec = build_spec(view, rgb, run_config, single_pass=True)
+        spec = build_spec(view, rgb, run_config, located=located, single_pass=True)
+        fit = spec["uv_basis"].get("tick_fit") or {}
+        if fit.get("status") != "value":
+            # Never placed on the nominal crop alone: the frame-bound lines
+            # left 3 of 619 views 14-16 % off it (runs 20261023T1351, T1517).
+            raise GridRefusal("the annotation-only capture's ticks cannot be fitted "
+                              "({0}: {1}); its pixels are not placed on the nominal "
+                              "crop alone".format(fit.get("status"), fit.get("reason")))
+        # The ticks are not documentation content: whitened, as the
+        # registration tool whitens them in a two-pass capture.
+        mask = rm.mark_ink_mask(rgb, payload, palette, located=located)
+        rgb = rgb.copy()
+        rgb[mask] = 255
+        record["mark_subtraction"] = {"annotation_mark_pixels_removed": int(mask.sum())}
+        del packed, located, mask
         white = np.full((h, w, 3), 255, dtype=np.uint8)
         model_masks, _ids, model_packed, decode_map = model_pixels(
             _EMPTY_MODEL_SIDECAR, white)
@@ -1559,8 +1587,8 @@ def grid_annotation_only(anno_sidecar_path, out_dir, run_meta=None, png_px_per_c
         arrays["crop_a_px"] = count_cells(spec, {"crop_a_px": crop_a_pixel_mask(
             spec, spec["crop_uv"], w, h)})["crop_a_px"]
         model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
-        excluded = [int(m["id"]) for m in (anno.get("registration_marks") or {}).get(
-            "marks") or [] if m.get("id") is not None]
+        excluded = [int(m["id"]) for m in payload.get("marks") or []
+                     if m.get("id") is not None]
         anno_masks, anno_info, anno_ids, black_ids, anno_colours, anno_packed = \
             anno_pixels(anno, rgb, excluded, spec=spec, canvas_origin=(0, 0),
                         return_packed=True, black_ids_assigned=True)

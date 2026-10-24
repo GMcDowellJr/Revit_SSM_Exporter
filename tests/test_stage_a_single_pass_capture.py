@@ -149,20 +149,27 @@ def test_gate2_a_drafting_view_runs_the_annotation_pass_alone(tmp_path):
     folder = os.path.dirname(out["annotation_sidecar_path"])
     assert sorted(os.listdir(folder)) == ["TestPlan_77_anno.json",
                                           "TestPlan_77_anno.tiff"]
-    # ONE export, and it saw no tick: only the two white frame bounds are the
-    # capture's own lines.
+    # ONE export, and it saw the twelve ticks in the reserved colour beside
+    # the two white frame bounds (2026-10-24: the ticks stay, so the grid can
+    # measure where this capture's pixels are).
     assert len(exports) == 1
-    assert reg["marks"]["created_count"] == 0
+    assert reg["marks"]["created_count"] == 12
+    tick_ids = [m["id"] for m in reg["marks"]["created"]]
     bound_ids = [b["id"] for b in reg["frame_bounds"]["created"]]
-    assert sorted(i for i in exports[0] if i > world.MARK_ID_BASE) == sorted(bound_ids)
+    assert sorted(i for i in exports[0] if i > world.MARK_ID_BASE) == sorted(
+        tick_ids + bound_ids)
+    assert all(exports[0][i] == registration.MARK_COLOUR for i in tick_ids)
     assert all(exports[0][i] == (255, 255, 255) for i in bound_ids)
-    assert registration.MARK_COLOUR not in exports[0].values()
     # Restored like any capture.
     assert reg["restore"]["rolled_back"] is True
     assert reg["restore"]["marks_still_in_project"] == []
 
 
-def test_gate2_the_annotation_sidecar_is_S0s_without_the_ticks(tmp_path):
+def test_gate2_the_annotation_sidecar_is_S0s_but_for_the_skipped_pass(tmp_path):
+    """The annotation-only capture writes S0's annotation sidecar, ticks
+    included, value for value -- but for the declared keys and the two
+    records only the skipped MODEL pass produces (the white suppression, and
+    the read-back of the detail lines hidden for it)."""
     out, now = _run("drafting", tmp_path)
     assert now["model"] is None
     base = fx.s0("drafting")
@@ -173,26 +180,18 @@ def test_gate2_the_annotation_sidecar_is_S0s_without_the_ticks(tmp_path):
     frame = side["single_pass_frame"]
     assert frame["frame_source"] == "frame_bounds"
     assert frame["sizing_frame"] == "crop_a"
-    # The frame is the rectangle the S0 MODEL pass rendered: crop A.
+    # The lattice is the one the S0 MODEL pass rendered: crop A.
     assert frame["crop_uv"] == base["model"]["frame"]["crop_uv"]
     assert frame["crop_px"] == base["model"]["frame"]["crop_px"]
     assert frame["achieved_fpp_ft"] == base["model"]["frame"]["achieved_fpp_ft"]
-    # Value-identical to S0's annotation sidecar, ticks aside. The palette
-    # included: every element keeps its S0 colour.
-    expected = _without_ticks(base["annotation"])
     # The skipped model pass: no suppression ran, no detail line was hidden.
     assert side["registration_marks"]["model_suppression"] is None
     assert "detail_lines" not in side["registration_marks"]["restore"]
-    got = _without_ticks(_drop(side, *DECLARED))
-    assert _without_skipped_pass(got) == _without_skipped_pass(expected)
-    # The S0 record really did hold the ticks as annotation members: 3 + 12 + 2.
-    assert base["annotation"]["membership"]["annotation_count"] == 17
-    assert side["membership"]["annotation_count"] == 5
-    assert side["color_assignment_map"] == base["annotation"]["color_assignment_map"]
-    assert side["palette_reservation"]["mark_ids_painted"] == []
-    rm = side["registration_marks"]
-    assert rm["marks"] == [] and rm["layout"] is None and rm["mark_avoidance"] is None
-    assert rm["lines_unhidden"]["state"] == "not_needed"
+    assert _without_skipped_pass(_drop(side, *DECLARED)) == _without_skipped_pass(
+        base["annotation"])
+    # The ticks themselves, positively: the same twelve as S0's.
+    assert side["registration_marks"]["marks"] == base["annotation"]["registration_marks"]["marks"]
+    assert len(side["registration_marks"]["marks"]) == 12
 
 
 def test_gate2_control_S0s_drafting_view_drew_twelve_ticks(tmp_path):
@@ -238,8 +237,7 @@ def test_the_skip_is_in_the_FILE_and_reads_back_through_the_one_reader(tmp_path)
 
 
 @pytest.mark.parametrize("name,absent", [
-    ("drafting", ("lines_unhide", "mark_layout", "mark_layout.avoid_rects",
-                  "model_pass", "model_export", "sidecar_write_model", "suppression")),
+    ("drafting", ("model_pass", "model_export", "sidecar_write_model", "suppression")),
     ("model_only", ("lines_unhide", "mark_layout", "mark_layout.avoid_rects",
                     "marks_create", "suppression", "annotation_pass",
                     "annotation_export", "sidecar_write_annotation")),
@@ -254,6 +252,35 @@ def test_skipped_phases_are_absent_from_the_timings_and_the_partition_holds(
     timed = sum(t[k] for k in TIMING_PARTITION if t.get(k) is not None)
     assert abs(t["total"] - timed - t["unaccounted"]) < 1e-6
     assert t["unaccounted"] >= -1e-6
+
+
+def test_an_annotation_only_capture_keeps_the_tick_phases(tmp_path):
+    """2026-10-24: the ticks stay in an annotation-only capture. Mutation:
+    draw_ticks = False for it -> no mark_layout / marks_create, red."""
+    t = fx.run_fixture("drafting", tmp_path)[0]["registration"]["timings_ms"]
+    for key in ("lines_unhide", "mark_layout", "mark_layout.avoid_rects",
+                "marks_create", "annotation_pass"):
+        assert key in t, key
+
+
+def test_the_capture_floor_applies_to_an_annotation_only_view(tmp_path, monkeypatch):
+    """The floor is the ticks' rule, and an annotation-only capture draws
+    them: a reference rectangle too small for them is refused before any
+    export, as for any view. Control: the unpatched drafting view captures
+    (test_gate2_*)."""
+    real = registration.registration_mark_segments
+
+    def _too_small(reference, fpp):
+        layout = dict(real(reference, fpp))
+        layout["below_floor"] = {"floor_px": 192, "short_side_px": 150}
+        layout["reason"] = "the reference rectangle is 150 px on its short side, too small"
+        return layout
+    monkeypatch.setattr(registration, "registration_mark_segments", _too_small)
+    out = fx.run_fixture("drafting", tmp_path)[0]
+    assert out["success"] is False
+    assert out["failure_reason"].startswith("below_capture_floor")
+    assert out["capture_passes"] == ["annotation"]
+    assert out["sidecar_path"] is None and "annotation_pass" not in out
 
 
 def test_the_two_pass_timings_keep_every_phase(tmp_path):

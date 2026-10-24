@@ -273,7 +273,10 @@ zeros; the summary counts these under `single_pass_count` and the CSV's
 appended `capture_passes`, `skipped_pass` and `skipped_pass_reason` columns
 carry the declaration. An annotation-only view has no model sidecar; the
 grid's selector (`stage_a_grid.view_sidecars`) finds its declared
-`<view>_anno.json` instead. `frame_predicted_px`,
+`<view>_anno.json` instead, and places its pixels by the fit of the
+capture's own twelve ticks (whitened before counting); one whose ticks
+cannot be fitted is `grid_refused`, never placed on the nominal crop alone.
+`frame_predicted_px`,
 `frame_actual_px` and `frame_delta_px` are the grid's non-fit-axis frame
 check (blank when unmeasured); `frame_mismatch` and `frame_unmeasured`
 arrive through `flags` and are counted in `flag_counts`. View name, type, scale

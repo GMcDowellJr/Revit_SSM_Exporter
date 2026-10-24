@@ -35,11 +35,14 @@ drawn), or when the pipeline collected model elements the membership did not.
 THE MODEL PASS IS SKIPPED ONLY ON A VIEW WITH NO CROP REGION (a drafting view, a
 legend: ``supports_crop_region``, the capability, not the view type). The
 annotation pass on such a view is framed by the capture's two white
-frame-bound lines, so its extent is crop A without a tick fit (run 1005_0947:
-0.52 px). On a view WITH a crop region the annotation export's extent is
-FitToPage's -- the crop plus whatever annotation reaches past it -- and only
-the ticks measure it, so a cropped view with an empty model membership still
-runs both passes, and says why (``model_empty_frame_needs_ticks``).
+frame-bound lines and the export is sized on crop A; the capture still draws
+its twelve ticks, so the grid measures where the pixels are (2026-10-24: the
+lines alone left 3 of 619 views 14-16 % off). Only a MODEL-only capture draws
+no ticks. On a view WITH a crop region the annotation export's extent is
+FitToPage's -- the crop plus whatever annotation reaches past it -- and an
+empty model membership there still runs both passes, and says why
+(``model_empty_frame_needs_ticks``). With the ticks kept, such a view could
+run annotation-only too; that is not measured, so it is not done.
 """
 
 PASS_MODEL = "model"
