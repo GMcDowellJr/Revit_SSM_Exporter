@@ -85,7 +85,13 @@ def test_view_signals_deleted_is_read_against_a_membership_and_unread_is_unknown
 
 
 def test_options_refuse_unknown_keys_and_bad_values():
-    assert probe.parse_options(None) == {}
+    # Run 20261026T084811: empty IN[4] returned {} and the open raised
+    # KeyError 'worksets'. Every default is filled in, empty or not.
+    for empty in (None, "", {}):
+        opts = probe.parse_options(empty)
+        assert opts["worksets"] == "all" and opts["control"] == "reopen"
+        assert opts["seed"] == probe.DEFAULT_SEED
+        assert opts["sample_size"] == probe.DEFAULT_SAMPLE_SIZE
     opts = probe.parse_options('{"seed": 3, "control": "none"}')
     assert opts["seed"] == 3 and opts["control"] == "none" and opts["worksets"] == "all"
     with pytest.raises(ValueError):
@@ -241,3 +247,51 @@ def test_unfinished_probe_is_refused(tmp_path):
     pdir = _probe(tmp_path / "probe", [(1, "unchanged")], finalized=False)
     assert acd.main([str(pdir), "--run-a", str(tmp_path), "--run-b", str(tmp_path)]) == 2
     assert not (pdir / acd.ANALYSIS_NAME).exists()
+
+
+def test_cloud_central_is_read_from_basic_file_info():
+    def info(central):
+        return {"state": "value", "value": {"CentralPath": {"state": "value",
+                                                            "value": central}}}
+    # The archives of run 20261026T084944.
+    path = "Autodesk Docs://000000000_Kaizen_Standard_Resources/KSRF_V56.rvt"
+    assert probe.cloud_central(info(path)) == path
+    assert probe.cloud_central(info("\\\\server\\share\\central.rvt")) is None
+    assert probe.cloud_central(info("")) is None
+    assert probe.cloud_central({"state": "raised", "value": None}) is None
+
+
+class _ViewType(object):
+    """A .NET enum under Python.NET 3: str() is its NUMBER, ToString() its name."""
+    def __init__(self, number, name):
+        self.number, self.name = number, name
+
+    def __str__(self):
+        return str(self.number)
+
+    def ToString(self):
+        return self.name
+
+
+class _Id(object):
+    def __init__(self, value):
+        self.Value = value
+
+
+class _View(object):
+    def __init__(self, vid, number, name, template=False):
+        self.Id, self.ViewType, self.IsTemplate = _Id(vid), _ViewType(number, name), template
+
+
+def test_sample_draws_through_the_production_selection():
+    # Run 20261026T084944 drew 0 views: the probe's own type reader matched
+    # no name. The population now comes from batch_capture.select_views and
+    # its _view_type_name, the batch's own selection.
+    from vop_interwoven import batch_capture as bc
+    views = [_View(1, 1, "FloorPlan"), _View(2, 1, "FloorPlan"), _View(3, 117, "Section"),
+             _View(4, 1, "FloorPlan", template=True), _View(5, 4, "ThreeD")]
+    kept, _record = bc.select_views(views)
+    ids, rec = probe.sample_view_ids(probe.sample_population(kept, bc._view_type_name),
+                                     bc.DEFAULT_VIEW_TYPES, 50, 1)
+    assert sorted(ids) == [1, 2, 3]
+    assert rec["population"] == {"FloorPlan": 2, "Section": 1}

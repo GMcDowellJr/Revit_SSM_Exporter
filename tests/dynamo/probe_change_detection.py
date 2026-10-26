@@ -12,16 +12,19 @@ model versions, so a later run can skip the views that did not change?
      worksets, no audit; warnings deleted in FailuresProcessing; the batch's
      dialog answers). Its DocumentVersion is read, and the membership of
      every probed view. Closed unsaved.
-  3. Control: a byte copy of A, opened NOT detached; its version is read.
+  3. Control (IN[4] ``control``): "reopen" (the default) opens A detached a
+     SECOND time and reads its version: two GUIDs for one file mean each
+     detached open mints its own. "copy" opens a byte copy of A, and later
+     of B, NOT detached -- refused when either archive is a cloud central,
+     whose copy never finished opening (run 20261026T084944).
   4. Archive B is opened the batch's way. ``GetChangedElements`` is called
      with A's GUID (detached), the control's GUID, B's own GUID (a positive
      control: it must succeed) and a random GUID (a negative control: the
      exception it raises is what "not in this history" looks like). The
      per-view intersections are made against the first call that succeeded
      (A detached first). Closed unsaved.
-  5. Control: a byte copy of B, opened NOT detached, asked the same.
-  6. Every archive's sha256, size and mtime are read before step 2 and again
-     after step 5; a difference is listed under ``archives_changed``.
+  5. Every archive's sha256, size and mtime are read before step 2 and again
+     after step 4; a difference is listed under ``archives_changed``.
 
 Dynamo inputs:
     IN[0] = output directory (required). change_detection_<stamp>/ is
@@ -39,9 +42,10 @@ Offline: tools/analyze_change_detection_probe.py compares the probe's
 answer with the captures already made of A and B.
 
 THE PROBE WRITES NOTHING TO ANY DOCUMENT. It opens no transaction. Each
-archive is opened, read and closed with ``Close(False)``; the non-detached
-controls open a COPY in the probe folder, never the archive, and the copy is
-deleted afterwards. The archives' hashes before and after are the evidence.
+archive is opened detached, read and closed with ``Close(False)``; the
+"copy" control opens a COPY in the probe folder, never the archive, and the
+copy is deleted afterwards. The archives' hashes before and after are the
+evidence.
 
 Every read is recorded as ``{"state": "value" | "unavailable" | "raised",
 "value": ..., "error": ...}``. No bare ``except``.
@@ -59,14 +63,19 @@ import traceback
 
 
 PROBE_NAME = "change_detection"
-PROBE_VERSION = "2026-10-24.1"
+PROBE_VERSION = "2026-10-26.1"
 SCHEMA = "vop.probe.change_detection.v1"
 
 OPTION_KEYS = ("repo_root", "seed", "sample_size", "control", "worksets",
                "expected_title_a", "expected_title_b")
 DEFAULT_SEED = 20261022
 DEFAULT_SAMPLE_SIZE = 50
-CONTROLS = ("copy", "none")
+# "reopen": A opened detached a SECOND time; two GUIDs for one file means
+# a detached open mints its own version. "copy": a byte copy opened NOT
+# detached -- refused for a cloud central (run 20261026T084944: the open of
+# such a copy never returned). "none": no control.
+CONTROLS = ("reopen", "copy", "none")
+CLOUD_CENTRAL_PREFIXES = ("autodesk docs://", "bim 360://", "bim360://")
 WORKSETS = ("all", "last_viewed")
 # The batch's population (vop_interwoven.batch_capture.DEFAULT_VIEW_TYPES);
 # the production tuple is used when the checkout imports, this copy only to
@@ -148,8 +157,10 @@ def parse_view_ids(value):
 
 
 def parse_options(value):
+    """IN[4] with every default filled in, also when IN[4] is empty (run
+    20261026T084811 returned {} there and failed on the first default read)."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        return {}
+        value = {}
     if isinstance(value, str):
         value = json.loads(value)
     if not isinstance(value, dict):
@@ -162,7 +173,7 @@ def parse_options(value):
     if unknown:
         raise ValueError("IN[4] has unknown key(s) {0}; known: {1}".format(unknown, OPTION_KEYS))
     options = dict((str(k), v) for k, v in value.items())
-    control = str(options.get("control") or "copy").strip().lower()
+    control = str(options.get("control") or "reopen").strip().lower()
     if control not in CONTROLS:
         raise ValueError("IN[4] control must be one of {0}, not {1!r}".format(CONTROLS, control))
     worksets = str(options.get("worksets") or "all").strip().lower()
@@ -307,6 +318,21 @@ def counts_by(labels):
     return dict(sorted(out.items(), key=lambda kv: (-kv[1], str(kv[0]))))
 
 
+def cloud_central(info):
+    """PURE. The CentralPath of a basic_file_info() record when it names a
+    cloud central (Autodesk Docs / BIM 360), else None."""
+    central = value_of((value_of(info) or {}).get("CentralPath"))
+    if central and str(central).strip().lower().startswith(CLOUD_CENTRAL_PREFIXES):
+        return str(central)
+    return None
+
+
+def sample_population(views, type_name):
+    """``[(id, type name, is_template)]`` for sample_view_ids from views the
+    production selection kept; ``type_name`` is production's reader."""
+    return [(element_id_int(v.Id), type_name(v), False) for v in views]
+
+
 def file_fingerprint(path, chunk=8 * 1024 * 1024):
     """``{size, mtime, sha256}`` of a file (stdlib)."""
     digest = hashlib.sha256()
@@ -432,12 +458,6 @@ def _dotnet_type(ex):
         return "unreadable: {0}".format(inner)
 
 
-def enum_text(v):
-    """An enum by NAME: under Python.NET 3 str() of a Revit enum is its number."""
-    to_string = getattr(v, "ToString", None)
-    return str(to_string()) if callable(to_string) else str(v)
-
-
 def _plain(v):
     if v is None or isinstance(v, (bool, int, float, str)):
         return v
@@ -538,14 +558,6 @@ def close_document(doc, rec):
     t0 = time.time()
     rec["close"] = read(lambda: bool(doc.Close(False)))
     rec["close_ms"] = round((time.time() - t0) * 1000.0, 1)
-
-
-def views_of(doc):
-    from Autodesk.Revit.DB import FilteredElementCollector, View
-    out = []
-    for v in FilteredElementCollector(doc).OfClass(View):
-        out.append((element_id_int(v.Id), enum_text(v.ViewType), bool(v.IsTemplate)))
-    return out
 
 
 def view_by_id(doc, vid):
@@ -658,7 +670,7 @@ def view_inputs(ctx, doc, vid):
         return out, None
     out["present_in_b"] = True
     out["name"] = read(lambda: str(view.Name))
-    out["view_type"] = read(lambda: enum_text(view.ViewType))
+    out["view_type"] = read(ctx.batch_capture._view_type_name, view)
     mem = membership(ctx, doc, vid)
     out["membership_count"] = len(mem["value"]) if mem["state"] == "value" else None
     out["membership_ms"] = mem.get("ms")
@@ -702,6 +714,7 @@ class Context(object):
         self.exceptions = []
         self.view_membership_ids = None
         self.view_types = FALLBACK_VIEW_TYPES
+        self.batch_capture = None
 
 
 def import_production(ctx, report):
@@ -725,6 +738,7 @@ def import_production(ctx, report):
     bc = importlib.import_module("vop_interwoven.batch_capture")
     ctx.view_membership_ids = rc.view_membership_ids
     ctx.view_types = tuple(bc.DEFAULT_VIEW_TYPES)
+    ctx.batch_capture = bc
     report["production"] = {"root": root, "loaded_from": [rc.__file__, bc.__file__],
                             "view_types": list(ctx.view_types)}
 
@@ -815,8 +829,14 @@ def run_probe(inputs, app=None, uiapp=None):
         rec["version"] = read(document_version, doc)
         versions["a_detached"] = value_of(rec["version"])
         if not view_ids:
+            # The batch's own selection and ViewType reader (batch_capture):
+            # run 20261026T084944's own reader matched no type, drawing 0.
+            bc = ctx.batch_capture
+            kept, selection = bc.select_views(bc.collect_views(doc), ctx.view_types)
             view_ids, report["sample"] = sample_view_ids(
-                views_of(doc), ctx.view_types, options["sample_size"], options["seed"])
+                sample_population(kept, bc._view_type_name), ctx.view_types,
+                options["sample_size"], options["seed"])
+            report["sample"]["view_selection"] = selection
         else:
             report["sample"] = {"rule": "IN[3] view ids", "size_drawn": len(view_ids)}
         for vid in view_ids:
@@ -833,8 +853,34 @@ def run_probe(inputs, app=None, uiapp=None):
             close_document(doc, rec)
     _progress("a_detached")
 
-    # --- A, not detached, from a copy (control) ----------------------------
-    if options["control"] == "copy":
+    # --- A, detached AGAIN (control "reopen") ---------------------------------
+    if options["control"] == "reopen":
+        rec = report["opens"]["a_detached_reopen"] = {"path": path_a}
+        doc = None
+        try:
+            doc, how = open_document(ctx, path_a, detached=True)
+            rec.update(how)
+            rec["version"] = read(document_version, doc)
+            versions["a_detached_reopen"] = value_of(rec["version"])
+        except Exception as ex:
+            rec["error"] = exception_record("a_detached_reopen", ex)
+            ctx.exceptions.append(rec["error"])
+        finally:
+            if doc is not None:
+                close_document(doc, rec)
+        first = (versions.get("a_detached") or {}).get("guid")
+        again = (versions.get("a_detached_reopen") or {}).get("guid")
+        report["reopen_same_guid"] = (None if not (first and again) else first == again)
+        _progress("a_detached_reopen")
+
+    # --- A, not detached, from a copy (control "copy") ----------------------
+    clouds = dict((k, cloud_central(report["basic_file_info"][k])) for k in ("a", "b"))
+    if options["control"] == "copy" and any(clouds.values()):
+        report["opens"]["copy_control_refused"] = {
+            "reason": "a cloud central cannot be opened attached from a local copy; the "
+                      "open of one never returned (run 20261026T084944)",
+            "central_paths": clouds}
+    if options["control"] == "copy" and not any(clouds.values()):
         rec = report["opens"]["a_copy_not_detached"] = {"source": path_a}
         doc, folder = None, None
         try:
@@ -871,6 +917,8 @@ def run_probe(inputs, app=None, uiapp=None):
             own = value_of(rec["version"])
             versions[label] = own
             asks = [("a_detached", (versions.get("a_detached") or {}).get("guid")),
+                    ("a_detached_reopen",
+                     (versions.get("a_detached_reopen") or {}).get("guid")),
                     ("a_copy_not_detached",
                      (versions.get("a_copy_not_detached") or {}).get("guid")),
                     ("own_guid_positive_control", (own or {}).get("guid")),
@@ -890,7 +938,8 @@ def run_probe(inputs, app=None, uiapp=None):
                     union = sorted(set(sets["created"]) | set(sets["modified"]))
                     call["created_or_modified_by_category"] = read(
                         category_counts, doc, union)
-                    if primary is None and against in ("a_detached", "a_copy_not_detached"):
+                    if primary is None and against in ("a_detached", "a_detached_reopen",
+                                                       "a_copy_not_detached"):
                         primary = (key, sets)
             if per_view and primary is not None:
                 report["per_view_against"] = primary[0]
@@ -921,7 +970,7 @@ def run_probe(inputs, app=None, uiapp=None):
             _progress(label)
 
     per_view_done = _ask_b("b_detached", path_b, True, per_view=True)
-    if options["control"] == "copy":
+    if options["control"] == "copy" and not any(clouds.values()):
         # Per view here only when the detached B answered nothing.
         _ask_b("b_copy_not_detached", path_b, False, per_view=not per_view_done)
 

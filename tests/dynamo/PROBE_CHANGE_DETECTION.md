@@ -35,29 +35,38 @@ value (`by_change_type`); otherwise that field says it was not there.
 
 The batch opens every archive copy `DetachAndPreserveWorksets`. Does a
 detached copy keep a version history that a later copy's GUID can be found
-in, or does detaching start a new history? The probe opens each archive both
-ways and asks every combination:
+in, or does detaching start a new history?
 
-| call (`calls[...]`) | what it separates |
+The archives are copies of **cloud-workshared centrals** (`basic_file_info`
+of run `20261026T084944`: `IsCentral`, `CentralPath: Autodesk Docs://...`).
+A local copy of one cannot be opened attached: in that run the open of A's
+copy, not detached, never returned (Revit idle, about 18 GB). So the control
+is a second DETACHED open of A (`control: "reopen"`, the default):
+
+| call / field | what it separates |
 |---|---|
+| `reopen_same_guid` | `false`: each detached open mints its own version GUID |
 | `b_detached__vs__a_detached` | the batch's situation: both detached |
-| `b_detached__vs__a_copy_not_detached` | A's GUID as the file carries it, asked by a detached B |
-| `b_copy_not_detached__vs__a_detached` | a detached A's GUID, asked by an attached B |
-| `b_copy_not_detached__vs__a_copy_not_detached` | neither detached: the lineage itself |
-| `*__vs__own_guid_positive_control` | B asked about its own version: must succeed |
-| `*__vs__random_guid_negative_control` | a seeded random GUID: what "not in this history" raises |
+| `b_detached__vs__a_detached_reopen` | the same question, asked about A's other detached GUID |
+| `b_detached__vs__own_guid_positive_control` | B asked about its own version: must succeed |
+| `b_detached__vs__random_guid_negative_control` | a seeded random GUID: what "not in this history" raises |
 
 How to read it (INFERENCE until the run):
 
-- `versions.a_detached.guid` != `versions.a_copy_not_detached.guid`: opening
-  detached gives the document a new version GUID.
-- The attached pair succeeds and the detached pair raises the negative
-  control's exception: detaching breaks the lineage; the batch would have to
-  record versions some other way.
-- Both pairs raise like the negative control: A is not in B's history at all
-  (a lineage failure, not a detach failure).
-- The positive control raises: `GetChangedElements` does not work on this
-  document at all, and nothing else in the run means anything.
+- `reopen_same_guid: false`: a detached open is a new version every time,
+  so no later detached open can find it in its history. Run `084944` read
+  A detached with `NumberOfSaves: 1`, which points that way.
+- `b_detached__vs__a_detached` raises like the negative control: the batch's
+  detached captures cannot be compared through this API.
+- It succeeds: detaching keeps the lineage, and the per-view part measures
+  what the API says.
+- The positive control raises: `GetChangedElements` does not work on a
+  detached document at all, and nothing else in the run means anything.
+
+`control: "copy"` (A and B opened NOT detached from byte copies) remains for
+an archive that is not a cloud central; for a cloud central it is refused
+before anything is copied (`opens.copy_control_refused`, with both central
+paths).
 
 `versions.*.saves` (`NumberOfSaves`) is recorded for every open: B's count
 above A's is consistent with one lineage, never proof of it.
@@ -69,25 +78,26 @@ above A's is consistent with one lineage, never proof of it.
   `IsModified` is recorded after the open and before the close.
 - The **detached** opens open the archive itself, as the batch does: a
   detached document cannot save back to it.
-- The **non-detached** controls never open the archive. Each opens a byte
-  copy (`shutil.copy2`) in `<probe folder>/_control_copy_<a|b>/`, which is
-  deleted afterwards (`opens.*.copy_removed`).
+- The `copy` control (not the default, refused for a cloud central) never
+  opens the archive. It opens a byte copy (`shutil.copy2`) in
+  `<probe folder>/_control_copy_<a|b>/`, which is deleted afterwards
+  (`opens.*.copy_removed`).
 - **Evidence:** every archive's size, mtime and sha256 are read before the
   first open and after the last close. `archives_changed` lists the fields
   that differ and `ARCHIVES_SUMMARY` says `ARCHIVES UNCHANGED` or
   `ARCHIVE CHANGED` in capitals. The probe does not try to fix a change.
 
 `basic_file_info` (`BasicFileInfo.Extract`, read without opening) records
-whether each archive is workshared, central or local. A copy of a central
-model may refuse to open attached; that refusal is recorded verbatim under
-`opens.*_copy_not_detached.error` and is itself a finding.
+whether each archive is workshared, central or local, and its central path.
 
 ## The per-view part
 
 Views: `IN[3]`, or a seeded sample of `sample_size` (50) drawn from A's
 views across view types (`sample`: the population per type, the draw per
-type, the seed). The population is production's
-`batch_capture.DEFAULT_VIEW_TYPES`, non-template.
+type, the seed, and `view_selection`). The population is the batch's own:
+`batch_capture.select_views` over `collect_views`, read with its
+`_view_type_name` (run `084944` used a reader of the probe's own that
+matched no type and drew 0 views).
 
 For each view, against the first `GetChangedElements` call that succeeded
 (`per_view_against`, A detached first):
@@ -146,17 +156,17 @@ would show.
 | `repo_root` | the checkout, for `view_membership_ids` and `DEFAULT_VIEW_TYPES` | `REVIT_SSM_EXPORTER_ROOT`, then `~/Documents/Revit_SSM_Exporter` |
 | `seed` | the sample's seed (and the negative control's GUID) | `20261022` |
 | `sample_size` | views drawn when `IN[3]` is empty | `50` |
-| `control` | `"copy"`: the non-detached controls; `"none"`: skip them | `"copy"` |
+| `control` | `"reopen"`: A opened detached twice; `"copy"`: byte copies opened not detached (refused for a cloud central); `"none"` | `"reopen"` |
 | `worksets` | `"all"` or `"last_viewed"`, as the batch's setting | `"all"` |
 
 4. Run. `OUT` is the JSON's path. If the probe could not start at all, `OUT`
    is a dict with `fatal`. Dismiss any dialog the auto-answers miss; every
    answered dialog is logged under `opens.*.events`.
 
-**Expected run time** (INFERENCE, not measured): four opens of a large model
-at a few minutes each, two file copies and four sha256 reads of the archive
-(seconds to a minute each), and about 100 membership reads; roughly 15-40
-minutes in all. `progress_<stamp>.json` is rewritten after each phase, so a
+**Expected run time:** three detached opens (A's took 51 s in run
+`084944`, OBSERVED), four sha256 reads of the 1.1 GB archives, and about 100
+view membership reads (not yet measured); roughly 10-25 minutes in all
+(INFERENCE). `progress_<stamp>.json` is rewritten after each phase, so a
 crash still shows how far it got (`finalized: false`; it is never the record).
 
 ### Then, offline (Greg, on the machine with the runs)
@@ -193,7 +203,9 @@ and the two run directory names used for `--run-a` / `--run-b`.
 - `production`: where `vop_interwoven` was loaded from
 - `archives_before`, `archives_after`, `archives_changed`, `ARCHIVES_SUMMARY`
 - `basic_file_info` per archive
-- `opens.<a_detached | a_copy_not_detached | b_detached | b_copy_not_detached>`:
+- `opens.<a_detached | a_detached_reopen | b_detached>` (and, under
+  `control: "copy"`, `a_copy_not_detached` / `b_copy_not_detached` or
+  `copy_control_refused`):
   how it was opened (detach, worksets, audit), events (warnings deleted,
   dialogs answered), title, `is_detached`, `is_workshared`, `version`,
   `IsModified` after open and before close, timings
