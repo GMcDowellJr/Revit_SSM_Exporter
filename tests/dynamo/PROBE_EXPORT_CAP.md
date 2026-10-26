@@ -118,11 +118,9 @@ From `<IN[0]>/probe_export_cap_<stamp>/`:
 - `probe_export_cap_<stamp>.json` (the record, written last)
 - `progress_<stamp>.json`
 - `export_cap_analysis.json` (after the offline step)
-- every `jobs/*/*/run_meta*.json` and `jobs/*/*/color_id/*.json` (the
-  sidecars, small), and `jobs/*/*/grid/*.grid.json`
-
-The TIFFs and npz files are not needed unless something in the analysis
-needs a second look.
+The analysis carries every number the report needs. The per-job sidecars,
+grids and TIFFs stay on the Revit machine, and are asked for by job label only
+if a number needs a second look.
 
 ## Outputs
 
@@ -167,11 +165,15 @@ needs a second look.
   `delta_per_category_fill`, and the model-ink cells gained, lost and their
   Jaccard overlap. Cells are compared by their signed (i, j) index, which is
   anchored to view UV, so the same cell is compared at every cap.
-- `fill_curve`: per cap, over the capped views, the largest |Δ fill|, the
-  largest relative |Δ fill| and the smallest Jaccard. **No bound is
+- `fill_curve`: per cap, over the capped views, the views gridded and the
+  views the grid REFUSED (`views_refused`, `refused` with the reason: fewer
+  than 2 px per cell), then the largest |Δ fill|, the largest relative
+  |Δ fill| and the smallest Jaccard over the gridded ones. **No bound is
   chosen.** Read off the smallest cap within your own bound, or pass
   `--bound` to get `bound_query.smallest_cap_within`: the smallest cap such
-  that it and every larger cap stay within the bound.
+  that it and every larger cap stay within the bound with no view refused.
+  A grid refusal is that cap's result; it is not retried on a later repeat
+  (analyzer 1.1.0).
 - `thin_line_bias`: per view, fill by achieved px per cell, highest first,
   and `steps_raising_fill` out of `steps_down_in_resolution`. A line that no
   longer renders below 1 px would push fill UP as resolution falls; this

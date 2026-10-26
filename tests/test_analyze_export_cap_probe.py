@@ -255,7 +255,10 @@ def test_a_retried_export_is_left_out_of_the_fit_and_named(tmp_path):
     assert record["export_fit"]["excluded_retried"] == ["v1_c5000_r1"]
     assert record["export_fit"]["n"] == 2
     assert record["export_fit"]["fit"]["slope_per_x"] == pytest.approx(200.0)
-    assert record["fill_curve"] == []          # nothing gridded, nothing claimed
+    # Nothing gridded: every cap is listed, and none claims a measurement.
+    assert [r["cap"] for r in record["fill_curve"]] == [10000, 7000, 5000]
+    assert all(r["views"] == 0 and r["max_abs_delta_fill"] is None
+               for r in record["fill_curve"])
 
 
 def test_repeats_are_compared_by_the_probes_recorded_hash_when_images_were_deleted(tmp_path):
@@ -270,3 +273,38 @@ def test_repeats_are_compared_by_the_probes_recorded_hash_when_images_were_delet
     _path, record = aec.analyze(tmp_path, gridder=lambda d, j: ({"label": j["label"]}, None))
     row = record["timing"][0]
     assert row["repeats_hashed"] == 3 and row["distinct_model_tiff_hashes"] == 2
+
+
+def test_a_grid_refusal_is_the_caps_result_and_is_not_retried(tmp_path):
+    # Run 20261026T101435: the first repeat at 7000 px was refused (1.93 px per
+    # cell), and the analyzer tried repeats 2 and 3, whose TIFFs the probe had
+    # deleted. A refusal settles the cap; the curve counts it.
+    jobs = [{"index": i, "label": "v1_c{0}_r{1}".format(cap, r), "view_id": 1, "cap": cap,
+             "repeat": r, "position_in_view_block": 0, "attempts": 1, "megapixels": 1.0,
+             "model_export_ms": 1.0}
+            for i, (cap, r) in enumerate([(10000, 1), (7000, 1), (10000, 2), (7000, 2)])]
+    (tmp_path / "probe_export_cap_1.json").write_text(json.dumps({
+        "finalized": True, "inputs": {"capped_view_ids": [1]}, "jobs": jobs}))
+    called = []
+
+    def gridder(_d, job):
+        called.append(job["label"])
+        if job["cap"] == 7000:
+            return {"label": job["label"], "grid_status": "refused",
+                    "grid_refusal": "1.93 px per cell is below the 2.0 px floor"}, None
+        return {"label": job["label"], "grid_status": "value", "fill_fraction": 0.1,
+                "px_per_cell": 2.75, "model_px_fraction": 0.1, "anno_ink_cells": 0,
+                "per_category_fill": {}}, {(0, 0)}
+    _path, record = aec.analyze(tmp_path, gridder=gridder, hasher=lambda d, j: None)
+    assert called == ["v1_c10000_r1", "v1_c7000_r1"]
+    curve = dict((r["cap"], r) for r in record["fill_curve"])
+    assert curve[7000]["views"] == 0 and curve[7000]["views_refused"] == 1
+    assert curve[7000]["max_abs_delta_fill"] is None
+    assert curve[10000]["views_refused"] == 0
+    assert aec.smallest_cap_within(record["fill_curve"], 1.0) == 10000
+
+
+def test_smallest_cap_within_stops_at_a_cap_with_a_refused_view():
+    curve = [{"cap": 10000, "max_abs_delta_fill": 0.0, "views_refused": 0},
+             {"cap": 7000, "max_abs_delta_fill": 0.0, "views_refused": 3}]
+    assert aec.smallest_cap_within(curve, 0.01) == 10000

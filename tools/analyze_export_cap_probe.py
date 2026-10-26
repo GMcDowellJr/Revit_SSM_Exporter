@@ -56,7 +56,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 SCHEMA = "vop.probe.export_cap.analysis.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 ANALYSIS_NAME = "export_cap_analysis.json"
 PROBE_GLOB = "probe_export_cap_*.json"
 MODEL_INK_CODES = (1, 3)        # stage_a_grid.OCCUPANCY_CODES model_only, overlap
@@ -130,11 +130,12 @@ def steps_rising(series):
 def smallest_cap_within(curve, bound, key="max_abs_delta_fill"):
     """PURE. The smallest cap such that it and every larger cap stay within
     ``bound`` on ``key``; None when even the largest does not. ``curve`` is
-    ``[{cap, key...}]``. A cap with no measurement breaks the run."""
+    ``[{cap, key...}]``. A cap with no measurement, or with any view the grid
+    refused (``views_refused``), breaks the run: unmeasured is not within."""
     best = None
     for row in sorted(curve, key=lambda r: -r["cap"]):
         v = row.get(key)
-        if v is None or v > bound:
+        if v is None or v > bound or row.get("views_refused"):
             break
         best = row["cap"]
     return best
@@ -292,12 +293,16 @@ def analyze(target, grid_all_repeats=False, bound=None, gridder=grid_job,
     errors = [{"label": j["label"], "error": j["error"]} for j in probe.get("jobs") or []
               if j.get("error")]
 
-    # Grid: the first successful repeat of each (view, cap), or all of them.
+    # Grid: the first repeat of each (view, cap) the grid RAN on, or all of
+    # them. A grid refusal (too few px per cell) is that cap's result and is
+    # not retried on a later repeat: run 20261026T101435 retried them onto
+    # repeats whose TIFFs the probe had deleted. Only a job the grid could
+    # not run on at all (a missing file) passes to the next repeat.
     rows, cells = {}, {}
-    first = {}
+    first, settled, refused = {}, set(), {}
     for job in sorted(jobs, key=lambda j: (j["repeat"], j["index"])):
         key = (job["view_id"], job["cap"])
-        if not grid_all_repeats and key in first:
+        if not grid_all_repeats and key in settled:
             continue
         try:
             row, c = gridder(probe_dir, job)
@@ -305,6 +310,10 @@ def analyze(target, grid_all_repeats=False, bound=None, gridder=grid_job,
             row, c = {"label": job["label"], "status": "{0}: {1}".format(
                 type(ex).__name__, ex)}, None
         rows[job["label"]] = row
+        if row.get("grid_status") in ("value", "refused"):
+            settled.add(key)
+        if row.get("grid_status") == "refused":
+            refused.setdefault(key, {"label": job["label"], "reason": row.get("grid_refusal")})
         if c is not None:
             cells[job["label"]] = c
             first.setdefault(key, job["label"])
@@ -387,13 +396,23 @@ def analyze(target, grid_all_repeats=False, bound=None, gridder=grid_job,
         bias[str(vid)] = {"by_resolution": [{"px_per_cell": p, "fill_fraction": f}
                                             for p, f in sorted(series, reverse=True)],
                           "steps_down_in_resolution": steps, "steps_raising_fill": rises}
-    curve = [{"cap": cap, "views": len(es),
-              "max_abs_delta_fill": max(abs(e["delta_fill"]) for e in es),
-              "max_abs_relative_delta_fill": max(
-                  (abs(e["relative_delta_fill"]) for e in es
-                   if e["relative_delta_fill"] is not None), default=None),
-              "min_jaccard": min(e["cells"]["jaccard"] for e in es)}
-             for cap, es in sorted(curve_rows.items(), reverse=True)]
+    # Every cap any capped view was captured at, with the views the grid
+    # REFUSED there counted beside the deltas: a cap where most views cannot
+    # be gridded must not read as within any bound.
+    all_caps = sorted(set(j["cap"] for j in jobs if j["view_id"] in capped), reverse=True)
+    curve = []
+    for cap in all_caps:
+        es = curve_rows.get(cap) or []
+        ref_ = sorted((vid, r["reason"]) for (vid, c), r in refused.items()
+                      if c == cap and vid in capped)
+        curve.append({
+            "cap": cap, "views": len(es), "views_refused": len(ref_),
+            "refused": [{"view_id": v, "reason": why} for v, why in ref_],
+            "max_abs_delta_fill": max((abs(e["delta_fill"]) for e in es), default=None),
+            "max_abs_relative_delta_fill": max(
+                (abs(e["relative_delta_fill"]) for e in es
+                 if e["relative_delta_fill"] is not None), default=None),
+            "min_jaccard": min((e["cells"]["jaccard"] for e in es), default=None)})
     sizes = [{"label": j["label"], "megapixels": j.get("megapixels"),
               "model_tiff_bytes": j.get("model_tiff_bytes"),
               "annotation_tiff_bytes": j.get("annotation_tiff_bytes"),
@@ -450,10 +469,13 @@ def main(argv=None):
     if f:
         print("model export ms = {0:.1f} + {1:.1f} x Mpx  (r2 {2}, n {3})".format(
             f["intercept"], f["slope_per_x"], f["r2"], record["export_fit"]["n"]))
-    print("cap     max|dfill|  min jaccard")
+    print("cap     gridded refused  max|dfill|  min jaccard")
     for row in record["fill_curve"]:
-        print("{0:>6} {1:>11.5f} {2:>12.4f}".format(row["cap"], row["max_abs_delta_fill"],
-                                                    row["min_jaccard"]))
+        print("{0:>6} {1:>8} {2:>7} {3:>11} {4:>12}".format(
+            row["cap"], row["views"], row["views_refused"],
+            "-" if row["max_abs_delta_fill"] is None else "{0:.5f}".format(
+                row["max_abs_delta_fill"]),
+            "-" if row["min_jaccard"] is None else "{0:.4f}".format(row["min_jaccard"])))
     print("wrote {0}".format(out))
     return 0
 
