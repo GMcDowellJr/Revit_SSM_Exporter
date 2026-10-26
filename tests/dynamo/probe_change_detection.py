@@ -3,6 +3,14 @@
 Q1: can Revit tell us cheaply which elements changed between two captured
 model versions, so a later run can skip the views that did not change?
 
+Q1b (probe 2026-10-27.1): run 20261026T095313 found that GetChangedElements
+cannot compare two detached archive opens (each detached open is a new
+version history). Q1b asks the same of ``Element.VersionGuid``: read for
+every element in each detached open, it is (a) stable across two detached
+opens of ONE file or not, (b) kept from A to B for elements that did not
+change or not, and (c) per view, a fingerprint of the view, its members, its
+template, its filters and its members' types (``vg_verdict``).
+
   1. Reflection: do ``Document.GetDocumentVersion`` and
      ``Document.GetChangedElements`` exist in THIS Revit, and with which
      signatures? Q1 stops (nothing is opened) when either is absent or its
@@ -25,6 +33,12 @@ model versions, so a later run can skip the views that did not change?
      (A detached first). Closed unsaved.
   5. Every archive's sha256, size and mtime are read before step 2 and again
      after step 4; a difference is listed under ``archives_changed``.
+  6. (Q1b) In every DETACHED open, every element's VersionGuid is read once
+     (``version_guids``); the reopen is compared with A
+     (``reopen_version_guids``), B with A (``version_guid_a_vs_b``), and each
+     probed view gets ``version_guid`` signals and ``vg_verdict``. The API
+     calls of step 4 run only when reflection confirms them; the probe stops
+     only when neither the API nor Element.VersionGuid is there.
 
 Dynamo inputs:
     IN[0] = output directory (required). change_detection_<stamp>/ is
@@ -63,10 +77,11 @@ import traceback
 
 
 PROBE_NAME = "change_detection"
-PROBE_VERSION = "2026-10-26.1"
+PROBE_VERSION = "2026-10-27.1"
 SCHEMA = "vop.probe.change_detection.v1"
 
 OPTION_KEYS = ("repo_root", "seed", "sample_size", "control", "worksets",
+               "version_guid", "write_guid_maps",
                "expected_title_a", "expected_title_b")
 DEFAULT_SEED = 20261022
 DEFAULT_SAMPLE_SIZE = 50
@@ -189,7 +204,23 @@ def parse_options(value):
                               else DEFAULT_SAMPLE_SIZE)
     if options["sample_size"] <= 0:
         raise ValueError("IN[4] sample_size must be positive")
+    options["version_guid"] = _flag(options.get("version_guid"), True)
+    options["write_guid_maps"] = _flag(options.get("write_guid_maps"), False)
     return options
+
+
+def _flag(value, default):
+    """A bool option: True/False, or the strings true/false/1/0; else refused."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "1", "yes"):
+        return True
+    if text in ("false", "0", "no"):
+        return False
+    raise ValueError("IN[4] expected true or false, not {0!r}".format(value))
 
 
 def sample_view_ids(views, view_types, size, seed):
@@ -328,9 +359,107 @@ def cloud_central(info):
 
 
 def sample_population(views, type_name):
-    """``[(id, type name, is_template)]`` for sample_view_ids from views the
-    production selection kept; ``type_name`` is production's reader."""
-    return [(element_id_int(v.Id), type_name(v), False) for v in views]
+    """``[(id, type name, is_template)]`` for sample_view_ids; ``type_name``
+    returns ``(name, how)`` (resolve_view_type_name)."""
+    return [(element_id_int(v.Id), type_name(v)[0], bool(v.IsTemplate)) for v in views]
+
+
+def resolve_view_type_name(read_name, enum_name):
+    """PURE. A ViewType's name from production's reader (``read_name``), or,
+    when that is missing or a NUMBER -- what batch_capture._view_type_name
+    returned for every view under Dynamo's Python engine in run
+    20261026T095313, so select_views kept none -- from ``enum_name(int)``,
+    the .NET Enum.GetName lookup. Returns ``(name, how)``."""
+    text = None if read_name is None else str(read_name)
+    if text and not text.lstrip("-").isdigit():
+        return text, "production_reader"
+    if text is None:
+        return None, "unreadable"
+    try:
+        name = enum_name(int(text))
+    except Exception as ex:  # noqa: BLE001 -- recorded as the reason
+        return None, "enum lookup raised {0}: {1}".format(type(ex).__name__, ex)
+    return (str(name), "enum_lookup") if name else (None, "enum lookup found no name")
+
+
+def view_fingerprint(view_id, inputs, guids, limit=VIEW_ID_LIMIT):
+    """PURE. ``{count, sha1, missing, missing_ids}`` over the view, its
+    members, template, filters and member types, each as ``id:VersionGuid``
+    (``-`` where ``guids`` has none); None when an input was not read."""
+    if inputs is None or guids is None or any(
+            inputs.get(k) is None for k in ("members", "filter_ids", "type_ids",
+                                            "template_id")):
+        return None
+    ids = set([int(view_id)]) | set(inputs["members"]) | set(inputs["filter_ids"]) \
+        | set(inputs["type_ids"])
+    if inputs["template_id"] not in (None, -1):
+        ids.add(int(inputs["template_id"]))
+    missing = sorted(i for i in ids if guids.get(i) is None)
+    text = ",".join("{0}:{1}".format(i, guids.get(i) or "-") for i in sorted(ids))
+    return {"count": len(ids), "sha1": hashlib.sha1(text.encode("ascii")).hexdigest(),
+            "missing": len(missing), "missing_ids": missing[:limit]}
+
+
+def version_guid_signals(view_id, a_inputs, b_inputs, guids_a, guids_b,
+                         limit=VIEW_ID_LIMIT):
+    """PURE. What VersionGuid says about one view between A and B.
+
+    Signals: members added or removed (membership), members whose
+    VersionGuid differs, the view itself, its template (a different template,
+    or the same template with another VersionGuid), its filters, its member
+    types. ``vg_verdict`` is ``changed`` when any fired, ``unchanged`` when
+    none did and every input was read, else ``unknown``. A changed signal and
+    unequal fingerprints are the same fact, asserted by the tests."""
+    fa = view_fingerprint(view_id, a_inputs, guids_a)
+    fb = view_fingerprint(view_id, b_inputs, guids_b)
+    if fa is None or fb is None:
+        return {"vg_verdict": "unknown", "fired": [], "signals": None,
+                "fingerprint_a": fa, "fingerprint_b": fb,
+                "reason": "an input or a VersionGuid map was not read"}
+
+    def _guid_changed(ids):
+        return sorted(i for i in ids if guids_a.get(i) != guids_b.get(i))
+
+    ma, mb = set(a_inputs["members"]), set(b_inputs["members"])
+    ta, tb = a_inputs["template_id"], b_inputs["template_id"]
+    fa_ids, fb_ids = set(a_inputs["filter_ids"]), set(b_inputs["filter_ids"])
+    ya, yb = set(a_inputs["type_ids"]), set(b_inputs["type_ids"])
+    changed_members = _guid_changed(ma & mb)
+    changed_filters = _guid_changed(fa_ids & fb_ids)
+    changed_types = _guid_changed(ya & yb)
+    signals = {
+        "members_added": sorted(mb - ma)[:limit], "members_added_count": len(mb - ma),
+        "members_removed": sorted(ma - mb)[:limit], "members_removed_count": len(ma - mb),
+        "members_changed": changed_members[:limit],
+        "members_changed_count": len(changed_members),
+        "view_itself": guids_a.get(int(view_id)) != guids_b.get(int(view_id)),
+        "template": (ta != tb) or (ta not in (None, -1)
+                                   and guids_a.get(ta) != guids_b.get(ta)),
+        "filters": (fa_ids != fb_ids) or bool(changed_filters),
+        "member_types_set": ya != yb,
+        "member_types_changed": changed_types[:limit],
+        "member_types_changed_count": len(changed_types),
+    }
+    fired = sorted(k for k in ("members_added_count", "members_removed_count",
+                               "members_changed_count", "member_types_changed_count")
+                   if signals[k]) + sorted(k for k in ("view_itself", "template", "filters",
+                                                       "member_types_set") if signals[k])
+    return {"vg_verdict": "changed" if fired else "unchanged", "fired": fired,
+            "signals": signals, "fingerprint_a": fa, "fingerprint_b": fb,
+            "fingerprints_equal": fa["sha1"] == fb["sha1"]}
+
+
+def compare_guid_maps(a, b):
+    """PURE. Two ``{element id: VersionGuid}`` maps: the ids in both with the
+    same VersionGuid, with a different one, and in one only."""
+    if a is None or b is None:
+        return None
+    common = set(a) & set(b)
+    differ = sum(1 for i in common if a[i] != b[i])
+    return {"in_a": len(a), "in_b": len(b), "common": len(common),
+            "same": len(common) - differ, "differ": differ,
+            "only_a": len(set(a) - common), "only_b": len(set(b) - common),
+            "differ_fraction_of_common": (differ / float(len(common))) if common else None}
 
 
 def file_fingerprint(path, chunk=8 * 1024 * 1024):
@@ -421,6 +550,11 @@ def reflection(app):
             else {"error": "type not found in the API assembly"})
     rec["q1_can_run"] = all(rec[n]["callable_shape"]
                             for n in ("GetDocumentVersion", "GetChangedElements"))
+    from Autodesk.Revit.DB import Element
+    props = [p for p in clr.GetClrType(Element).GetProperties() if "Version" in str(p.Name)]
+    rec["element_version_properties"] = sorted(
+        "{0} {1}".format(p.PropertyType.FullName, p.Name) for p in props)
+    rec["element_version_guid"] = any(str(p.Name) == "VersionGuid" for p in props)
     return rec
 
 
@@ -560,6 +694,37 @@ def close_document(doc, rec):
     rec["close_ms"] = round((time.time() - t0) * 1000.0, 1)
 
 
+def read_version_guids(doc):
+    """``({element id: str(VersionGuid)}, stats)`` over every element and every
+    element type of ``doc``, read once. An element whose read raises is
+    counted, the first error kept."""
+    from Autodesk.Revit.DB import FilteredElementCollector
+    out, errors, first_error = {}, 0, None
+    t0 = time.time()
+    for collector in (FilteredElementCollector(doc).WhereElementIsNotElementType(),
+                      FilteredElementCollector(doc).WhereElementIsElementType()):
+        for e in collector:
+            try:
+                out[element_id_int(e.Id)] = str(e.VersionGuid)
+            except Exception as ex:  # noqa: BLE001 -- counted; first one kept
+                errors += 1
+                if first_error is None:
+                    first_error = "{0}: {1}".format(type(ex).__name__, ex)
+    return out, {"elements": len(out), "errors": errors, "first_error": first_error,
+                 "ms": round((time.time() - t0) * 1000.0, 1)}
+
+
+def view_type_name(ctx, view):
+    """resolve_view_type_name over production's reader and Enum.GetName."""
+    import clr
+    import System
+    from Autodesk.Revit.DB import ViewType
+    enum_t = clr.GetClrType(ViewType)
+    read_name = ctx.batch_capture._view_type_name(view)
+    return resolve_view_type_name(read_name,
+                                  lambda number: System.Enum.GetName(enum_t, number))
+
+
 def view_by_id(doc, vid):
     from Autodesk.Revit.DB import ElementId, View
     elem = doc.GetElement(ElementId(int(vid)))
@@ -670,7 +835,7 @@ def view_inputs(ctx, doc, vid):
         return out, None
     out["present_in_b"] = True
     out["name"] = read(lambda: str(view.Name))
-    out["view_type"] = read(ctx.batch_capture._view_type_name, view)
+    out["view_type"] = read(lambda: view_type_name(ctx, view)[0])
     mem = membership(ctx, doc, vid)
     out["membership_count"] = len(mem["value"]) if mem["state"] == "value" else None
     out["membership_ms"] = mem.get("ms")
@@ -803,10 +968,14 @@ def run_probe(inputs, app=None, uiapp=None):
         _write_json(progress_path, report)
 
     report["reflection"] = reflection(app)
-    if not report["reflection"]["q1_can_run"]:
-        report["stopped"] = "reflection: {0}".format(dict(
+    api_ok = report["reflection"]["q1_can_run"]
+    vg_on = options["version_guid"] and report["reflection"]["element_version_guid"]
+    report["version_guid_run"] = vg_on
+    if not api_ok and not vg_on:
+        report["stopped"] = "reflection: {0}; Element.VersionGuid present: {1}".format(dict(
             (n, report["reflection"][n]["reason"])
-            for n in ("GetDocumentVersion", "GetChangedElements")))
+            for n in ("GetDocumentVersion", "GetChangedElements")),
+            report["reflection"]["element_version_guid"])
         report["finalized"] = True
         _write_json(json_path, report)
         return json_path
@@ -817,8 +986,26 @@ def run_probe(inputs, app=None, uiapp=None):
     _progress("fingerprinted")
 
     versions = {}
-    a_members = {}
+    a_members, a_inputs = {}, {}
+    guid_maps = {}
     view_ids = list(given_ids)
+
+    def _read_guids(doc, label, rec):
+        """Every element's VersionGuid in this open (Q1b), and its file."""
+        if not vg_on:
+            return None
+        got = read(read_version_guids, doc)
+        if got["state"] != "value":
+            rec["version_guids"] = got
+            return None
+        guids, stats = got["value"]
+        rec["version_guids"] = stats
+        if options["write_guid_maps"]:
+            name = "version_guids_{0}.json".format(label)
+            _write_json(os.path.join(probe_dir, name),
+                        dict((str(k), v) for k, v in guids.items()))
+            rec["version_guids"]["file"] = name
+        return guids
 
     # --- A, detached: version, the sample, A's membership ------------------
     rec = report["opens"]["a_detached"] = {"path": path_a}
@@ -829,22 +1016,29 @@ def run_probe(inputs, app=None, uiapp=None):
         rec["version"] = read(document_version, doc)
         versions["a_detached"] = value_of(rec["version"])
         if not view_ids:
-            # The batch's own selection and ViewType reader (batch_capture):
-            # run 20261026T084944's own reader matched no type, drawing 0.
+            # The batch's selection rule (non-template, DEFAULT_VIEW_TYPES),
+            # with the type name read through resolve_view_type_name: under
+            # Dynamo production's reader returned numbers in run
+            # 20261026T095313 and select_views kept none (recorded below).
             bc = ctx.batch_capture
-            kept, selection = bc.select_views(bc.collect_views(doc), ctx.view_types)
+            views = bc.collect_views(doc)
+            _kept, selection = bc.select_views(views, ctx.view_types)
+            how = counts_by(view_type_name(ctx, v)[1] for v in views)
             view_ids, report["sample"] = sample_view_ids(
-                sample_population(kept, bc._view_type_name), ctx.view_types,
-                options["sample_size"], options["seed"])
-            report["sample"]["view_selection"] = selection
+                sample_population(views, lambda v: view_type_name(ctx, v)),
+                ctx.view_types, options["sample_size"], options["seed"])
+            report["sample"]["production_select_views"] = selection
+            report["sample"]["type_name_read_by"] = how
         else:
             report["sample"] = {"rule": "IN[3] view ids", "size_drawn": len(view_ids)}
+        guid_maps["a"] = _read_guids(doc, "a_detached", rec)
         for vid in view_ids:
-            m = membership(ctx, doc, vid)
-            a_members[vid] = value_of(m)
+            row, inputs_ = view_inputs(ctx, doc, vid)
+            a_inputs[vid] = inputs_
+            a_members[vid] = None if inputs_ is None else inputs_["members"]
             rec.setdefault("membership", {})[str(vid)] = {
-                "state": m["state"], "error": m["error"], "ms": m.get("ms"),
-                "count": None if m["state"] != "value" else len(m["value"])}
+                "present": row.get("present_in_b"), "error": row.get("membership_error"),
+                "ms": row.get("membership_ms"), "count": row.get("membership_count")}
     except Exception as ex:
         rec["error"] = exception_record("a_detached", ex)
         ctx.exceptions.append(rec["error"])
@@ -862,6 +1056,11 @@ def run_probe(inputs, app=None, uiapp=None):
             rec.update(how)
             rec["version"] = read(document_version, doc)
             versions["a_detached_reopen"] = value_of(rec["version"])
+            again = _read_guids(doc, "a_detached_reopen", rec)
+            # Q1b (a): one file, two detached opens. differ > 0 means a
+            # detached open re-mints VersionGuids and the signal is unusable.
+            report["reopen_version_guids"] = compare_guid_maps(guid_maps.get("a"), again)
+            del again
         except Exception as ex:
             rec["error"] = exception_record("a_detached_reopen", ex)
             ctx.exceptions.append(rec["error"])
@@ -916,6 +1115,9 @@ def run_probe(inputs, app=None, uiapp=None):
             rec["version"] = read(document_version, doc)
             own = value_of(rec["version"])
             versions[label] = own
+            guids_b = _read_guids(doc, label, rec) if detached else None
+            if guids_b is not None:
+                report["version_guid_a_vs_b"] = compare_guid_maps(guid_maps.get("a"), guids_b)
             asks = [("a_detached", (versions.get("a_detached") or {}).get("guid")),
                     ("a_detached_reopen",
                      (versions.get("a_detached_reopen") or {}).get("guid")),
@@ -924,6 +1126,10 @@ def run_probe(inputs, app=None, uiapp=None):
                     ("own_guid_positive_control", (own or {}).get("guid")),
                     ("random_guid_negative_control", random_guid)]
             primary = None
+            if not api_ok:
+                asks = []
+                report["calls"]["skipped"] = rec_unavailable(
+                    "reflection did not confirm GetDocumentVersion / GetChangedElements")
             for against, guid in asks:
                 key = "{0}__vs__{1}".format(label, against)
                 if not guid:
@@ -941,13 +1147,13 @@ def run_probe(inputs, app=None, uiapp=None):
                     if primary is None and against in ("a_detached", "a_detached_reopen",
                                                        "a_copy_not_detached"):
                         primary = (key, sets)
-            if per_view and primary is not None:
-                report["per_view_against"] = primary[0]
-                sets = primary[1]
+            if per_view and (primary is not None or guids_b is not None):
+                report["per_view_against"] = primary[0] if primary is not None else None
+                sets = primary[1] if primary is not None else None
                 for vid in view_ids:
                     t0 = time.time()
                     row, inputs_ = view_inputs(ctx, doc, vid)
-                    if inputs_ is not None:
+                    if inputs_ is not None and sets is not None:
                         t1 = time.time()
                         row.update(view_signals(
                             vid, inputs_["members"], a_members.get(vid),
@@ -955,9 +1161,16 @@ def run_probe(inputs, app=None, uiapp=None):
                             inputs_["type_ids"], sets["created"], sets["modified"],
                             sets["deleted"]))
                         row["intersection_ms"] = round((time.time() - t1) * 1000.0, 3)
+                    if inputs_ is not None and guids_b is not None:
+                        t1 = time.time()
+                        vg = version_guid_signals(vid, a_inputs.get(vid), inputs_,
+                                                  guid_maps.get("a"), guids_b)
+                        row["version_guid"] = vg
+                        row["vg_verdict"] = vg["vg_verdict"]
+                        row["vg_ms"] = round((time.time() - t1) * 1000.0, 3)
                     row["view_total_ms"] = round((time.time() - t0) * 1000.0, 1)
                     report["views"].append(row)
-            return primary is not None
+            return primary is not None or guids_b is not None
         except Exception as ex:
             rec["error"] = exception_record(label, ex)
             ctx.exceptions.append(rec["error"])

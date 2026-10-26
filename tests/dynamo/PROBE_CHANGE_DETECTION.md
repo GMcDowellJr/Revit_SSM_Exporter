@@ -6,7 +6,15 @@ between two captured model versions, so a later run can skip the views that
 did not change?** The offline half is `tools/analyze_change_detection_probe.py`,
 which checks the API's answer against captures already made.
 
-**UNVERIFIED in Revit.** Only the pure parts are tested offline
+**Q1 answered (run `20261026T095313`, OBSERVED):** `GetChangedElements`
+cannot compare two archive versions as the batch opens them. Two detached
+opens of one file got two version GUIDs (`NumberOfSaves: 1` each), and B
+asked about either A GUID raised `ArgumentException: This GUID is invalid in
+the given document`, exactly as the random-GUID negative control did; B's own
+GUID succeeded (0 / 0 / 0, 1.5 ms). Archives unchanged. Q1b below asks the
+same question of `Element.VersionGuid`.
+
+**Q1b (probe `2026-10-27.1`) is UNVERIFIED in Revit.** Only the pure parts are tested offline
 (`tests/test_analyze_change_detection_probe.py`: the sample, the signature
 check, the per-view signals, the archive fingerprint, and the analyzer end to
 end on synthetic runs). Every Revit call is the question. Treat the first run
@@ -70,6 +78,44 @@ paths).
 
 `versions.*.saves` (`NumberOfSaves`) is recorded for every open: B's count
 above A's is consistent with one lineage, never proof of it.
+
+## Q1b: Element.VersionGuid
+
+`Element.VersionGuid` is BELIEVED to be a per-element id that changes when
+the element is modified. Reflection lists every `Element` property with
+"Version" in its name (`reflection.element_version_properties`) and Q1b runs
+only when `VersionGuid` is among them (`version_guid_run`).
+
+In each DETACHED open (A, A reopened, B) every element's and element type's
+`VersionGuid` is read once (`opens.<label>.version_guids`: count, errors,
+ms). Three answers, in order of what they decide:
+
+| field | question | unusable when |
+|---|---|---|
+| `reopen_version_guids` | one file opened detached twice: the same VersionGuids? | `differ > 0`: a detached open re-mints them |
+| `version_guid_a_vs_b` | A against B, by element id: same, differ, only in A, only in B | `same == 0`: no lineage across archives |
+| `views[].vg_verdict` | per view: did anything it depends on change? | many false unchanged in the analyzer |
+
+Per view the fingerprint covers the view, its members, its template, its and
+its template's filters, and its members' types, each as `id:VersionGuid`
+(`views[].version_guid.fingerprint_a / _b`). The signals say which part
+moved: members added, removed or changed, the view itself, the template (a
+different one, or the same one changed), filters, member types.
+`vg_verdict` is `unknown`, never `unchanged`, when any input was not read.
+Unchanged is exactly "the two fingerprints are equal"
+(`test_unchanged_is_exactly_equal_fingerprints_over_generated_inputs`).
+
+Known blind spots (INFERENCE until the analyzer measures them): a change
+inside a linked model; an object-style (category) change; anything the view
+draws that is not one of its member elements.
+
+The sample now draws: run `095313` drew 0 views because production's
+`batch_capture._view_type_name` returned NUMBERS under Dynamo ("1", "117"),
+so `select_views` kept nothing (`sample.production_select_views` records it
+again). The probe resolves a numeric type through `Enum.GetName`
+(`resolve_view_type_name`; `sample.type_name_read_by` counts how each was
+read). Production is unchanged; the batch runs in pyRevit, where the
+selection works.
 
 ## How the archives are kept unchanged
 
@@ -158,6 +204,8 @@ would show.
 | `sample_size` | views drawn when `IN[3]` is empty | `50` |
 | `control` | `"reopen"`: A opened detached twice; `"copy"`: byte copies opened not detached (refused for a cloud central); `"none"` | `"reopen"` |
 | `worksets` | `"all"` or `"last_viewed"`, as the batch's setting | `"all"` |
+| `version_guid` | Q1b: read every element's VersionGuid in each detached open | `true` |
+| `write_guid_maps` | also write each open's full `{id: VersionGuid}` map, `version_guids_<label>.json` (tens of MB each) | `false` |
 
 4. Run. `OUT` is the JSON's path. If the probe could not start at all, `OUT`
    is a dict with `fatal`. Dismiss any dialog the auto-answers miss; every
@@ -165,8 +213,10 @@ would show.
 
 **Expected run time:** three detached opens (A's took 51 s in run
 `084944`, OBSERVED), four sha256 reads of the 1.1 GB archives, and about 100
-view membership reads (not yet measured); roughly 10-25 minutes in all
-(INFERENCE). `progress_<stamp>.json` is rewritten after each phase, so a
+view membership reads plus, per view and per open, its template, filters and
+member types; then three whole-document VersionGuid reads (not yet measured:
+`opens.*.version_guids.ms` is the measurement). Roughly 15-30 minutes in all
+(INFERENCE; the three opens took 48-55 s each in run `095313`). `progress_<stamp>.json` is rewritten after each phase, so a
 crash still shows how far it got (`finalized: false`; it is never the record).
 
 ### Then, offline (Greg, on the machine with the runs)
@@ -188,7 +238,7 @@ the table.
 The whole folder `<IN[0]>/change_detection_<stamp>/`:
 
 - `probe_change_detection_<stamp>.json` (the record, written last)
-- `changed_ids_<label>.json`, one per successful call
+- `changed_ids_<label>.json`, one per successful call (Q1b: only B's own-GUID control)
 - `progress_<stamp>.json`
 - `change_detection_analysis.json`, after the offline step
 

@@ -22,6 +22,9 @@ reported so a reader can apply another rule. Nothing here is a threshold:
 "differs" is "> 0", and the counts are beside it.
 
 The table crosses api_verdict with capture differs / same / not comparable.
+Since 1.1.0 (probe 2026-10-27.1, Q1b) the same table and false-unchanged
+list are made for ``vg_verdict``, the Element.VersionGuid fingerprint
+(``table_version_guid``, ``false_unchanged_version_guid``).
 A FALSE UNCHANGED is a view the API called unchanged whose capture differs;
 each is listed with what differs and a cause label (``view_setting``,
 ``element``, ``link``, ``type_or_graphics``, ``other``). Cause labels are
@@ -53,7 +56,7 @@ from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 
 SCHEMA = "vop.probe.change_detection.analysis.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 ANALYSIS_NAME = "change_detection_analysis.json"
 PROBE_GLOB = "probe_change_detection_*.json"
 FRAME_KEYS = ("view_scale", "fit_direction", "pixel_size", "actual_w", "actual_h",
@@ -208,11 +211,12 @@ def capture_differs(entry):
     return any(parts)
 
 
-def cross_table(rows):
-    """PURE. ``{api_verdict: {differs, same, not_comparable}}``."""
+def cross_table(rows, key="api_verdict"):
+    """PURE. ``{<verdict>: {differs, same, not_comparable}}`` for the
+    verdict field ``key`` (api_verdict or vg_verdict)."""
     table = {}
     for row in rows:
-        api = row.get("api_verdict") or "not_probed"
+        api = row.get(key) or "not_probed"
         cap = {True: "differs", False: "same", None: "not_comparable"}[row.get("capture_differs")]
         table.setdefault(api, {"differs": 0, "same": 0, "not_comparable": 0})[cap] += 1
     return table
@@ -320,6 +324,9 @@ def analyze(target, run_a, run_b):
         row = {"view_id": vid, "name": (view.get("name") or {}).get("value"),
                "api_verdict": view.get("api_verdict") if view.get("present_in_b")
                else "absent_in_b",
+               "vg_verdict": view.get("vg_verdict") if view.get("present_in_b")
+               else "absent_in_b",
+               "vg_fired": (view.get("version_guid") or {}).get("fired"),
                "api_fired": view.get("fired"), "api_unread": view.get("unread"),
                "membership_diff": view.get("membership_diff")}
         try:
@@ -338,15 +345,20 @@ def analyze(target, run_a, run_b):
             row.update(capture_differs=None,
                        not_comparable="{0}: {1}".format(type(ex).__name__, ex))
         rows.append(row)
-    false_unchanged = [
-        {"view_id": r["view_id"], "name": r["name"], "cause_inference": r.get("cause_inference"),
-         "frame_diff": r.get("frame_diff"),
-         "model_differing_px": (r.get("model_pixels") or {}).get("differing_px"),
-         "anno_differing_px": (r.get("anno_pixels") or {}).get("differing_px"),
-         "model_bbox": r.get("model_bbox"), "anno_bbox": r.get("anno_bbox")}
-        for r in rows if r["api_verdict"] == "unchanged" and r.get("capture_differs")]
-    false_changed = [r["view_id"] for r in rows
-                     if r["api_verdict"] == "changed" and r.get("capture_differs") is False]
+    def _false_unchanged(key):
+        return [
+            {"view_id": r["view_id"], "name": r["name"],
+             "cause_inference": r.get("cause_inference"), "frame_diff": r.get("frame_diff"),
+             "model_differing_px": (r.get("model_pixels") or {}).get("differing_px"),
+             "anno_differing_px": (r.get("anno_pixels") or {}).get("differing_px"),
+             "model_bbox": r.get("model_bbox"), "anno_bbox": r.get("anno_bbox")}
+            for r in rows if r[key] == "unchanged" and r.get("capture_differs")]
+
+    def _false_changed(key):
+        return [r["view_id"] for r in rows
+                if r[key] == "changed" and r.get("capture_differs") is False]
+    false_unchanged = _false_unchanged("api_verdict")
+    vg_false_unchanged = _false_unchanged("vg_verdict")
     return probe_path, {
         "schema": SCHEMA, "tool_version": TOOL_VERSION, "status": "value",
         "probe_json": str(probe_path), "probe_json_sha256": sha256_file(probe_path),
@@ -354,7 +366,11 @@ def analyze(target, run_a, run_b):
         "per_view_against": probe.get("per_view_against"),
         "table": cross_table(rows),
         "false_unchanged": false_unchanged, "false_unchanged_count": len(false_unchanged),
-        "api_changed_capture_same": false_changed,
+        "api_changed_capture_same": _false_changed("api_verdict"),
+        "table_version_guid": cross_table(rows, "vg_verdict"),
+        "false_unchanged_version_guid": vg_false_unchanged,
+        "false_unchanged_version_guid_count": len(vg_false_unchanged),
+        "version_guid_changed_capture_same": _false_changed("vg_verdict"),
         "rule": "capture differs: any decoded-id pixel (ticks excluded), frame field, "
                 "or bbox-map entry differs (> 0, no threshold); cause labels are INFERENCE",
         "views": rows}
@@ -374,13 +390,17 @@ def main(argv=None):
         return 2
     out = Path(args.out) if args.out else probe_path.parent / ANALYSIS_NAME
     out.write_text(json.dumps(record, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    print("api_verdict      differs   same  not_comparable")
-    for api, row in sorted(record["table"].items()):
-        print("{0:<15} {1:>8} {2:>6} {3:>15}".format(api, row["differs"], row["same"],
-                                                     row["not_comparable"]))
-    print("false unchanged: {0}".format(record["false_unchanged_count"]))
-    for fu in record["false_unchanged"]:
-        print("  {0} {1}: {2}".format(fu["view_id"], fu["name"], ",".join(fu["cause_inference"])))
+    for title, tkey, fkey in (("api_verdict", "table", "false_unchanged"),
+                              ("vg_verdict", "table_version_guid",
+                               "false_unchanged_version_guid")):
+        print("{0:<16} differs   same  not_comparable".format(title))
+        for api, row in sorted(record[tkey].items()):
+            print("{0:<15} {1:>8} {2:>6} {3:>15}".format(api, row["differs"], row["same"],
+                                                         row["not_comparable"]))
+        print("false unchanged ({0}): {1}".format(title, len(record[fkey])))
+        for fu in record[fkey]:
+            print("  {0} {1}: {2}".format(fu["view_id"], fu["name"],
+                                          ",".join(fu["cause_inference"] or [])))
     print("wrote {0}".format(out))
     return 0
 
