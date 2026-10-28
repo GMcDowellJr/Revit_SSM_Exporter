@@ -147,6 +147,30 @@ again). The probe resolves a numeric type through `Enum.GetName`
 read). Production is unchanged; the batch runs in pyRevit, where the
 selection works.
 
+### Q1b, run `20261028T114224` (probe `2026-10-28.1`, analyzer 1.3.0), OBSERVED
+
+Same pair (V56 -> V57), same 50 views; archives unchanged; 4.5 minutes.
+
+- The re-mint is deterministic: again 1,937 of 446,169. By category: Rooms
+  469, uncategorised Elements 404, Room Tags 323, Specialty Equipment 230,
+  Dimensions 229, Plumbing Fixtures 90, a DWG's element types 83, and smaller
+  counts (Lighting Fixtures, Spot Elevations, Model Groups, RVT link
+  instances and types, Schedules, ...).
+- Against the 10-21 captures (tick and frame lines set aside):
+
+  | verdict | unchanged, capture same | unchanged, capture differs | changed, capture differs | changed, capture same | not comparable |
+  |---|---|---|---|---|---|
+  | `vg_verdict` | 15 | **0** | 27 | 7 | 1 |
+  | `vg_verdict_stable` | 16 | **0** | 27 | 6 | 1 |
+
+- Stable unchanged by view type: all 7 drafting views, 6 of 7 legends (the
+  seventh is new in B), 3 of 7 floor plans; no area plan, ceiling plan,
+  elevation or section.
+- The six still over-cautious: four elevations each rest on one or two
+  members modified A -> B with identical pixels (8230062, 8230063, 8922372,
+  shared across them); two RCPs on members deleted and re-created with new
+  ids (11796xxx -> 12749xxx) and identical pixels.
+
 ## How the archives are kept unchanged
 
 - **No transaction is opened** on any document: the probe only reads.
