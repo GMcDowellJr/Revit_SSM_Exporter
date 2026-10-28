@@ -62,7 +62,7 @@ from vop_interwoven import output_layout  # noqa: E402
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.change_detection.analysis.v1"
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 ANALYSIS_NAME = "change_detection_analysis.json"
 PROBE_GLOB = "probe_change_detection_*.json"
 FRAME_KEYS = ("view_scale", "fit_direction", "pixel_size", "actual_w", "actual_h",
@@ -133,18 +133,40 @@ def frame_diff(frame_a, frame_b, keys=FRAME_KEYS):
     return sorted(k for k in keys if not _close((frame_a or {}).get(k), (frame_b or {}).get(k)))
 
 
-def bbox_map_diff(map_a, map_b, fields):
+def capture_line_ids(sidecar):
+    """PURE. The ids of the lines the capture itself drew and rolled back --
+    the twelve registration ticks (``registration_marks.marks``) and a
+    crop-less view's frame-bound lines (``registration_marks.frame_bounds.
+    created``) -- as strings. They get new ids on every capture, so in a
+    bbox map they are always "added" and "removed": run 20261028T111442 read
+    15 identical drafting views and legends as differing on exactly these."""
+    reg = (sidecar or {}).get("registration_marks") or {}
+    ids = set()
+    for mark in reg.get("marks") or []:
+        if isinstance(mark, dict) and mark.get("id") is not None:
+            ids.add(str(int(mark["id"])))
+    for line in ((reg.get("frame_bounds") or {}).get("created") or []):
+        if isinstance(line, dict) and line.get("id") is not None:
+            ids.add(str(int(line["id"])))
+    return ids
+
+
+def bbox_map_diff(map_a, map_b, fields, exclude_a=(), exclude_b=()):
     """PURE. ``{added, removed, moved, ids...}`` between two id -> entry maps;
-    an entry has MOVED when any of ``fields`` differs beyond 1e-6 ft."""
+    an entry has MOVED when any of ``fields`` differs beyond 1e-6 ft. Ids in
+    ``exclude_a`` / ``exclude_b`` (capture_line_ids of each side) are left out
+    of their map, and counted as ``excluded_capture_lines``."""
     map_a, map_b = map_a or {}, map_b or {}
-    ka, kb = set(map(str, map_a)), set(map(str, map_b))
+    ka_all, kb_all = set(map(str, map_a)), set(map(str, map_b))
+    ka, kb = ka_all - set(exclude_a), kb_all - set(exclude_b)
     moved = sorted(k for k in ka & kb
                    if any(not _close((map_a[k] or {}).get(f), (map_b[k] or {}).get(f))
                           for f in fields))
     added, removed = sorted(kb - ka), sorted(ka - kb)
     return {"added": len(added), "removed": len(removed), "moved": len(moved),
             "added_ids": added[:LIST_LIMIT], "removed_ids": removed[:LIST_LIMIT],
-            "moved_ids": moved[:LIST_LIMIT]}
+            "moved_ids": moved[:LIST_LIMIT],
+            "excluded_capture_lines": [len(ka_all - ka), len(kb_all - kb)]}
 
 
 def id_image_diff(ids_a, ids_b, exclude=None):
@@ -283,13 +305,15 @@ def compare_view(view_id, files_a, files_b):
         entry["model_pixels"] = compare_pass(files_a["model"], files_b["model"])
         entry["model_bbox"] = bbox_map_diff(
             (ma.get("near_face_w_map") or {}).get("host"),
-            (mb.get("near_face_w_map") or {}).get("host"), ("bbox_3d", "uv_rect"))
+            (mb.get("near_face_w_map") or {}).get("host"), ("bbox_3d", "uv_rect"),
+            capture_line_ids(ma), capture_line_ids(mb))
     if files_a["anno"] and files_b["anno"]:
         aa, ab = _load(files_a["anno"]), _load(files_b["anno"])
         entry["anno_pixels"] = compare_pass(files_a["anno"], files_b["anno"])
         entry["anno_bbox"] = bbox_map_diff(aa.get("annotation_bbox_map"),
                                            ab.get("annotation_bbox_map"),
-                                           ("bbox_uv", "bbox_3d"))
+                                           ("bbox_uv", "bbox_3d"),
+                                           capture_line_ids(aa), capture_line_ids(ab))
         if entry.get("model_pixels") is None and not files_a["model"] and not files_b["model"]:
             entry["model_pixels"] = {"shape_equal": True, "differing_px": 0,
                                      "note": "annotation-only capture in both runs"}

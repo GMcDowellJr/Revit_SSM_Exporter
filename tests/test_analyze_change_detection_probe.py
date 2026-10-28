@@ -401,3 +401,37 @@ def test_version_guid_verdict_gets_its_own_table_and_false_unchanged(tmp_path):
     assert [f["view_id"] for f in record["false_unchanged_version_guid"]] == [2]
     assert record["version_guid_changed_capture_same"] == [5]
     assert record["false_unchanged_count"] == 0           # the API table is apart
+
+
+def test_the_captures_own_tick_and_frame_lines_are_not_a_change(tmp_path):
+    # Run 20261028T111442: 15 identical drafting views and legends read as
+    # differing because their 12 ticks and 2 frame-bound lines -- drawn and
+    # rolled back by every capture -- had new ids in run B.
+    a, b = tmp_path / "A", tmp_path / "B"
+    _view(a, 8, {81: (0, 0, 10, 10)}, {81: RED})
+    _view(b, 8, {81: (0, 0, 10, 10)}, {81: RED})
+    for run, base in ((a, 1000), (b, 2000)):
+        path = run / "color_id" / "V_8_anno.json"
+        side = json.loads(path.read_text())
+        lines = [str(base + i) for i in range(14)]
+        for lid in lines:
+            side["annotation_bbox_map"][lid] = {"bbox_uv": {"state": "value",
+                                                            "value": [[0, 0]]}}
+        side["registration_marks"] = {
+            "marks": [{"id": int(x)} for x in lines[:12]],
+            "frame_bounds": {"created": [{"id": int(x)} for x in lines[12:]]}}
+        path.write_text(json.dumps(side))
+    pdir = _probe(tmp_path / "probe", [(8, "unchanged")])
+    assert acd.main([str(pdir), "--run-a", str(a), "--run-b", str(b)]) == 0
+    row = json.loads((pdir / acd.ANALYSIS_NAME).read_text())["views"][0]
+    assert row["anno_bbox"]["added"] == 0 and row["anno_bbox"]["removed"] == 0
+    assert row["anno_bbox"]["excluded_capture_lines"] == [14, 14]
+    assert row["capture_differs"] is False
+
+
+def test_capture_line_ids_reads_ticks_and_frame_bounds_and_tolerates_absence():
+    side = {"registration_marks": {"marks": [{"id": 5}, {"id": None}, {}],
+                                   "frame_bounds": {"created": [{"id": 7}]}}}
+    assert acd.capture_line_ids(side) == {"5", "7"}
+    assert acd.capture_line_ids({}) == set()
+    assert acd.capture_line_ids({"registration_marks": {"frame_bounds": None}}) == set()
