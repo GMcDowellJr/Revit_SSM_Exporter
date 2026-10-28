@@ -23,6 +23,9 @@ Settings (batch_settings.json beside this script):
     batch_size         views per streaming batch, blank = one batch
     export_view_raster raw Revit view PNGs beside the captures (false)
     worksets           "all" (default) or "last_viewed"
+    record_fingerprints  hash-and-skip phase 1: write each capture run's view
+                       fingerprints (true, default); a plan made with
+                       --mode fingerprint backfills existing runs instead
 
 Every file is opened DETACHED (DetachAndPreserveWorksets) with the chosen
 workset configuration, read-only in effect; dialogs during the open are
@@ -47,6 +50,7 @@ except NameError:
     _SCRIPT_DIR = os.getcwd()
 _SETTINGS_PATH = os.path.join(_SCRIPT_DIR, "batch_settings.json")
 _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
+             "record_fingerprints": True,
              "export_view_raster": False, "worksets": "all"}
 
 
@@ -270,12 +274,36 @@ def capture(doc, job):
         doc, view_ids, _config(), job["output_dir"],
         batch_size=_int_or_none(_settings.get("batch_size")),
         date_override=job.get("date_override"),
-        export_view_raster=bool(_settings.get("export_view_raster")))
+        export_view_raster=bool(_settings.get("export_view_raster")),
+        record_fingerprints=_flag(_settings.get("record_fingerprints"), True))
     err = stamp_run_meta(run_dir, "view_selection", selection)
     return {"run_dirs": [run_dir], "run_id": run_id,
             "views_processed": result.get("views_processed"),
             "views_failed": result.get("views_failed"),
             "view_selection_stamp_failed": err}
+
+
+def _flag(value, default):
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes")
+
+
+def fingerprint(doc, job):
+    """Hash-and-skip backfill (docs/DESIGN_CHANGE_SKIP.md): write the view
+    fingerprints of each existing run captured from this archive."""
+    from vop_interwoven.view_fingerprint import fingerprint_existing_run
+    done, errors = [], {}
+    for run_dir in job["fingerprint_runs"]:
+        try:
+            out = fingerprint_existing_run(doc, run_dir)
+            done.append(run_dir)
+            print("  fingerprinted {0}: {1}".format(run_dir, out["summary"]))
+        except Exception as ex:  # noqa: BLE001 -- recorded in the job's result
+            errors[run_dir] = "{0}: {1}".format(type(ex).__name__, ex)
+    if not done:
+        raise RuntimeError("no run fingerprinted: {0}".format(errors))
+    return {"run_dirs": done, "errors": errors}
 
 
 def recapture(doc, job):
@@ -366,7 +394,8 @@ def main():
             record = run_batch(plan, open_doc, close_doc, capture, recapture,
                                limit=_int_or_none(_settings.get("limit")), log=print,
                                dialog_log=_dialog_log[0],
-                               close_after_capture=True, session=session)
+                               close_after_capture=True, session=session,
+                               fingerprint=fingerprint)
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:

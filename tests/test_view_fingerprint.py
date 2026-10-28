@@ -1,0 +1,367 @@
+"""Hash-and-skip phase 1 (docs/DESIGN_CHANGE_SKIP.md): the fingerprint, the
+skip verdict, the batch's fingerprint backfill mode and the validation tool.
+
+Revit is not here. What is asserted is the pure arithmetic production runs
+(vop_interwoven.view_fingerprint), the plan and loop with Revit injected (as
+tests/test_batch_capture.py does), and the validation tool end to end on
+synthetic runs: run_meta, fingerprints files and captures written here, the
+record read from the FILE the tool wrote (CLAUDE.md, defect class 4).
+"""
+import json
+import random
+from datetime import datetime
+
+import pytest
+
+from tests import test_analyze_change_detection_probe as cap
+from tests import test_batch_capture as tb
+from tests.layout_helpers import run_meta_file
+from tools import validate_change_skip as vcs
+from vop_interwoven import batch_capture as bc
+from vop_interwoven import output_layout
+from vop_interwoven import view_fingerprint as vf
+
+
+def _inputs(members=(1, 2), template=-1, filters=(), types=(), refs=()):
+    return {"members": list(members), "template_id": template, "filter_ids": list(filters),
+            "type_ids": list(types), "reference_ids": list(refs)}
+
+
+GUIDS = dict((i, "g{0}".format(i)) for i in (1, 2, 3, 10, 50, 60, 70, 80))
+
+
+# --- the fingerprint -------------------------------------------------------------------
+
+def test_each_component_moves_only_its_own_hash():
+    base = vf.view_fingerprint(10, _inputs(template=50, filters=[60], types=[70], refs=[80]),
+                               GUIDS)
+    for name, guid_id in (("view", 10), ("template", 50), ("filters", 60),
+                          ("members", 1), ("types", 70), ("references", 80)):
+        guids = dict(GUIDS)
+        guids[guid_id] = "changed"
+        moved = vf.view_fingerprint(10, _inputs(template=50, filters=[60], types=[70],
+                                                refs=[80]), guids)
+        assert moved["fingerprint"] != base["fingerprint"]
+        assert vf.changed_components(base, moved) == [name]
+
+
+def test_order_and_duplicates_do_not_matter_and_membership_does():
+    a = vf.view_fingerprint(10, _inputs(members=[2, 1, 1]), GUIDS)
+    b = vf.view_fingerprint(10, _inputs(members=[1, 2]), GUIDS)
+    c = vf.view_fingerprint(10, _inputs(members=[1, 2, 3]), GUIDS)
+    assert a["fingerprint"] == b["fingerprint"] != c["fingerprint"]
+    assert vf.changed_components(b, c) == ["members"]
+
+
+def test_an_unread_input_is_an_unknown_fingerprint():
+    for key in ("members", "template_id", "filter_ids", "type_ids", "reference_ids"):
+        rec = vf.view_fingerprint(10, dict(_inputs(), **{key: None}), GUIDS)
+        assert rec["fingerprint"] is None and rec["components"] is None
+    assert vf.view_fingerprint(10, _inputs(), None)["fingerprint"] is None
+
+
+def test_the_graphics_fingerprint_sees_a_style_edit_and_ignores_row_order():
+    rows = [(1, "Walls", 3, 5, "0,0,0", -1, -1, None), (2, "Doors", 1, 1, "0,0,0", -1, -1, None)]
+    g = vf.graphics_fingerprint(rows, [60], GUIDS)
+    assert g == vf.graphics_fingerprint(list(reversed(rows)), [60], GUIDS)
+    heavier = [(1, "Walls", 4, 5, "0,0,0", -1, -1, None), rows[1]]
+    assert vf.graphics_fingerprint(heavier, [60], GUIDS) != g
+    guids = dict(GUIDS, **{})
+    guids[60] = "pattern edited"
+    assert vf.graphics_fingerprint(rows, [60], guids) != g
+    assert vf.graphics_fingerprint(None, [60], GUIDS) is None
+
+
+def test_resolve_type_name_takes_a_name_or_looks_a_number_up():
+    names = {1: "FloorPlan"}
+    assert vf.resolve_type_name("Section", names.get) == "Section"
+    assert vf.resolve_type_name("1", names.get) == "FloorPlan"
+    assert vf.resolve_type_name("9", names.get) is None
+    assert vf.resolve_type_name(None, names.get) is None
+
+
+# --- the verdict -------------------------------------------------------------------------
+
+FACTS = {"config_hash": "9400eaef", "exporter_major": 4, "revit_build": "25.4.41.14",
+         "open_mode": {"detached": True, "workshared": True, "closed_user_worksets": 0},
+         "basis_version": 1, "graphics": "gg"}
+
+
+def _view(fp="f1", links=False):
+    return {"fingerprint": fp, "components": {"members": fp}, "shows_links_or_imports": links}
+
+
+def test_every_rule_holds_and_the_view_would_skip():
+    assert vf.skip_verdict(FACTS, dict(FACTS), _view(), _view(), "success") == {
+        "would_skip": True, "rule": None}
+
+
+@pytest.mark.parametrize("change, rule", [
+    (dict(base=None), "no_baseline_fingerprint"),
+    (dict(status="failed"), "baseline_capture_not_success"),
+    (dict(status="unchanged"), "baseline_capture_not_success"),
+    (dict(cur_facts={"config_hash": "other"}), "config_hash_differs"),
+    (dict(cur_facts={"exporter_major": 5}), "exporter_major_differs"),
+    (dict(cur_facts={"revit_build": "26.0"}), "revit_build_differs"),
+    (dict(cur_facts={"open_mode": {"detached": False}}), "open_mode_differs"),
+    (dict(cur_facts={"open_mode": None}), "open_mode_differs"),
+    (dict(cur_facts={"basis_version": 2}), "basis_version_differs"),
+    (dict(cur_facts={"graphics": "edited"}), "graphics_differs"),
+    (dict(cur_facts={"graphics": None}), "graphics_differs"),
+    (dict(cur=_view(fp=None)), "fingerprint_unknown"),
+    (dict(base=_view(fp=None)), "fingerprint_unknown"),
+    (dict(cur=None), "fingerprint_unknown"),
+    (dict(cur=_view(links=True)), "shows_links_or_imports"),
+    (dict(base=_view(links=None)), "shows_links_or_imports"),
+    (dict(cur=_view(fp="f2")), "fingerprint_differs"),
+])
+def test_each_rule_alone_refuses_the_skip_and_is_named(change, rule):
+    cur_facts = dict(FACTS, **change.get("cur_facts", {}))
+    base = change["base"] if "base" in change else _view()
+    cur = change["cur"] if "cur" in change else _view()
+    out = vf.skip_verdict(FACTS, cur_facts, base, cur, change.get("status", "success"))
+    assert out == {"would_skip": False, "rule": rule}
+    assert rule in vf.RULES
+
+
+def test_unknown_never_skips_over_generated_records():
+    rng = random.Random(3)
+    for _ in range(3000):
+        base = rng.choice([None, _view(), _view(fp=None), _view(links=None)])
+        cur = rng.choice([None, _view(), _view(fp=None), _view(links=None)])
+        facts = dict(FACTS, **dict((k, None) for k in FACTS if rng.random() < 0.1))
+        out = vf.skip_verdict(FACTS, facts, base, cur, rng.choice(["success", None]))
+        if out["would_skip"]:
+            assert base and cur and base["fingerprint"] == cur["fingerprint"]
+            assert base["shows_links_or_imports"] is False is cur["shows_links_or_imports"]
+            assert all(facts[k] is not None for k in FACTS)
+
+
+def test_run_facts_read_run_meta_and_the_fingerprints_file():
+    meta = {"config_hash": "9400eaef", "exporter_version": "4.0.0+src.abc",
+            "revit_version": {"state": "value", "value": {"version_build": "25.4.41.14"}}}
+    fp = {"basis_version": 1, "document": {"open_mode": FACTS["open_mode"],
+                                           "graphics": {"sha1": "gg"}}}
+    assert vf.run_facts(meta, fp) == FACTS
+    assert vf.exporter_major("garbage") is None
+
+
+# --- the batch's fingerprint backfill --------------------------------------------------
+
+def test_the_fingerprint_plan_lists_each_files_runs_and_skips_the_rest():
+    index = [{"run_dir": "E/2025-12-13__r1", "doc_title": "A_2025-12-13", "finalized": True},
+             {"run_dir": "E/2025-12-13__r2", "doc_title": "A_2025-12-13", "finalized": True},
+             {"run_dir": "E/2025-12-20__r3", "doc_title": "A_2025-12-20", "finalized": False}]
+    plan = bc.build_plan(tb._entries("A_2025-12-13", "A_2025-12-20"), "E",
+                         run_index=index, mode="fingerprint")
+    (job,) = plan["jobs"]
+    assert job["kind"] == "fingerprint" and job["stem"] == "A_2025-12-13"
+    assert job["fingerprint_runs"] == ["E/2025-12-13__r1", "E/2025-12-13__r2"]
+    assert plan["skipped"] == [{"key": "KSRF/A_2025-12-20.rvt",
+                                "reason": "no run to fingerprint"}]
+
+
+def test_a_fingerprint_job_is_done_only_with_a_current_basis_and_no_error(tmp_path):
+    run = tb._run_dir(tmp_path, "A_2025-12-13")
+    job = {"kind": "fingerprint", "fingerprint_runs": [run]}
+    assert bc.job_done(job) == (False, None)
+    for stamp, done in (({"error": "x"}, False), ({"basis_version": 0}, False),
+                        ({"basis_version": vf.BASIS_VERSION}, True)):
+        meta = json.loads(run_meta_file(run).read_text())
+        meta["view_fingerprints"] = stamp
+        run_meta_file(run).write_text(json.dumps(meta))
+        assert bc.job_done(job)[0] is done
+
+
+def test_the_loop_runs_a_fingerprint_job_and_never_overwrites_opened_from(tmp_path):
+    root = tmp_path / "Exports"
+    run = tb._run_dir(root, "A_2025-12-13")
+    meta = json.loads(run_meta_file(run).read_text())
+    meta["opened_from"] = {"source": "batch_capture", "title": "the capture's open"}
+    run_meta_file(run).write_text(json.dumps(meta))
+    plan = {"schema": bc.PLAN_SCHEMA, "mode": "fingerprint", "output_root": str(root),
+            "jobs": [{"kind": "fingerprint", "key": "KSRF/A_2025-12-13.rvt",
+                      "stem": "A_2025-12-13", "full_path": "C:\\ACC\\A_2025-12-13.rvt",
+                      "display_name": "KSRF/A_2025-12-13.rvt", "fingerprint_runs": [run]}]}
+    events, open_doc, close_doc, capture, recapture = tb._harness(tmp_path)
+    seen = []
+
+    def fingerprint(doc, job):
+        seen.append(job["fingerprint_runs"])
+        m = json.loads(run_meta_file(run).read_text())
+        m["view_fingerprints"] = {"basis_version": vf.BASIS_VERSION}
+        run_meta_file(run).write_text(json.dumps(m))
+        return {"run_dirs": [run]}
+    record = bc.run_batch(plan, open_doc, close_doc, capture, recapture, log=lambda s: None,
+                          now=datetime(2026, 10, 28, 9, 0, 0), fingerprint=fingerprint)
+    assert record["ok"] == 1 and seen == [[run]]
+    assert ("capture", "A_2025-12-13") not in events
+    after = json.loads(run_meta_file(run).read_text())
+    assert after["opened_from"]["title"] == "the capture's open"
+    assert after["fingerprint_opened_from"]["title"] == "A_2025-12-13_detached"
+    # Without the callable the job fails loudly, never as a capture.
+    plan2 = dict(plan, jobs=[dict(plan["jobs"][0], fingerprint_runs=[run + "_x"])])
+    rec2 = bc.run_batch(plan2, open_doc, close_doc, capture, recapture, log=lambda s: None,
+                        now=datetime(2026, 10, 28, 9, 5, 0), write_log=False)
+    assert rec2["failed"] == 1 and "no fingerprint callable" in rec2["jobs"][0]["error"]
+
+
+def test_a_saved_fingerprint_plan_loads():
+    path_free = {"schema": bc.PLAN_SCHEMA, "jobs": [{"kind": "fingerprint", "key": "k"}]}
+    import tempfile
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "plan.json")
+        with open(p, "w") as fh:
+            json.dump(path_free, fh)
+        assert bc.load_plan(p)["jobs"][0]["kind"] == "fingerprint"
+
+
+# --- the validation tool ------------------------------------------------------------------
+
+RED = (200, 0, 0)
+
+
+def _run(root, name, date, views, status="success", facts=FACTS):
+    """A run with run_meta, captures (cap._view) and a fingerprints file.
+    ``views``: {view_id: (fingerprint, rects)}."""
+    run = root / name
+    for vid, (_fp, rects) in views.items():
+        cap._view(run, vid, rects, dict((e, RED) for e in rects))
+    meta = {"schema": "vop.run_meta.v1", "run_id": name, "date": date, "finalized": True,
+            "config_hash": facts["config_hash"], "exporter_version": "4.0.0+src.x",
+            "revit_version": {"state": "value", "value": {"version_build": facts["revit_build"]}},
+            "views": [{"view_id": v, "capture_status": status} for v in views]}
+    (run / "run_meta_{0}.json".format(date)).write_text(json.dumps(meta))
+    fp = {"schema": vf.SCHEMA, "basis_version": 1,
+          "document": {"open_mode": facts["open_mode"], "graphics": {"sha1": facts["graphics"]}},
+          "views": dict((str(v), {"view_id": v, "view_type": "DraftingView" if v < 100 else
+                                  "FloorPlan", "fingerprint": f, "components": {"members": f},
+                                  "shows_links_or_imports": False})
+                        for v, (f, _r) in views.items())}
+    (run / output_layout.fingerprints_name(date)).write_text(json.dumps(fp))
+    return str(run)
+
+
+def test_validation_counts_true_and_false_unchanged_per_type(tmp_path):
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", {
+        1: ("same", {11: (0, 0, 10, 10)}),         # unchanged, capture same
+        2: ("same", {21: (0, 0, 10, 10)}),         # unchanged by hash, capture differs
+        101: ("old", {31: (0, 0, 10, 10)})})       # hash changed
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {
+        1: ("same", {11: (0, 0, 10, 10)}),
+        2: ("same", {21: (5, 0, 15, 10)}),
+        101: ("new", {31: (0, 0, 10, 10)})})
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--out", str(out), "--min-pairs", "2", "--min-per-type", "1"]) == 0
+    rec = json.loads(out.read_text())
+    (pair,) = rec["pairs"]
+    assert pair["rules"] == {"would_skip": 2, "fingerprint_differs": 1}
+    assert pair["changed_components"] == {"members": 1}
+    assert [f["view_id"] for f in pair["false_unchanged"]] == [2]
+    acc = rec["acceptance"]
+    assert acc["by_type"]["DraftingView"]["true_unchanged"] == 1
+    assert acc["by_type"]["DraftingView"]["false_unchanged"] == 1
+    assert acc["false_unchanged"] == 1 and acc["overall_meets_bar"] is False
+    assert acc["types_meeting_bar"] == []
+    assert pair["over_cautious"] == []         # not measured without --compare-all
+
+
+def test_compare_all_finds_over_caution_and_the_bar_is_met_when_clean(tmp_path):
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", {
+        1: ("same", {11: (0, 0, 10, 10)}), 101: ("old", {31: (0, 0, 10, 10)})})
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {
+        1: ("same", {11: (0, 0, 10, 10)}), 101: ("new", {31: (0, 0, 10, 10)})})
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--compare-all", "--out", str(out), "--min-pairs", "1",
+                     "--min-per-type", "1"]) == 0
+    rec = json.loads(out.read_text())
+    assert rec["pairs"][0]["over_cautious"] == [
+        {"view_id": 101, "view_type": "FloorPlan", "rule": "fingerprint_differs"}]
+    acc = rec["acceptance"]
+    assert acc["overall_meets_bar"] is True and acc["types_meeting_bar"] == ["DraftingView"]
+    assert acc["upper_bound_95"] == pytest.approx(3.0)
+
+
+def test_a_run_without_fingerprints_is_named_not_scored(tmp_path):
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", {1: ("same", {11: (0, 0, 10, 10)})})
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {1: ("same", {11: (0, 0, 10, 10)})})
+    import os
+    os.remove(os.path.join(b, output_layout.fingerprints_name("2025-12-20")))
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--out", str(out)]) == 0
+    pair = json.loads(out.read_text())["pairs"][0]
+    assert "fingerprints missing" in pair["skipped"] and pair["by_type"] == {}
+
+
+def test_acceptance_is_per_type_and_uses_the_rule_of_three():
+    pairs = [{"by_type": {"DraftingView": {"views": 40, "would_skip": 40, "true_unchanged": 40,
+                                           "false_unchanged": 0, "not_comparable": 0},
+                          "Section": {"views": 5, "would_skip": 5, "true_unchanged": 5,
+                                      "false_unchanged": 0, "not_comparable": 0}}}]
+    acc = vcs.acceptance(pairs, min_pairs=1000, min_per_type=30)
+    assert acc["types_meeting_bar"] == ["DraftingView"]
+    assert acc["by_type"]["Section"]["meets_bar"] is False
+    assert acc["overall_meets_bar"] is False and acc["compared_would_skip"] == 45
+    assert acc["by_type"]["DraftingView"]["upper_bound_95"] == pytest.approx(3 / 40.0)
+
+
+# --- the capture-run hook -----------------------------------------------------------------
+
+def _fake_capture_run(monkeypatch, tmp_path, fingerprint_views):
+    """run_capture with the capture itself replaced by a run directory holding
+    a finalized run_meta, and the Revit reads by ``fingerprint_views``."""
+    from vop_interwoven import capture_run
+    run = tmp_path / "2025-12-20__20261028T1200"
+    order = []
+
+    def fake_run(doc, view_ids, cfg, output_dir, **kw):
+        order.append("capture")
+        run.mkdir()
+        (run / "run_meta_2025-12-20.json").write_text(json.dumps(
+            {"schema": "vop.run_meta.v1", "run_id": "20261028T1200", "date": "2025-12-20",
+             "finalized": True}))
+        return {}, str(run), "20261028T1200"
+
+    def fake_fp(doc, view_ids, mode, opened=None):
+        order.append("fingerprint")
+        return fingerprint_views(doc, view_ids, mode, opened)
+    monkeypatch.setattr(capture_run, "_run_capture", fake_run)
+    monkeypatch.setattr(vf, "fingerprint_views", fake_fp)
+    return capture_run, run, order
+
+
+def test_run_capture_fingerprints_before_capturing_and_writes_after(monkeypatch, tmp_path):
+    def fp(doc, view_ids, mode, opened):
+        return {"schema": vf.SCHEMA, "basis_version": vf.BASIS_VERSION, "mode": mode,
+                "views": {"1": {"fingerprint": "f"}}, "summary": vf.summarize(
+                    {"1": {"fingerprint": "f"}}), "ms": 5.0}
+    capture_run, run, order = _fake_capture_run(monkeypatch, tmp_path, fp)
+    capture_run.run_capture(object(), [1], object(), str(tmp_path), record_fingerprints=True)
+    assert order == ["fingerprint", "capture"]
+    written = json.loads((run / "view_fingerprints_2025-12-20.json").read_text())
+    assert written["mode"] == "capture" and written["run_id"] == "20261028T1200"
+    stamp = json.loads((run / "run_meta_2025-12-20.json").read_text())["view_fingerprints"]
+    assert stamp["file"] == "view_fingerprints_2025-12-20.json"
+    assert stamp["fingerprinted"] == 1 and stamp["basis_version"] == vf.BASIS_VERSION
+
+
+def test_a_fingerprint_failure_is_stamped_and_never_fails_the_capture(monkeypatch, tmp_path):
+    def fp(doc, view_ids, mode, opened):
+        raise RuntimeError("VersionGuid unreadable")
+    capture_run, run, order = _fake_capture_run(monkeypatch, tmp_path, fp)
+    out = capture_run.run_capture(object(), [1], object(), str(tmp_path),
+                                  record_fingerprints=True)
+    assert out[1] == str(run) and order == ["fingerprint", "capture"]
+    stamp = json.loads((run / "run_meta_2025-12-20.json").read_text())["view_fingerprints"]
+    assert stamp == {"error": "RuntimeError: VersionGuid unreadable"}
+    assert not (run / "view_fingerprints_2025-12-20.json").exists()
+
+
+def test_off_by_default_nothing_is_read_or_written(monkeypatch, tmp_path):
+    def fp(doc, view_ids, mode, opened):
+        raise AssertionError("must not be called")
+    capture_run, run, order = _fake_capture_run(monkeypatch, tmp_path, fp)
+    capture_run.run_capture(object(), [1], object(), str(tmp_path))
+    assert order == ["capture"]
+    assert "view_fingerprints" not in json.loads((run / "run_meta_2025-12-20.json").read_text())

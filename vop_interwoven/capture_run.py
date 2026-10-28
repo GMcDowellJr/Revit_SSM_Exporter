@@ -99,14 +99,52 @@ def relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_summ
 
 
 def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=None,
-                export_view_raster=True):
+                export_view_raster=True, record_fingerprints=False):
     """_run_capture inside a provenance session: what executed is read once,
-    here, unless an enclosing batch already pinned it (run_meta.provenance_fields)."""
+    here, unless an enclosing batch already pinned it (run_meta.provenance_fields).
+
+    ``record_fingerprints``: hash-and-skip phase 1 (shadow,
+    docs/DESIGN_CHANGE_SKIP.md). The views' change fingerprints are read from
+    the document BEFORE any view is captured and written to the run's
+    ``view_fingerprints_<d>.json`` once it is finalized; run_meta gains
+    ``view_fingerprints``. Nothing captured changes. A failure here is
+    recorded under ``view_fingerprints.error`` and never fails the capture."""
     from vop_interwoven.run_meta import provenance_session
+    fingerprints = None
+    if record_fingerprints:
+        fingerprints = _fingerprint_before_capture(doc, view_ids)
     with provenance_session("run_capture"):
-        return _run_capture(doc, view_ids, cfg, output_dir, batch_size=batch_size,
-                            date_override=date_override,
-                            export_view_raster=export_view_raster)
+        out = _run_capture(doc, view_ids, cfg, output_dir, batch_size=batch_size,
+                           date_override=date_override,
+                           export_view_raster=export_view_raster)
+    if record_fingerprints:
+        _write_fingerprints_after_capture(out[1], fingerprints)
+    return out
+
+
+def _fingerprint_before_capture(doc, view_ids):
+    """``(record, None)`` or ``(None, error)``: telemetry, never raised."""
+    try:
+        from vop_interwoven.view_fingerprint import fingerprint_views
+        return fingerprint_views(doc, view_ids, "capture"), None
+    except Exception as ex:  # noqa: BLE001 -- recorded in run_meta by the writer
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+def _write_fingerprints_after_capture(run_dir, fingerprints):
+    """Write the record, or stamp the reason there is none."""
+    from vop_interwoven.batch_capture import stamp_run_meta
+    record, error = fingerprints
+    if record is not None:
+        try:
+            from vop_interwoven.view_fingerprint import write_fingerprints
+            _path, stamp_err = write_fingerprints(run_dir, record)
+            if stamp_err is None:
+                return
+            error = "run_meta not stamped: {0}".format(stamp_err)
+        except Exception as ex:  # noqa: BLE001 -- recorded below
+            error = "{0}: {1}".format(type(ex).__name__, ex)
+    stamp_run_meta(run_dir, "view_fingerprints", {"error": error})
 
 
 def _run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=None,

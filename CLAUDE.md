@@ -258,6 +258,26 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   and the finder's `scanned_dir` (a renamed export folder leaves every
   run_meta's recorded path stale); a list entry may carry its own `reason`.
 
+**View fingerprints, hash-and-skip phase 1** (2026-10-28,
+`vop_interwoven/view_fingerprint.py`, `docs/DESIGN_CHANGE_SKIP.md`). This is
+SHADOW mode: nothing is skipped.
+- With `run_capture(record_fingerprints=True)` (the batch and the
+  thinrunner), each view gets a SHA-1 over `id:Element.VersionGuid` of the
+  view, its template, its filters, its members, its member types and its
+  ElementId parameters. One document graphics hash covers categories,
+  patterns, materials and graphics styles.
+- They are read before any view is captured and written to
+  `view_fingerprints_<d>.json` once the run is finalized; run_meta gains
+  `view_fingerprints`. A failure is stamped and never fails the capture.
+- An unread input is a `null` fingerprint: unknown never skips.
+- `skip_verdict` is the ONE function phase 2 and
+  `tools/validate_change_skip.py` share.
+- The batch's `fingerprint` plan mode backfills existing runs and stamps its
+  open as `fingerprint_opened_from`, never over `opened_from`.
+- Evidence and limits: `tests/dynamo/PROBE_CHANGE_DETECTION.md`.
+  `GetChangedElements` cannot compare detached opens. VersionGuid re-mints
+  about 0.4 % of elements on every detached open.
+
 **Sidecar shape (PR #221).** Readers must accept the old and new shapes
 alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field
 that exists in more than one shape, and `tools/reencode_stage_a_sidecar.py`

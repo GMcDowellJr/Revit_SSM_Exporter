@@ -1,7 +1,8 @@
 # Design note: hash-and-skip (capture only the views that changed)
 
-Status: **decided by Greg 2026-10-28, except S-13** (the audit and acceptance
-numbers, proposed below, awaiting confirmation). Nothing is implemented yet.
+Status: **decided by Greg 2026-10-28; S-13 confirmed the same day. Phase 1
+implemented** (shadow: fingerprints recorded, nothing skipped). Phases 2 and 3
+are not.
 
 | decision | Greg, 2026-10-28 |
 |---|---|
@@ -9,7 +10,7 @@ numbers, proposed below, awaiting confirmation). Nothing is implemented yet.
 | S-8 full refresh | every 7th run, as a setting; 0 means never |
 | S-10 carried files | copy, for now |
 | S-6.2 baseline | the previous archive in the series |
-| S-13 audit / acceptance | a percentage, random by view type: numbers proposed, awaiting confirmation |
+| S-13 audit / acceptance | 10 % audit, at least 3 per type; 0 false unchanged over at least 1,000 pairs, at least 30 per type; the bar applies PER VIEW TYPE |
 
 ## Why
 
@@ -212,7 +213,7 @@ resolve it, and a deleted source run would orphan the view.
 
   Analysis that wants only freshly captured views reads `carried_from`.
 
-**S-13. Audit and acceptance (proposed, awaiting Greg).**
+**S-13. Audit and acceptance (confirmed 2026-10-28).**
 - *Audit.* On every skipping run, a seeded random sample of the would-skip
   views is captured anyway and compared with its source capture.
   - The sample is **10 %** of the would-skip views (`skip_audit_fraction`),
@@ -229,6 +230,11 @@ resolve it, and a deleted source run would orphan the view.
 - *Acceptance, phase 1 to 2.* **0 false unchanged over at least 1,000
   would-skip view pairs, with at least 30 per view type.** That is below
   0.3 % overall and below 10 % per type, at 95 %.
+- *The bar is applied per view type.* A type that has met it may skip; a
+  type that has not keeps being captured. Drafting views and legends reach
+  30 unchanged pairs in one archive pair. Sections (0 of 7 unchanged in the
+  probe, about 21 per archive) may never reach it, and are then always
+  captured, which is the safe outcome.
 - *The percentage is an audit fraction, not a tolerated error rate.* A false
   unchanged carries a stale capture forward silently.
 - *On a false unchanged.* If an audit or a refresh finds one, skipping is
@@ -241,7 +247,32 @@ and a thinrunner input turn it on. `run_meta.skip.enabled` records it.
 
 ## Phases
 
-**Phase 1, shadow (no behaviour change).**
+**Phase 1, shadow (no behaviour change; IMPLEMENTED).** Runs in shadow mode
+get no performance benefit: every view is still captured, and the
+fingerprints add about 5 s per archive plus about 150 ms per view (the
+membership read is not yet shared with the capture). The 1,000 pairs need
+not come from new runs, though: the batch's **fingerprint backfill** writes
+fingerprints into runs already captured, so the archive series captured so
+far can be scored at once, and new runs keep adding pairs.
+
+What exists:
+- `vop_interwoven/view_fingerprint.py`: the fingerprint (S-1, S-2, S-4,
+  S-5, S-9), `skip_verdict` (S-6 rules 1-6; full refresh, audit and
+  recapture are phase 2), `fingerprint_views`, `write_fingerprints`,
+  `fingerprint_existing_run`;
+- `capture_run.run_capture(record_fingerprints=True)`: the batch (setting
+  `record_fingerprints`, default true) and the thinrunner (with Stage A on)
+  write `view_fingerprints_<d>.json` beside every run, read BEFORE any view is
+  captured; run_meta gains `view_fingerprints` (summary, or the error; a
+  failure never fails the capture);
+- the batch's `fingerprint` plan mode (`plan_capture_batch.py --mode
+  fingerprint`): one job per archive with finalized runs, captures nothing,
+  and stamps its own open as `fingerprint_opened_from`;
+- `tools/validate_change_skip.py RUN_A RUN_B ...`: scores every consecutive
+  pair with production's `skip_verdict` against the captures, and reports
+  the acceptance bar per view type.
+
+The original plan for phase 1:
 - Every capture records its fingerprint and component hashes in the model
   sidecar and in `run_meta.views[]`. If the previous run of the same model
   is available, it also records the would-skip verdict and the first failing

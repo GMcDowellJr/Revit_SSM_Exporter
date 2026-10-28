@@ -221,13 +221,18 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
       ``doc_title`` (from ``run_index``) against the file's stem;
     * mode ``capture``: a job for every file, unless ``skip_captured`` and a
       finalized run in ``run_index`` was captured from it;
-    * mode ``both``: a recapture job where one applies, else a capture job.
+    * mode ``both``: a recapture job where one applies, else a capture job;
+    * mode ``fingerprint`` (hash-and-skip phase 1 backfill,
+      docs/DESIGN_CHANGE_SKIP.md): a job for every file some finalized run
+      was captured from, listing those runs (``fingerprint_runs``); the job
+      writes each run's view fingerprints and captures nothing.
 
     Runs of ``recapture_runs`` that name views but match no file are listed
     under ``unmatched_runs``; files given no job under ``skipped``.
     """
-    if mode not in ("recapture", "capture", "both"):
-        raise BatchPlanError("mode must be recapture, capture or both, not {0!r}".format(mode))
+    if mode not in ("recapture", "capture", "both", "fingerprint"):
+        raise BatchPlanError("mode must be recapture, capture, both or fingerprint, "
+                             "not {0!r}".format(mode))
     run_index = list(run_index or [])
     by_dir = dict((os.path.normpath(r["run_dir"]), r) for r in run_index if "run_dir" in r)
     titled = [r for r in run_index if r.get("doc_title")]
@@ -265,6 +270,19 @@ def build_plan(entries, output_root, recapture_runs=None, run_index=None, mode="
             recaptures.append(target)
         job = {"key": entry["relative_path"], "full_path": entry["full_path"],
                "display_name": entry["display_name"], "stem": stem}
+        if mode == "fingerprint":
+            captured, unsure = captured_from(entry, titled, stems[stem] > 1)
+            if unsure:
+                skipped.append({"key": entry["relative_path"],
+                                "reason": "ambiguous: {0} manifest files share the title "
+                                          "{1!r}".format(stems[stem], stem)})
+            elif not captured:
+                skipped.append({"key": entry["relative_path"], "reason": "no run to fingerprint"})
+            else:
+                job.update(kind="fingerprint",
+                           fingerprint_runs=sorted(r["run_dir"] for r in captured))
+                jobs.append(job)
+            continue
         if ambiguous and mode in ("recapture", "both"):
             skipped.append({"key": entry["relative_path"],
                             "reason": "ambiguous: {0} manifest files share the title {1!r} and "
@@ -340,7 +358,7 @@ def load_plan(path):
     if not isinstance(plan.get("jobs"), list):
         raise BatchPlanError("{0} carries no jobs list".format(path))
     for job in plan["jobs"]:
-        if job.get("kind") not in ("capture", "recapture"):
+        if job.get("kind") not in ("capture", "recapture", "fingerprint"):
             raise BatchPlanError("job {0!r} has kind {1!r}".format(job.get("key"), job.get("kind")))
     return plan
 
@@ -351,7 +369,17 @@ def job_done(job):
     """Whether the job's outcome is already in the files: a capture, when a
     finalized run under the job's output_dir was captured from the file; a
     recapture, when every run's run_meta lists a ``recaptures`` entry whose
-    view_ids cover the job's. Returns (done, detail)."""
+    view_ids cover the job's; a fingerprint, when every run's run_meta has
+    ``view_fingerprints`` of the current basis version and no error. Returns
+    (done, detail)."""
+    if job["kind"] == "fingerprint":
+        from .view_fingerprint import BASIS_VERSION
+        for run_dir in job["fingerprint_runs"]:
+            meta, _err = run_meta_of(run_dir)
+            stamp = (meta or {}).get("view_fingerprints") or {}
+            if stamp.get("error") or stamp.get("basis_version") != BASIS_VERSION:
+                return False, None
+        return True, "fingerprinted already"
     if job["kind"] == "capture":
         # Under the job's own output directory (one per project and model),
         # a run of this title that names no source file is this file's.
@@ -534,7 +562,7 @@ class DialogLog(object):
 
 def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
               now=None, write_log=True, clock=None, wall=None, memory_sample=None,
-              dialog_log=None, close_after_capture=False, session=None):
+              dialog_log=None, close_after_capture=False, session=None, fingerprint=None):
     """Run the plan's pending jobs in order. Injected:
 
     * ``open_doc(job) -> (doc, how)``: opens the file; ``how`` is the
@@ -543,7 +571,10 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
       next is open, as Revit refuses to close its only document; the last one
       at the end, best effort);
     * ``capture(doc, job) -> {"run_dirs": [...], ...}``;
-    * ``recapture(doc, job) -> {"run_dirs": [...], "refused": [...], ...}``.
+    * ``recapture(doc, job) -> {"run_dirs": [...], "refused": [...], ...}``;
+    * ``fingerprint(doc, job) -> {"run_dirs": [...], ...}`` for a
+      ``fingerprint`` job (hash-and-skip backfill). Its open is stamped as
+      ``fingerprint_opened_from``, never over the capture's ``opened_from``.
 
     Every job's outcome goes into the durable log after that job, and each
     run directory a job wrote gains ``opened_from``. Returns the log record.
@@ -573,13 +604,14 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
         return _run_batch(plan, open_doc, close_doc, capture, recapture, limit=limit,
                           log=log, now=now, write_log=write_log, pin=pin, clock=clock,
                           wall=wall, memory_sample=memory_sample, dialog_log=dialog_log,
-                          close_after_capture=close_after_capture, session=session)
+                          close_after_capture=close_after_capture, session=session,
+                          fingerprint=fingerprint)
 
 
 def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
                now=None, write_log=True, pin=None, clock=None, wall=None,
                memory_sample=None, dialog_log=None, close_after_capture=False,
-               session=None):
+               session=None, fingerprint=None):
     clock = clock or _perf
     wall = wall or datetime.now
     if memory_sample is None:
@@ -655,8 +687,13 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
                 prev = None
             t_step = clock()
             try:
-                result = (recapture(doc, job) if job["kind"] == "recapture"
-                          else capture(doc, job))
+                if job["kind"] == "fingerprint":
+                    if fingerprint is None:
+                        raise RuntimeError("a fingerprint job, and no fingerprint callable")
+                    result = fingerprint(doc, job)
+                else:
+                    result = (recapture(doc, job) if job["kind"] == "recapture"
+                              else capture(doc, job))
             finally:
                 entry["timings_ms"]["capture_ms"] = _ms(t_step)
                 entry["memory"]["after_capture"] = memory_sample()
@@ -665,8 +702,12 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
             entry["run_dirs"] = list((result or {}).get("run_dirs") or [])
             entry["stamp_failures"] = {}
             t_step = clock()
+            # A fingerprint job opened the archive again, later: that open
+            # is its own record, never the capture's opened_from.
+            stamp_key = ("fingerprint_opened_from" if job["kind"] == "fingerprint"
+                         else "opened_from")
             for run_dir in entry["run_dirs"]:
-                err = stamp_run_meta(run_dir, "opened_from", entry["opened"])
+                err = stamp_run_meta(run_dir, stamp_key, entry["opened"])
                 if err:
                     entry["stamp_failures"][run_dir] = err
             entry["timings_ms"]["stamp_ms"] = _ms(t_step)

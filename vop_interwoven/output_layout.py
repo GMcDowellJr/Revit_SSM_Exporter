@@ -169,6 +169,13 @@ def census_file_date(meta, run_dir):
     return parts[0] if parts else "undated"
 
 
+def fingerprints_name(d):
+    """The per-run view fingerprints file (vop_interwoven/view_fingerprint),
+    ``view_fingerprints_<d>.json`` in either layout: new in 2026-10, so no
+    reader knows an undated name (as the census)."""
+    return "view_fingerprints_{0}.json".format(d)
+
+
 def census_names(layout, d):
     """(csv, summary) of the per-run element census (tools/stage_a_element_census),
     ``element_census_<d>.*`` in either layout."""

@@ -490,9 +490,13 @@ try:
         from vop_interwoven.capture_run import run_capture
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         try:
+            # Hash-and-skip phase 1 (shadow): fingerprints beside every
+            # Stage A run (docs/DESIGN_CHANGE_SKIP.md).
             result, run_dir, shared_run_id = run_capture(
                 doc, view_ids, cfg, output_dir, batch_size=batch_size,
-                date_override=tag_override, export_view_raster=export_view_raster)
+                date_override=tag_override, export_view_raster=export_view_raster,
+                record_fingerprints=bool(getattr(cfg, "enable_color_id_buffer_stage_a",
+                                                 False)))
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
         except Exception:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
