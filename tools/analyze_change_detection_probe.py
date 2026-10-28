@@ -47,6 +47,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -54,6 +55,11 @@ from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
+
+# The captures are the exporter's own files, up to 10000 x 10000 px: Pillow's
+# decompression-bomb warning (89.5 Mpx) fires on every capped view. Off, as in
+# stage_a_grid.py and register_stage_a_annotation.py.
+Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.change_detection.analysis.v1"
 TOOL_VERSION = "1.1.0"
