@@ -109,6 +109,36 @@ Known blind spots (INFERENCE until the analyzer measures them): a change
 inside a linked model; an object-style (category) change; anything the view
 draws that is not one of its member elements.
 
+### Q1b, run `20261028T111442` (probe `2026-10-27.1`, V56 -> V57), OBSERVED
+
+- `Element.VersionGuid` exists (`System.Guid VersionGuid`); read for all
+  446,169 elements of A in 4.4 s, 449,270 of B in 4.9 s, no errors.
+- **Not fully stable:** two detached opens of A gave 1,937 elements (0.43 %)
+  a different VersionGuid. Both opens deleted 386 warnings and answered
+  Elements_Lost_On_Import; that open-time repair re-minting them is
+  INFERENCE.
+- A -> B: 437,457 the same, 5,203 different, 3,509 only in A, 6,610 only in
+  B.
+- 50 views sampled. `vg_verdict` unchanged for 15, changed for 35. Against
+  the 10-21 captures, with the capture's own tick and frame lines set aside
+  (analyzer 1.2.0; provisional until rerun): unchanged and capture same 15,
+  **false unchanged 0**; changed and capture differs 27; changed and capture
+  same 7; not comparable 1.
+- Cost per view: membership read median 135 ms (max 3.2 s), member types
+  2 ms, fingerprint < 1 ms.
+
+### Probe `2026-10-28.1`: the stable verdict
+
+The 1,937 re-minted elements (`volatile_ids`, the reopen's differing ids)
+mark views changed that did not change. The probe now records them
+(`reopen_version_guids.volatile_ids`, first 200, and
+`volatile_by_category`) and gives each view a second verdict,
+`vg_verdict_stable`, with their VersionGuids left out of the comparison
+(membership is still compared). Analyzer 1.3.0 tabulates it too
+(`table_version_guid_stable`, `false_unchanged_version_guid_stable`).
+Unchanged is exactly "the stable fingerprints are equal", asserted over
+generated inputs. It needs `control: "reopen"` (the default).
+
 The sample now draws: run `095313` drew 0 views because production's
 `batch_capture._view_type_name` returned NUMBERS under Dynamo ("1", "117"),
 so `select_views` kept nothing (`sample.production_select_views` records it

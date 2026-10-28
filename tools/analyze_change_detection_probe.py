@@ -62,7 +62,7 @@ from vop_interwoven import output_layout  # noqa: E402
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.change_detection.analysis.v1"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 ANALYSIS_NAME = "change_detection_analysis.json"
 PROBE_GLOB = "probe_change_detection_*.json"
 FRAME_KEYS = ("view_scale", "fit_direction", "pixel_size", "actual_w", "actual_h",
@@ -356,7 +356,10 @@ def analyze(target, run_a, run_b):
                else "absent_in_b",
                "vg_verdict": view.get("vg_verdict") if view.get("present_in_b")
                else "absent_in_b",
+               "vg_verdict_stable": view.get("vg_verdict_stable") if view.get("present_in_b")
+               else "absent_in_b",
                "vg_fired": (view.get("version_guid") or {}).get("fired"),
+               "vg_stable_fired": (view.get("version_guid_stable") or {}).get("fired"),
                "api_fired": view.get("fired"), "api_unread": view.get("unread"),
                "membership_diff": view.get("membership_diff")}
         try:
@@ -401,6 +404,9 @@ def analyze(target, run_a, run_b):
         "false_unchanged_version_guid": vg_false_unchanged,
         "false_unchanged_version_guid_count": len(vg_false_unchanged),
         "version_guid_changed_capture_same": _false_changed("vg_verdict"),
+        "table_version_guid_stable": cross_table(rows, "vg_verdict_stable"),
+        "false_unchanged_version_guid_stable": _false_unchanged("vg_verdict_stable"),
+        "version_guid_stable_changed_capture_same": _false_changed("vg_verdict_stable"),
         "rule": "capture differs: any decoded-id pixel (ticks excluded), frame field, "
                 "or bbox-map entry differs (> 0, no threshold); cause labels are INFERENCE",
         "views": rows}
@@ -422,7 +428,9 @@ def main(argv=None):
     out.write_text(json.dumps(record, indent=2, sort_keys=True, default=str), encoding="utf-8")
     for title, tkey, fkey in (("api_verdict", "table", "false_unchanged"),
                               ("vg_verdict", "table_version_guid",
-                               "false_unchanged_version_guid")):
+                               "false_unchanged_version_guid"),
+                              ("vg_verdict_stable", "table_version_guid_stable",
+                               "false_unchanged_version_guid_stable")):
         print("{0:<16} differs   same  not_comparable".format(title))
         for api, row in sorted(record[tkey].items()):
             print("{0:<15} {1:>8} {2:>6} {3:>15}".format(api, row["differs"], row["same"],

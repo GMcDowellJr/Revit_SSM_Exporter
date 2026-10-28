@@ -77,7 +77,7 @@ import traceback
 
 
 PROBE_NAME = "change_detection"
-PROBE_VERSION = "2026-10-27.1"
+PROBE_VERSION = "2026-10-28.1"
 SCHEMA = "vop.probe.change_detection.v1"
 
 OPTION_KEYS = ("repo_root", "seed", "sample_size", "control", "worksets",
@@ -382,10 +382,16 @@ def resolve_view_type_name(read_name, enum_name):
     return (str(name), "enum_lookup") if name else (None, "enum lookup found no name")
 
 
-def view_fingerprint(view_id, inputs, guids, limit=VIEW_ID_LIMIT):
+VOLATILE_TOKEN = "~"
+
+
+def view_fingerprint(view_id, inputs, guids, limit=VIEW_ID_LIMIT, volatile=None):
     """PURE. ``{count, sha1, missing, missing_ids}`` over the view, its
     members, template, filters and member types, each as ``id:VersionGuid``
-    (``-`` where ``guids`` has none); None when an input was not read."""
+    (``-`` where ``guids`` has none; ``~`` for an id in ``volatile``, whose
+    VersionGuid changes between two opens of one file and so says nothing);
+    None when an input was not read."""
+    volatile = volatile or ()
     if inputs is None or guids is None or any(
             inputs.get(k) is None for k in ("members", "filter_ids", "type_ids",
                                             "template_id")):
@@ -395,13 +401,14 @@ def view_fingerprint(view_id, inputs, guids, limit=VIEW_ID_LIMIT):
     if inputs["template_id"] not in (None, -1):
         ids.add(int(inputs["template_id"]))
     missing = sorted(i for i in ids if guids.get(i) is None)
-    text = ",".join("{0}:{1}".format(i, guids.get(i) or "-") for i in sorted(ids))
+    text = ",".join("{0}:{1}".format(
+        i, VOLATILE_TOKEN if i in volatile else (guids.get(i) or "-")) for i in sorted(ids))
     return {"count": len(ids), "sha1": hashlib.sha1(text.encode("ascii")).hexdigest(),
             "missing": len(missing), "missing_ids": missing[:limit]}
 
 
 def version_guid_signals(view_id, a_inputs, b_inputs, guids_a, guids_b,
-                         limit=VIEW_ID_LIMIT):
+                         limit=VIEW_ID_LIMIT, volatile=None):
     """PURE. What VersionGuid says about one view between A and B.
 
     Signals: members added or removed (membership), members whose
@@ -409,16 +416,22 @@ def version_guid_signals(view_id, a_inputs, b_inputs, guids_a, guids_b,
     or the same template with another VersionGuid), its filters, its member
     types. ``vg_verdict`` is ``changed`` when any fired, ``unchanged`` when
     none did and every input was read, else ``unknown``. A changed signal and
-    unequal fingerprints are the same fact, asserted by the tests."""
-    fa = view_fingerprint(view_id, a_inputs, guids_a)
-    fb = view_fingerprint(view_id, b_inputs, guids_b)
+    unequal fingerprints are the same fact, asserted by the tests.
+
+    ``volatile``: ids whose VersionGuid differed between two detached opens
+    of A (volatile_ids). Their VersionGuid is not compared (membership still
+    is): the "stable" verdict (probe 2026-10-28.1)."""
+    volatile = frozenset(volatile or ())
+    fa = view_fingerprint(view_id, a_inputs, guids_a, volatile=volatile)
+    fb = view_fingerprint(view_id, b_inputs, guids_b, volatile=volatile)
     if fa is None or fb is None:
         return {"vg_verdict": "unknown", "fired": [], "signals": None,
                 "fingerprint_a": fa, "fingerprint_b": fb,
                 "reason": "an input or a VersionGuid map was not read"}
 
     def _guid_changed(ids):
-        return sorted(i for i in ids if guids_a.get(i) != guids_b.get(i))
+        return sorted(i for i in ids
+                      if i not in volatile and guids_a.get(i) != guids_b.get(i))
 
     ma, mb = set(a_inputs["members"]), set(b_inputs["members"])
     ta, tb = a_inputs["template_id"], b_inputs["template_id"]
@@ -432,9 +445,8 @@ def version_guid_signals(view_id, a_inputs, b_inputs, guids_a, guids_b,
         "members_removed": sorted(ma - mb)[:limit], "members_removed_count": len(ma - mb),
         "members_changed": changed_members[:limit],
         "members_changed_count": len(changed_members),
-        "view_itself": guids_a.get(int(view_id)) != guids_b.get(int(view_id)),
-        "template": (ta != tb) or (ta not in (None, -1)
-                                   and guids_a.get(ta) != guids_b.get(ta)),
+        "view_itself": bool(_guid_changed([int(view_id)])),
+        "template": (ta != tb) or (ta not in (None, -1) and bool(_guid_changed([ta]))),
         "filters": (fa_ids != fb_ids) or bool(changed_filters),
         "member_types_set": ya != yb,
         "member_types_changed": changed_types[:limit],
@@ -447,6 +459,15 @@ def version_guid_signals(view_id, a_inputs, b_inputs, guids_a, guids_b,
     return {"vg_verdict": "changed" if fired else "unchanged", "fired": fired,
             "signals": signals, "fingerprint_a": fa, "fingerprint_b": fb,
             "fingerprints_equal": fa["sha1"] == fb["sha1"]}
+
+
+def volatile_ids(a, b):
+    """PURE. The ids in both maps whose VersionGuid differs: for two opens of
+    ONE file, the elements a detached open re-mints (1,937 of 446,169 in run
+    20261028T111442)."""
+    if a is None or b is None:
+        return None
+    return sorted(i for i in set(a) & set(b) if a[i] != b[i])
 
 
 def compare_guid_maps(a, b):
@@ -1060,6 +1081,12 @@ def run_probe(inputs, app=None, uiapp=None):
             # Q1b (a): one file, two detached opens. differ > 0 means a
             # detached open re-mints VersionGuids and the signal is unusable.
             report["reopen_version_guids"] = compare_guid_maps(guid_maps.get("a"), again)
+            vol = volatile_ids(guid_maps.get("a"), again)
+            if vol is not None:
+                guid_maps["volatile"] = set(vol)
+                report["reopen_version_guids"]["volatile_ids"] = vol[:VIEW_ID_LIMIT]
+                report["reopen_version_guids"]["volatile_by_category"] = read(
+                    category_counts, doc, vol)
             del again
         except Exception as ex:
             rec["error"] = exception_record("a_detached_reopen", ex)
@@ -1167,6 +1194,12 @@ def run_probe(inputs, app=None, uiapp=None):
                                                   guid_maps.get("a"), guids_b)
                         row["version_guid"] = vg
                         row["vg_verdict"] = vg["vg_verdict"]
+                        if guid_maps.get("volatile") is not None:
+                            stable = version_guid_signals(
+                                vid, a_inputs.get(vid), inputs_, guid_maps.get("a"), guids_b,
+                                volatile=guid_maps["volatile"])
+                            row["version_guid_stable"] = stable
+                            row["vg_verdict_stable"] = stable["vg_verdict"]
                         row["vg_ms"] = round((time.time() - t1) * 1000.0, 3)
                     row["view_total_ms"] = round((time.time() - t0) * 1000.0, 1)
                     report["views"].append(row)

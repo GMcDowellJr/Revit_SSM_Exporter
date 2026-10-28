@@ -435,3 +435,37 @@ def test_capture_line_ids_reads_ticks_and_frame_bounds_and_tolerates_absence():
     assert acd.capture_line_ids(side) == {"5", "7"}
     assert acd.capture_line_ids({}) == set()
     assert acd.capture_line_ids({"registration_marks": {"frame_bounds": None}}) == set()
+
+
+def test_volatile_ids_are_not_compared_but_membership_still_is():
+    a = _inputs([1, 2], template=50)
+    ga = {10: "v", 1: "x1", 2: "x2", 50: "t"}
+    gb = dict(ga)
+    gb.update({2: "x2b", 10: "v2", 50: "t2"})
+    plain = probe.version_guid_signals(10, a, dict(a), ga, gb)
+    assert plain["vg_verdict"] == "changed"
+    stable = probe.version_guid_signals(10, a, dict(a), ga, gb, volatile={2, 10, 50})
+    assert stable["vg_verdict"] == "unchanged" and stable["fingerprints_equal"]
+    b = _inputs([1, 2, 3], template=50)
+    gb[3] = "x3"
+    assert probe.version_guid_signals(10, a, b, ga, gb, volatile={2, 10, 50})["fired"] == [
+        "members_added_count"]
+    assert probe.volatile_ids({1: "a", 2: "b"}, {1: "a", 2: "c", 3: "d"}) == [2]
+
+
+def test_stable_unchanged_is_exactly_equal_stable_fingerprints():
+    import random
+    rng = random.Random(11)
+    seen = set()
+    for _ in range(2000):
+        ids = list(range(1, 12)) + [10, 50, 51, 60, 70]
+        a = _inputs(rng.sample(range(1, 12), rng.randint(0, 5)),
+                    template=rng.choice([-1, 50, 51]), filters=[60], types=[70])
+        b = a if rng.random() < 0.5 else dict(a, members=rng.sample(range(1, 12), 3))
+        ga = dict((i, rng.choice("pq")) for i in ids)
+        gb = dict((i, ga[i] if rng.random() < 0.85 else rng.choice("pq")) for i in ids)
+        vol = set(rng.sample(ids, rng.randint(0, 6)))
+        rec = probe.version_guid_signals(10, a, b, ga, gb, volatile=vol)
+        assert (rec["vg_verdict"] == "unchanged") == rec["fingerprints_equal"]
+        seen.add(rec["vg_verdict"])
+    assert seen == {"changed", "unchanged"}
