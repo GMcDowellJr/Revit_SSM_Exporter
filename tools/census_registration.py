@@ -93,6 +93,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from vop_interwoven.change_skip import MEASURED_STATUSES  # noqa: E402
 from tools import registration_marks as rm  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
 from tools import stage_a_grid_rollup as rollup  # noqa: E402
@@ -744,7 +745,9 @@ def provenance(ident, view_id):
     if outcome is None:
         return "not_this_run", "ambiguous"
     status = outcome.get("capture_status")
-    return ("this_run" if status == "success" else "not_this_run"), status
+    # A carried view (hash-and-skip, capture_status "unchanged") is the run's
+    # own measure: its files were copied in and declared (change_skip.py).
+    return ("this_run" if status in MEASURED_STATUSES else "not_this_run"), status
 
 
 def view_row(model_sidecar_path, run_id, views_core, pixels=True, ident=None):

@@ -416,3 +416,16 @@ def test_a_tick_cut_by_a_concave_recorded_loop_is_predicted_outside():
              {"key": "in_left_arm", "uv0": [2, 10], "uv1": [8, 10]},
              {"key": "along_the_base", "uv0": [5, 2], "uv1": [25, 2]}]
     assert census.ticks_inside(u_loop, marks, mapping) == ["in_left_arm", "along_the_base"]
+
+
+def test_a_view_carried_unchanged_is_this_runs(tmp_path):
+    """A view declared ``unchanged`` (hash-and-skip) is the run's own measure:
+    its files were copied into the run and declared (change_skip.py)."""
+    run = _run(tmp_path)
+    _capture(run, 1, gridded=False, pair_kw={"shared_anno": True})
+    _outcome(run, 1, status="unchanged")
+    out = tmp_path / "census"
+    census.main([str(run), "--out", str(out)])
+    by_stem, _summary = _rows(out)
+    assert (by_stem["V_1"]["provenance"], by_stem["V_1"]["run_meta_capture_status"]) == (
+        "this_run", "unchanged")

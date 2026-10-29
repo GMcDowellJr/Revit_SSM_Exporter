@@ -23,6 +23,11 @@ Usage:
             files and rows replaced and stamped (vop_interwoven/recapture.py).
             The open document must be the archive the run was captured from.
             Needs IN[5] True.
+    IN[8] = Skip unchanged views (bool, default False): hash-and-skip phase 2
+            (vop_interwoven/change_skip.py, default types: drafting views and
+            legends). Needs IN[5] True. Only a document titled
+            ``<model>_V<n>..._<YYYY-MM-DD>`` has a series, so an interactive
+            capture of an ordinary model skips nothing (recorded).
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -447,6 +452,10 @@ try:
     # captured again into their own run directories; IN[0] is ignored. The
     # result has the ordinary shape, so the summary below is shared.
     recapture_lists = IN[7] if len(IN) > 7 and IN[7] else None
+    skip_unchanged = bool(IN[8]) if len(IN) > 8 and IN[8] is not None else False
+    if skip_unchanged and not getattr(cfg, "enable_color_id_buffer_stage_a", False):
+        raise ValueError("IN[8] (skip unchanged) needs IN[5] (Stage A) True")
+    skip_settings = {"skip_unchanged": True} if skip_unchanged else None
     recapture_lines = []
     if recapture_lists:
         if not enable_color_id_buffer_stage_a:
@@ -496,7 +505,8 @@ try:
                 doc, view_ids, cfg, output_dir, batch_size=batch_size,
                 date_override=tag_override, export_view_raster=export_view_raster,
                 record_fingerprints=bool(getattr(cfg, "enable_color_id_buffer_stage_a",
-                                                 False)))
+                                                 False)),
+                skip=skip_settings)
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
         except Exception:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)

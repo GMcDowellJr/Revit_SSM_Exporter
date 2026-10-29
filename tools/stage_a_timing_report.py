@@ -63,6 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven.capture_passes import PASS_ANNOTATION, is_single_pass  # noqa: E402
+from vop_interwoven.change_skip import UNCHANGED  # noqa: E402
 
 
 # The production MODEL sidecar's own name: "<view name>_<view id>.json".
@@ -272,6 +273,12 @@ def timing_rows(run_dir):
                     row["reason"] = "ElapsedSec unreadable: {0!r}".format(rec.get("ElapsedSec"))
                 row["run_id"] = run_id
                 status = capture_status.get(view_id)
+                if status == UNCHANGED:
+                    row["reason"] = row["reason"] or (
+                        "carried unchanged from an earlier run (hash-and-skip): "
+                        "not captured, so it has no timing in this run")
+                    rows.append(row)
+                    continue
                 if status != "success":
                     row["reason"] = row["reason"] or (
                         "run_meta records capture_status {0!r}; a sidecar beside "

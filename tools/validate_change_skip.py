@@ -78,7 +78,7 @@ from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven import view_fingerprint as vf  # noqa: E402
 
 SCHEMA = "vop.validate_change_skip.v1"
-TOOL_VERSION = "1.4.0"
+TOOL_VERSION = "1.5.0"
 OUTCOMES = ("true_unchanged", "false_unchanged", "not_comparable")
 TOLERATED = ("fringe_tolerated", "grid_tolerated", "boundary_tolerated")
 # The most pixels a one-sided element x cell row may carry and still be a
@@ -245,7 +245,7 @@ def load_run(run_dir):
 
 def _bump(table, view_type, key):
     row = table.setdefault(view_type or "(unknown)", dict(
-        (k, 0) for k in ("views", "would_skip") + OUTCOMES + TOLERATED))
+        (k, 0) for k in ("views", "would_skip", "carried") + OUTCOMES + TOLERATED))
     row[key] += 1
 
 
@@ -305,6 +305,11 @@ def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False, basis
         if rule == "fingerprint_differs":
             for name in vf.changed_components(base, cur) or []:
                 pair["changed_components"][name] = pair["changed_components"].get(name, 0) + 1
+        if run_b["statuses"].get(vid) == "unchanged":
+            # B carried the view (phase 2): its files ARE the source's, so
+            # comparing them proves nothing. The audit sample is the check.
+            _bump(pair["by_type"], vtype, "carried")
+            continue
         if not verdict["would_skip"] and not compare_all:
             continue
         try:
@@ -405,6 +410,35 @@ def discover(root):
     return series, dropped
 
 
+def suspend(pairs, runs_by_dir, now=None):
+    """Write ``skip_suspended.json`` beside each run that SKIPPED (run_meta
+    ``skip.enabled``) and had a false unchanged against its baseline: its
+    series (``skip.series_key``) captures everything until a person removes
+    the entry (docs/DESIGN_CHANGE_SKIP.md S-13). Returns the written
+    entries."""
+    from vop_interwoven import change_skip
+    written = []
+    for pair in pairs:
+        if not pair.get("false_unchanged"):
+            continue
+        meta = (runs_by_dir.get(pair["b"]) or {}).get("meta") or {}
+        skip = meta.get("skip") or {}
+        if not skip.get("enabled") or not skip.get("series_key"):
+            continue
+        root = Path(pair["b"]).parent
+        path = root / change_skip.SUSPENSION_FILE
+        record = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        entry = {"run_dir": pair["b"], "baseline": pair["a"],
+                 "view_ids": [f["view_id"] for f in pair["false_unchanged"]],
+                 "suspended_at": now or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                 "by": "tools/validate_change_skip.py --suspend",
+                 "clear": "remove this entry once a person has looked at the views"}
+        record[skip["series_key"]] = entry
+        path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+        written.append(dict(entry, file=str(path)))
+    return written
+
+
 def _score_job(job):
     """One pair, in a worker process: the runs are loaded there."""
     run_a, run_b, options = job
@@ -429,6 +463,9 @@ def main(argv=None):
     ap.add_argument("--root", default=None,
                     help="find the runs under this folder: one series per model folder")
     ap.add_argument("--jobs", type=int, default=1, help="pairs scored in parallel")
+    ap.add_argument("--suspend", action="store_true",
+                    help="a false unchanged on a run that skipped suspends its series "
+                         "(writes skip_suspended.json beside the run)")
     ap.add_argument("--compare-all", action="store_true",
                     help="also compare the views it would capture (measures over-caution)")
     ap.add_argument("--min-pairs", type=int, default=1000)
@@ -455,9 +492,12 @@ def main(argv=None):
     jobs = [(a, b, options) for s in series for a, b in zip(s["runs"], s["runs"][1:])]
     print("{0} series, {1} pairs, {2} job(s)".format(len(series), len(jobs), args.jobs))
     pairs = score_pairs(jobs, args.jobs)
+    suspended = []
+    if args.suspend:
+        suspended = suspend(pairs, dict((r, load_run(r)) for p in pairs for r in (p["b"],)))
     record = {"schema": SCHEMA, "tool_version": TOOL_VERSION,
               "runs": [r for s in series for r in s["runs"]], "series": series,
-              "dropped_runs": dropped, "jobs": args.jobs,
+              "dropped_runs": dropped, "jobs": args.jobs, "suspended": suspended,
               "compare_all": args.compare_all, "exact": args.exact, "basis": args.basis,
               "fringe_radius_px": None if args.exact else acd.FRINGE_RADIUS_PX,
               "pairs": pairs,

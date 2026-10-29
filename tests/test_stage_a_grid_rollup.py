@@ -1036,3 +1036,17 @@ def test_run_metas_floor_verdict_beats_duplicate_stale_sidecars(tmp_path):
     assert "2 model sidecars carry view_id 2" in by_id["2"]["registration_reason"]
     assert by_id["3"]["row_status"] == "sidecar_ambiguous"
     assert summary["count_invariant"]["difference"] == 0
+
+
+def test_a_view_carried_unchanged_is_the_runs_own_measure(tmp_path):
+    """Hash-and-skip: a view the run declares ``unchanged`` had its capture
+    copied in from its source (vop_interwoven/change_skip.py); it grids like
+    a captured view. Control: the same run with ``failed`` is not this run's."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    _outcome(run, 2, status="unchanged")
+    _main(run)
+    by_stem, _rows, _summary = _read(run / "analysis_grid")
+    assert (by_stem["V_2"]["row_status"], by_stem["V_2"]["run_meta_capture_status"]) == (
+        "gridded", "unchanged")

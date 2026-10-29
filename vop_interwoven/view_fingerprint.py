@@ -54,7 +54,10 @@ COMPONENTS = ("view", "template", "filters", "members", "types", "references",
 GRAPHICS_PATTERN_FIELDS = (4, 5)
 MISSING_GUID = "-"
 # Capture statuses a baseline view may have to be skipped against (S-6.2).
-BASELINE_STATUSES = ("success",)
+# "unchanged": the baseline carried the view (change_skip.py); its source is
+# one hop back, and its fingerprint equals the source's (that is why it
+# skipped).
+BASELINE_STATUSES = ("success", "unchanged")
 # The skip rules in the order they are tested; the verdict names the first
 # that fails (docs/DESIGN_CHANGE_SKIP.md, S-6).
 RULES = ("no_baseline_fingerprint", "baseline_capture_not_success",

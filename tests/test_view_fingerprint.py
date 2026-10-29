@@ -8,6 +8,7 @@ synthetic runs: run_meta, fingerprints files and captures written here, the
 record read from the FILE the tool wrote (CLAUDE.md, defect class 4).
 """
 import json
+import os
 import random
 from datetime import datetime
 
@@ -128,12 +129,16 @@ def _view(fp="f1", links=False):
 def test_every_rule_holds_and_the_view_would_skip():
     assert vf.skip_verdict(FACTS, dict(FACTS), _view(), _view(), "success") == {
         "would_skip": True, "rule": None}
+    # A baseline that carried the view (phase 2) is a valid baseline too.
+    assert vf.skip_verdict(FACTS, dict(FACTS), _view(), _view(), "unchanged") == {
+        "would_skip": True, "rule": None}
 
 
 @pytest.mark.parametrize("change, rule", [
     (dict(base=None), "no_baseline_fingerprint"),
     (dict(status="failed"), "baseline_capture_not_success"),
-    (dict(status="unchanged"), "baseline_capture_not_success"),
+    (dict(status="unmeasurable"), "baseline_capture_not_success"),
+    (dict(status="registration_failed"), "baseline_capture_not_success"),
     (dict(cur_facts={"config_hash": "other"}), "config_hash_differs"),
     (dict(cur_facts={"exporter_major": 5}), "exporter_major_differs"),
     (dict(cur_facts={"revit_build": "26.0"}), "revit_build_differs"),
@@ -792,3 +797,42 @@ def test_runs_and_root_are_one_or_the_other(tmp_path):
         vcs.main([])
     with pytest.raises(SystemExit):
         vcs.main(["--root", str(tmp_path)])                  # nothing found
+
+
+def _set_meta(run, date, **changes):
+    path = os.path.join(run, "run_meta_{0}.json".format(date))
+    meta = json.load(open(path))
+    for key, fn in changes.items():
+        meta[key] = fn(meta.get(key))
+    with open(path, "w") as fh:
+        json.dump(meta, fh)
+
+
+def test_a_view_the_later_run_carried_is_counted_not_compared(tmp_path):
+    views = {1: ("same", {11: (0, 0, 10, 10)}), 2: ("same", {21: (0, 0, 10, 10)})}
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", views)
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", views)
+    _set_meta(b, "2025-12-20", views=lambda vs: [dict(v, capture_status="unchanged")
+                                                 if v["view_id"] == 1 else v for v in vs])
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--out", str(out), "--min-pairs", "1", "--min-per-type", "1"]) == 0
+    row = json.loads(out.read_text())["acceptance"]["by_type"]["DraftingView"]
+    assert (row["carried"], row["compared"], row["true_unchanged"]) == (1, 1, 1)
+
+
+def test_suspend_writes_only_for_a_run_that_skipped_and_failed(tmp_path):
+    import os as _os
+    views = {1: ("same", {11: (0, 0, 10, 10)})}
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", views)
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {1: ("same", {11: (5, 0, 15, 10)})})
+    target = tmp_path / "skip_suspended.json"
+    assert vcs.main([a, b, "--out", str(tmp_path / "v1.json"), "--suspend"]) == 0
+    assert not target.exists()                 # B did not skip: nothing to suspend
+    _set_meta(b, "2025-12-20", skip=lambda _old: {"enabled": True, "series_key": "KSRF_M"})
+    assert vcs.main([a, b, "--out", str(tmp_path / "v2.json"), "--suspend"]) == 0
+    record = json.loads(target.read_text())
+    assert record["KSRF_M"]["view_ids"] == [1] and record["KSRF_M"]["run_dir"] == b
+    from vop_interwoven import change_skip
+    assert change_skip.read_suspension(_os.path.dirname(b), "KSRF_M")["view_ids"] == [1]
+    rec = json.loads((tmp_path / "v2.json").read_text())
+    assert rec["suspended"][0]["file"] == str(target)

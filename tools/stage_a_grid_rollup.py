@@ -124,6 +124,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import register_stage_a_annotation as reg  # noqa: E402
 from tools import stage_a_grid as grid  # noqa: E402
+from vop_interwoven.change_skip import MEASURED_STATUSES  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 from vop_interwoven import capture_passes as cp  # noqa: E402
 from vop_interwoven import capture_floor  # noqa: E402
@@ -836,7 +837,7 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome, with_key
         # measure); the row says the view is below the floor, not lost.
         row["row_status"] = "below_capture_floor"
         row["reason"] = floor_reason(floor, outcome, row["view_id"])
-    elif row["run_meta_capture_status"] != "success":
+    elif row["run_meta_capture_status"] not in MEASURED_STATUSES:
         row["row_status"] = "not_this_run"
         row["reason"] = ("run_meta.json records capture_status {0!r} for view {1}; the "
                          "sidecar cannot be tied to run {2!r}".format(

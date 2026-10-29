@@ -630,3 +630,36 @@ def test_the_button_answers_known_dialogs_and_cleans_warnings_only_while_opening
     assert "_dialog_log[0].record(dialog_id, answered)" in src
     assert "dialog_log=_dialog_log[0]" in src
     assert '"reason": t.get("reason")' in src
+
+
+def test_the_button_passes_validated_skip_settings_off_by_default():
+    """Hash-and-skip phase 2 (vop_interwoven/change_skip.py): the button's
+    settings reach run_capture through _skip_settings, validated in main()
+    BEFORE the batch starts. _skip_settings and _flag run here, compiled from
+    the script's own source (the script body needs Revit)."""
+    import ast
+    from vop_interwoven import change_skip
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyrevit",
+                        "VOP.extension", "VOP.tab", "StageA.panel", "BatchCapture.pushbutton",
+                        "script.py")
+    src = open(path, encoding="utf-8").read()
+    assert "skip=_skip_settings())" in src.split("def capture(doc, job):")[1].split("def ")[0]
+    main = src.split("def main():")[1]
+    assert main.index("parse_settings(_skip_settings())") < main.index("run_batch(")
+    tree = ast.parse(src)
+    keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef)
+                                     and n.name in ("_skip_settings", "_flag"))
+            or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "_SKIP_KEYS"
+                                                  for t in n.targets))]
+    ns = {}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), path, "exec"), ns)
+    ns["_settings"] = {"plan_json": "p"}
+    assert change_skip.parse_settings(ns["_skip_settings"]())["skip_unchanged"] is False
+    ns["_settings"] = {"skip_unchanged": "true", "skip_view_types": ["Legend"],
+                       "skip_audit_fraction": ""}
+    s = change_skip.parse_settings(ns["_skip_settings"]())
+    assert s["skip_unchanged"] is True and s["skip_view_types"] == ["Legend"]
+    assert s["skip_audit_fraction"] == 0.10          # blank means the default
+    ns["_settings"] = {"skip_full_refresh_every_n_runs": "seven"}
+    with pytest.raises(ValueError):
+        change_skip.parse_settings(ns["_skip_settings"]())
