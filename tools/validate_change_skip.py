@@ -16,6 +16,14 @@ archive, B = this one):
   * with ``--compare-all``, the same comparison for the views it would
     capture, which measures over-caution (slower: every view is decoded).
 
+An annotation pass whose every differing pixel is text anti-aliasing FRINGE
+(``acd.fringe_only``: white on one side, the same element within
+``acd.FRINGE_RADIUS_PX`` on the other) counts as the same
+capture and is counted as ``fringe_tolerated`` inside ``true_unchanged``: two
+captures of one drafting view differ that way with no model change at all
+(OBSERVED 2026-10-29). ``--exact`` turns the tolerance off. The model pass is
+always compared exactly.
+
 Acceptance (S-13, Greg 2026-10-28): 0 false unchanged over at least
 ``--min-pairs`` (1,000) compared would-skip views, and per view type at least
 ``--min-per-type`` (30) with 0 false unchanged. A type that has not met its
@@ -23,6 +31,7 @@ bar keeps being captured; the record says which types have.
 
     python tools/validate_change_skip.py RUN_A RUN_B [RUN_C ...] [--compare-all]
         [--out validate_change_skip.json] [--min-pairs 1000] [--min-per-type 30]
+        [--exact]
 """
 from __future__ import annotations
 
@@ -39,7 +48,7 @@ from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven import view_fingerprint as vf  # noqa: E402
 
 SCHEMA = "vop.validate_change_skip.v1"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 OUTCOMES = ("true_unchanged", "false_unchanged", "not_comparable")
 
 
@@ -73,14 +82,15 @@ def load_run(run_dir):
 
 def _bump(table, view_type, key):
     row = table.setdefault(view_type or "(unknown)", dict(
-        (k, 0) for k in ("views", "would_skip") + OUTCOMES))
+        (k, 0) for k in ("views", "would_skip") + OUTCOMES + ("fringe_tolerated",)))
     row[key] += 1
 
 
-def score_pair(run_a, run_b, compare=None, compare_all=False):
-    """Score B's views against A. ``compare(view_id) -> capture_differs``
-    (True / False / None) is injected; by default the captures of the two
-    runs are compared with the change-detection analyzer."""
+def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False):
+    """Score B's views against A. ``compare(view_id) -> (capture_differs,
+    entry)`` (True / False / None) is injected; by default the captures of the
+    two runs are compared with the change-detection analyzer, tolerating
+    annotation fringe unless ``exact``."""
     if compare is None:
         folder_a = acd.capture_folder(run_a["run_dir"])
         folder_b = acd.capture_folder(run_b["run_dir"])
@@ -90,7 +100,7 @@ def score_pair(run_a, run_b, compare=None, compare_all=False):
             if not (fa["model"] or fa["anno"]) or not (fb["model"] or fb["anno"]):
                 return None, None
             entry = acd.compare_view(view_id, fa, fb)
-            return acd.capture_differs(entry), entry
+            return acd.capture_differs(entry, tolerate_anno_fringe=not exact), entry
     pair = {"a": run_a["run_dir"], "b": run_b["run_dir"], "by_type": {}, "rules": {},
             "changed_components": {}, "false_unchanged": [], "over_cautious": []}
     if run_a["fingerprints"] is None or run_b["fingerprints"] is None:
@@ -122,6 +132,8 @@ def score_pair(run_a, run_b, compare=None, compare_all=False):
             outcome = {True: "false_unchanged", False: "true_unchanged",
                        None: "not_comparable"}[differs]
             _bump(pair["by_type"], vtype, outcome)
+            if outcome == "true_unchanged" and acd.fringe_only((entry or {}).get("anno_pixels")):
+                _bump(pair["by_type"], vtype, "fringe_tolerated")
             if outcome == "false_unchanged":
                 pair["false_unchanged"].append({
                     "view_id": int(vid), "view_type": vtype,
@@ -130,6 +142,8 @@ def score_pair(run_a, run_b, compare=None, compare_all=False):
                         "differing_px"),
                     "anno_differing_px": ((entry or {}).get("anno_pixels") or {}).get(
                         "differing_px"),
+                    "anno_fringe_px": ((entry or {}).get("anno_pixels") or {}).get(
+                        "fringe_px"),
                     "frame_diff": (entry or {}).get("frame_diff")})
         elif differs is False:
             pair["over_cautious"].append({"view_id": int(vid), "view_type": vtype,
@@ -170,6 +184,8 @@ def main(argv=None):
     ap.add_argument("--min-pairs", type=int, default=1000)
     ap.add_argument("--min-per-type", type=int, default=30)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--exact", action="store_true",
+                    help="count annotation anti-aliasing fringe as a difference")
     args = ap.parse_args(argv)
     if len(args.runs) < 2:
         ap.error("give at least two runs, in series order")
@@ -177,11 +193,13 @@ def main(argv=None):
     pairs = []
     for a, b in zip(runs, runs[1:]):
         t0 = time.perf_counter()
-        pair = score_pair(a, b, compare_all=args.compare_all)
+        pair = score_pair(a, b, compare_all=args.compare_all, exact=args.exact)
         pair["seconds"] = round(time.perf_counter() - t0, 1)
         pairs.append(pair)
     record = {"schema": SCHEMA, "tool_version": TOOL_VERSION, "runs": args.runs,
-              "compare_all": args.compare_all, "pairs": pairs,
+              "compare_all": args.compare_all, "exact": args.exact,
+              "fringe_radius_px": None if args.exact else acd.FRINGE_RADIUS_PX,
+              "pairs": pairs,
               "acceptance": acceptance(pairs, args.min_pairs, args.min_per_type)}
     out = Path(args.out) if args.out else Path("validate_change_skip_{0}.json".format(
         time.strftime("%Y%m%dT%H%M%S")))
@@ -190,12 +208,12 @@ def main(argv=None):
     for pair in pairs:
         print("{0} -> {1}: {2}".format(Path(pair["a"]).name, Path(pair["b"]).name,
                                        pair.get("skipped") or pair["rules"]))
-    print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>8} {5:>6}  bar".format(
-        "view type", "views", "would_skip", "same", "FALSE", "n/c"))
+    print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>7} {5:>8} {6:>6}  bar".format(
+        "view type", "views", "would_skip", "same", "fringe", "FALSE", "n/c"))
     for vtype, r in acc["by_type"].items():
-        print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>8} {5:>6}  {6}".format(
-            vtype, r["views"], r["would_skip"], r["true_unchanged"], r["false_unchanged"],
-            r["not_comparable"], "met" if r["meets_bar"] else "-"))
+        print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>7} {5:>8} {6:>6}  {7}".format(
+            vtype, r["views"], r["would_skip"], r["true_unchanged"], r["fringe_tolerated"],
+            r["false_unchanged"], r["not_comparable"], "met" if r["meets_bar"] else "-"))
     print("overall: {0} compared, {1} false unchanged, bar {2}".format(
         acc["compared_would_skip"], acc["false_unchanged"],
         "MET" if acc["overall_meets_bar"] else "not met"))

@@ -237,6 +237,20 @@ resolve it, and a deleted source run would orphan the view.
   captured, which is the safe outcome.
 - *The percentage is an audit fraction, not a tolerated error rate.* A false
   unchanged carries a stale capture forward silently.
+- *What counts as "the capture differs".* Model pass exactly. Annotation pass
+  exactly, except text anti-aliasing FRINGE: a pixel that is white in one
+  capture and an element in the other, with that same element within 2 px
+  (`FRINGE_RADIUS_PX`) in the first. Revit anti-aliases text whatever smooth
+  edges is set to, and the edge blend is not repeatable. OBSERVED
+  2026-10-29 on three of the 383 flagged drafting views of 12-27 -> 01-03
+  (1, 3 and 216 differing pixels): every differing pixel was fringe and
+  Text Notes only; colour assignments, element id sets and (1/8" cell,
+  element) presence were identical. The validator counts such views as
+  `fringe_tolerated` inside `true_unchanged`; `--exact` turns that off.
+  *Declared limit:* an edit whose every changed pixel lies within 2 px of
+  the same element's other pixels (a one-glyph change in very small text)
+  would read as fringe. The audit uses the same definition, so this limit
+  applies to it too.
 - *On a false unchanged.* If an audit or a refresh finds one, skipping is
   suspended for that model (`skip.suspended`, naming the view and what
   differed) until a person clears it. Every later run captures everything

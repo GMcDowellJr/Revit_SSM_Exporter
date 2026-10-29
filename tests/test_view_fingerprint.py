@@ -222,12 +222,14 @@ def test_a_saved_fingerprint_plan_loads():
 RED = (200, 0, 0)
 
 
-def _run(root, name, date, views, status="success", facts=FACTS):
+def _run(root, name, date, views, status="success", facts=FACTS, anno_rects=None):
     """A run with run_meta, captures (cap._view) and a fingerprints file.
-    ``views``: {view_id: (fingerprint, rects)}."""
+    ``views``: {view_id: (fingerprint, rects)}; ``anno_rects`` {view_id: the
+    text note's rect} where it is not the default."""
     run = root / name
     for vid, (_fp, rects) in views.items():
-        cap._view(run, vid, rects, dict((e, RED) for e in rects))
+        extra = {"anno_rect": anno_rects[vid]} if vid in (anno_rects or {}) else {}
+        cap._view(run, vid, rects, dict((e, RED) for e in rects), **extra)
     meta = {"schema": "vop.run_meta.v1", "run_id": name, "date": date, "finalized": True,
             "config_hash": facts["config_hash"], "exporter_version": "4.0.0+src.x",
             "revit_version": {"state": "value", "value": {"version_build": facts["revit_build"]}},
@@ -281,6 +283,28 @@ def test_compare_all_finds_over_caution_and_the_bar_is_met_when_clean(tmp_path):
     acc = rec["acceptance"]
     assert acc["overall_meets_bar"] is True and acc["types_meeting_bar"] == ["DraftingView"]
     assert acc["upper_bound_95"] == pytest.approx(3.0)
+
+
+def test_annotation_fringe_is_tolerated_unless_exact_and_a_move_is_not(tmp_path):
+    # View 1: the text note one pixel wider in B (anti-aliasing fringe).
+    # View 2: the text note moved 6 px (a real change).
+    views = {1: ("same", {11: (0, 10, 10, 20)}), 2: ("same", {21: (0, 10, 10, 20)})}
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", views)
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", views,
+             anno_rects={1: (2, 2, 21, 4), 2: (8, 2, 26, 4)})
+    tolerant, exact = tmp_path / "t.json", tmp_path / "e.json"
+    assert vcs.main([a, b, "--out", str(tolerant)]) == 0
+    assert vcs.main([a, b, "--out", str(exact), "--exact"]) == 0
+    rec = json.loads(tolerant.read_text())
+    row = rec["acceptance"]["by_type"]["DraftingView"]
+    assert (row["true_unchanged"], row["fringe_tolerated"], row["false_unchanged"]) == (1, 1, 1)
+    (fu,) = rec["pairs"][0]["false_unchanged"]
+    assert fu["view_id"] == 2 and fu["anno_fringe_px"] < fu["anno_differing_px"]
+    assert rec["exact"] is False and rec["fringe_radius_px"] == 2
+    rec = json.loads(exact.read_text())
+    row = rec["acceptance"]["by_type"]["DraftingView"]
+    assert (row["true_unchanged"], row["fringe_tolerated"], row["false_unchanged"]) == (0, 0, 2)
+    assert rec["fringe_radius_px"] is None
 
 
 def test_a_run_without_fingerprints_is_named_not_scored(tmp_path):

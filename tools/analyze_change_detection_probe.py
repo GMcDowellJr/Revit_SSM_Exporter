@@ -62,7 +62,7 @@ from vop_interwoven import output_layout  # noqa: E402
 Image.MAX_IMAGE_PIXELS = None
 
 SCHEMA = "vop.probe.change_detection.analysis.v1"
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.4.0"
 ANALYSIS_NAME = "change_detection_analysis.json"
 PROBE_GLOB = "probe_change_detection_*.json"
 FRAME_KEYS = ("view_scale", "fit_direction", "pixel_size", "actual_w", "actual_h",
@@ -70,6 +70,13 @@ FRAME_KEYS = ("view_scale", "fit_direction", "pixel_size", "actual_w", "actual_h
 GEOMETRY_TOL_FT = 1.0e-6
 LINK_BASE = -1000
 LIST_LIMIT = 50
+# Revit anti-aliases TEXT whatever smooth edges is set to (CLAUDE.md), and the
+# blend at a glyph's edge is not repeatable between sessions: a fringe pixel
+# decodes to its element in one capture and to nothing in the next. OBSERVED
+# (2026-10-29, three drafting views of 12-27 -> 01-03): 220 differing pixels,
+# every one white on one side with the same element within 2 px on the other
+# (217 within 1 px), identical id sets, identical (cell, element) presence.
+FRINGE_RADIUS_PX = 2
 
 
 class Refusal(Exception):
@@ -189,7 +196,42 @@ def id_image_diff(ids_a, ids_b, exclude=None):
     return {"shape_equal": True, "differing_px": int(diff.sum()), "compared_px": compared,
             "excluded_px": excluded, "link_px": link,
             "element_ids": [int(x) for x in elements[:LIST_LIMIT]],
-            "element_id_count": int(elements.size)}
+            "element_id_count": int(elements.size),
+            "fringe_px": fringe_px(ids_a, ids_b, diff) if elements.size or link else 0,
+            "fringe_radius_px": FRINGE_RADIUS_PX}
+
+
+def fringe_px(ids_a, ids_b, diff, radius=FRINGE_RADIUS_PX):
+    """PURE. How many of the ``diff`` pixels are FRINGE: white (0) on one side,
+    and on the other an element (> 0) that the first image also has within
+    ``radius`` px (Chebyshev). An element-to-element pixel, a link pixel or an
+    element with no pixel nearby on the other side is never fringe."""
+    ys, xs = np.nonzero(diff)
+    a, b = ids_a[ys, xs], ids_b[ys, xs]
+    one_white = ((a == 0) & (b > 0)) | ((b == 0) & (a > 0))
+    ys, xs, a, b = ys[one_white], xs[one_white], a[one_white], b[one_white]
+    value = np.where(a > 0, a, b)
+    # Look for the element in the image where this pixel is white.
+    other_is_b = a > 0
+    h, w = ids_a.shape
+    near = np.zeros(value.shape, dtype=bool)
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            yy = np.clip(ys + dy, 0, h - 1)
+            xx = np.clip(xs + dx, 0, w - 1)
+            seen = np.where(other_is_b, ids_b[yy, xx], ids_a[yy, xx])
+            near |= seen == value
+    return int(near.sum())
+
+
+def fringe_only(pixels):
+    """PURE. True when a compared pass differs and every differing pixel is
+    fringe. That implies the same element ids on both sides: an element in one
+    capture only has no pixel nearby in the other, so none of its pixels is
+    fringe."""
+    p = pixels or {}
+    n = p.get("differing_px") or 0
+    return bool(p.get("shape_equal") and n > 0 and p.get("fringe_px") == n)
 
 
 def classify(entry):
@@ -218,8 +260,11 @@ def classify(entry):
     return labels or ["other"]
 
 
-def capture_differs(entry):
-    """PURE. True / False, or None when a needed part was not comparable."""
+def capture_differs(entry, tolerate_anno_fringe=False):
+    """PURE. True / False, or None when a needed part was not comparable.
+    With ``tolerate_anno_fringe`` an annotation pass whose every differing
+    pixel is text anti-aliasing fringe (``fringe_only``) counts as the same;
+    the model pass, captured with smooth edges off, is always exact."""
     parts = []
     for key in ("model_pixels", "anno_pixels"):
         p = entry.get(key)
@@ -227,6 +272,8 @@ def capture_differs(entry):
             continue
         if p.get("shape_equal") is False:
             return True
+        if key == "anno_pixels" and tolerate_anno_fringe and fringe_only(p):
+            continue
         parts.append((p.get("differing_px") or 0) > 0)
     for key in ("model_bbox", "anno_bbox"):
         d = entry.get(key)

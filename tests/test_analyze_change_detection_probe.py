@@ -120,9 +120,11 @@ def _canvas():
     return np.full((H, W, 3), WHITE, dtype=np.uint8)
 
 
-def _view(run, vid, rects, colours, links=(), frame=None, bboxes=None, anno=True):
+def _view(run, vid, rects, colours, links=(), frame=None, bboxes=None, anno=True,
+          anno_rect=(2, 2, 20, 4)):
     """One captured view in ``run``: ``rects`` {element id: (x0, y0, x1, y1)}
-    painted in ``colours`` {element id: rgb}; ``links`` [(category, rgb, rect)]."""
+    painted in ``colours`` {element id: rgb}; ``links`` [(category, rgb, rect)];
+    the annotation pass is one text note, element 900, at ``anno_rect``."""
     cap = run / "color_id"
     cap.mkdir(parents=True, exist_ok=True)
     img = _canvas()
@@ -145,7 +147,8 @@ def _view(run, vid, rects, colours, links=(), frame=None, bboxes=None, anno=True
     (cap / (stem + ".json")).write_text(json.dumps(side))
     if anno:
         aimg = _canvas()
-        aimg[2:4, 2:20] = (10, 20, 30)
+        ax0, ay0, ax1, ay1 = anno_rect
+        aimg[ay0:ay1, ax0:ax1] = (10, 20, 30)
         _tiff(cap / (stem + "_anno.tiff"), aimg)
         (cap / (stem + "_anno.json")).write_text(json.dumps({
             "view_id": vid, "pass": "annotation",
@@ -469,3 +472,76 @@ def test_stable_unchanged_is_exactly_equal_stable_fingerprints():
         assert (rec["vg_verdict"] == "unchanged") == rec["fingerprints_equal"]
         seen.add(rec["vg_verdict"])
     assert seen == {"changed", "unchanged"}
+
+
+# --- annotation anti-aliasing fringe ------------------------------------------------
+
+def _ids(rects, shape=(12, 12)):
+    ids = np.zeros(shape, dtype=np.int64)
+    for eid, (x0, y0, x1, y1) in rects.items():
+        ids[y0:y1, x0:x1] = eid
+    return ids
+
+
+def _fringe(a, b, radius=acd.FRINGE_RADIUS_PX):
+    return acd.fringe_px(a, b, a != b, radius)
+
+
+def test_a_one_pixel_edge_shift_of_the_same_element_is_fringe():
+    a = _ids({7: (2, 2, 8, 4)})
+    b = _ids({7: (2, 2, 9, 4)})               # one column wider: 2 px
+    assert _fringe(a, b) == 2 and _fringe(b, a) == 2
+    r = acd.id_image_diff(a, b)
+    assert r["differing_px"] == 2 and r["fringe_px"] == 2
+    assert acd.fringe_only(r) is True
+
+
+def test_fringe_stops_at_the_radius():
+    # A lone pixel of element 7, d px right of its body, white in the other
+    # capture: fringe exactly while d <= radius.
+    for d in (1, 2, 3):
+        a = _ids({7: (2, 2, 4, 4)})
+        b = a.copy()
+        a[3, 3 + d] = 7
+        assert _fringe(a, b, radius=2) == (1 if d <= 2 else 0), d
+
+
+def test_an_element_replaced_by_another_or_a_link_is_never_fringe():
+    a = _ids({7: (2, 2, 8, 4)})
+    b = _ids({7: (2, 2, 8, 4)})
+    b[2, 8] = 9                                # white -> another element
+    b[3, 3] = 9                                # element -> element
+    b[2, 9] = acd.LINK_BASE - 1                # white -> link code
+    assert _fringe(a, b) == 0
+    r = acd.id_image_diff(a, b)
+    assert r["differing_px"] == 3 and acd.fringe_only(r) is False
+
+
+def test_an_element_present_in_one_capture_only_is_not_fringe_only():
+    a = _ids({7: (2, 2, 8, 4)})
+    b = _ids({7: (2, 2, 8, 4), 8: (9, 9, 10, 10)})
+    b[1, 2] = 7                                # a real fringe pixel too
+    r = acd.id_image_diff(a, b)
+    # The extra element's pixel has no partner in A, so it cannot be fringe.
+    assert r["fringe_px"] == 1 and r["differing_px"] == 2
+    assert acd.fringe_only(r) is False
+
+
+def test_identical_images_report_no_fringe_and_are_not_fringe_only():
+    a = _ids({7: (2, 2, 8, 4)})
+    r = acd.id_image_diff(a, a.copy())
+    assert r["differing_px"] == 0 and r["fringe_px"] == 0
+    assert acd.fringe_only(r) is False
+
+
+def test_the_tolerance_applies_to_the_annotation_pass_only():
+    fringe = {"shape_equal": True, "differing_px": 3, "fringe_px": 3}
+    clean = {"shape_equal": True, "differing_px": 0, "fringe_px": 0}
+    anno = {"model_pixels": clean, "anno_pixels": fringe}
+    model = {"model_pixels": fringe, "anno_pixels": clean}
+    assert acd.capture_differs(anno) is True                       # exact by default
+    assert acd.capture_differs(anno, tolerate_anno_fringe=True) is False
+    assert acd.capture_differs(model, tolerate_anno_fringe=True) is True
+    partly = dict(fringe, fringe_px=2)
+    assert acd.capture_differs({"model_pixels": clean, "anno_pixels": partly},
+                               tolerate_anno_fringe=True) is True
