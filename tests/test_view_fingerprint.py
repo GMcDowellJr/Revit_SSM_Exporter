@@ -525,10 +525,11 @@ def test_an_unreadable_weight_is_a_stable_marker_and_a_failed_read_is_unknown(mo
 
 # --- the grid basis: real grids from tools/stage_a_grid ---------------------------------
 
-def _grid_run(root, name, link=True, whiten=None):
+def _grid_run(root, name, link=True, whiten=None, wall_px=None):
     """A run whose one view (id 1) was captured and gridded by the real tools
-    (tests/test_stage_a_grid_element_cell._rich_view). ``whiten``: model
-    pixels (y, x) set white in the TIFF before the grid is made again."""
+    (tests/test_stage_a_grid_element_cell._rich_view). ``whiten`` / ``wall_px``:
+    model pixels (y, x) set white / to the wall's colour in the TIFF before
+    the grid is made again."""
     import shutil
     from tests.test_stage_a_grid_element_cell import _rich_view
     from PIL import Image
@@ -539,11 +540,14 @@ def _grid_run(root, name, link=True, whiten=None):
     rec, _arr = _rich_view(cap_dir, link=link)
     assert rec["status"] == "value", rec.get("reason")
     shutil.move(str(cap_dir / "out"), str(run / "grid"))
-    if whiten:
+    if whiten or wall_px:
         tiff = cap_dir / "V_1.tiff"
         img = np.asarray(Image.open(str(tiff)).convert("RGB")).copy()
-        for y, x in whiten:
+        for y, x in whiten or []:
             img[y, x] = (255, 255, 255)
+        wall_rgb = json.loads((cap_dir / "V_1.json").read_text())["color_assignment_map"]["7"]
+        for y, x in wall_px or []:
+            img[y, x] = wall_rgb
         Image.fromarray(img).save(str(tiff), format="TIFF")
         from tools import register_stage_a_annotation as reg
         reg.register(cap_dir / "V_1_anno.json")    # the model TIFF it registered to moved
@@ -567,7 +571,16 @@ def _wall_edge_px():
 def _outcome(pair):
     row = pair["by_type"]["FloorPlan"]
     return dict((k, row[k]) for k in ("true_unchanged", "false_unchanged",
-                                      "grid_tolerated", "fringe_tolerated"))
+                                      "grid_tolerated", "fringe_tolerated"))  # boundary: own test
+
+
+def _above_wall_px(n):
+    """``n`` pixels in the row just above the wall's top edge (v = 9, a cell
+    boundary): each lies in the cell above, which the wall does not reach."""
+    from tests.test_stage_a_grid_element_cell import WALL, _model_px
+    y0, _y1, x0, x1 = _model_px(WALL)
+    xm = (x0 + x1) // 2
+    return [(y0 - 1, xm + k) for k in range(n)]
 
 
 @pytest.fixture(scope="module")
@@ -575,7 +588,20 @@ def grid_runs(tmp_path_factory):
     root = tmp_path_factory.mktemp("grid_basis")
     return {"a": _grid_run(root, "a"),
             "noise": _grid_run(root, "noise", whiten=_wall_edge_px()),
-            "nolink": _grid_run(root, "nolink", link=False)}
+            "nolink": _grid_run(root, "nolink", link=False),
+            "spill1": _grid_run(root, "spill1", wall_px=_above_wall_px(1)),
+            "spill3": _grid_run(root, "spill3", wall_px=_above_wall_px(3))}
+
+
+def test_a_pixel_spilling_across_a_cell_boundary_is_boundary_noise(grid_runs):
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["spill1"])
+    row = pair["by_type"]["FloorPlan"]
+    assert (row["true_unchanged"], row["boundary_tolerated"], row["false_unchanged"]) == (1, 1, 0)
+    # Three pixels in the new cell is more than boundary noise.
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["spill3"])
+    (fu,) = pair["false_unchanged"]
+    assert fu["basis"] == "grid" and fu["grid"]["one_sided_max_px"] == 3
+    assert fu["grid"]["rows_added"] >= 1 and fu["grid"]["boundary_only"] is False
 
 
 def test_a_pixel_change_that_moves_no_cell_is_the_same_on_the_grid(grid_runs):
@@ -625,18 +651,49 @@ def test_without_a_comparable_grid_the_pixels_decide(grid_runs, tmp_path):
                 else "grid versions differ") in fu["grid"]["reason"]
 
 
+def _gfacts(present=None, occupied=None, lattice=(1.0, (0, 0))):
+    return {"lattice": lattice,
+            "present": present if present is not None else {("model", 7, None, "ec_px", 1, 1): 40},
+            "occupied": occupied if occupied is not None else {(1, 1): 1},
+            "tool_version": "2.1.0"}
+
+
 def test_grid_diff_compares_presence_not_counts():
-    def facts(present=(("model", 7, None, "ec_px", 1, 1),), occupied=None, lattice=(1.0, (0, 0))):
-        return {"lattice": lattice, "present": set(present),
-                "occupied": occupied if occupied is not None else {(1, 1): 1},
-                "tool_version": "2.1.0"}
-    assert vcs.grid_diff(facts(), facts())["differs"] is False
-    moved = facts(present=(("model", 7, None, "ec_px", 2, 1),))
-    d = vcs.grid_diff(facts(), moved)
+    assert vcs.grid_diff(_gfacts(), _gfacts())["differs"] is False
+    fewer = _gfacts(present={("model", 7, None, "ec_px", 1, 1): 39})
+    assert vcs.grid_diff(_gfacts(), fewer)["differs"] is False      # a count, not presence
+    moved = _gfacts(present={("model", 7, None, "ec_px", 2, 1): 40})
+    d = vcs.grid_diff(_gfacts(), moved)
     assert (d["rows_added"], d["rows_removed"], d["differs"]) == (1, 1, True)
-    assert vcs.grid_diff(facts(), facts(occupied={(1, 1): 3}))["cells_differ"] == 1
-    assert vcs.grid_diff(facts(), facts(occupied={}))["cells_differ"] == 1
-    assert vcs.grid_diff(facts(), facts(lattice=(1.0, (0.5, 0))))["differs"] is True
+    assert vcs.grid_diff(_gfacts(), _gfacts(occupied={(1, 1): 3}))["cells_differ"] == 1
+    assert vcs.grid_diff(_gfacts(), _gfacts(occupied={(1, 1): 3}))["differs"] is True
+    assert vcs.grid_diff(_gfacts(), _gfacts(occupied={}))["differs"] is True
+    assert vcs.grid_diff(_gfacts(), _gfacts(lattice=(1.0, (0.5, 0))))["differs"] is True
+
+
+def test_a_one_sided_row_of_at_most_two_pixels_is_boundary_noise():
+    base = {("annotation", 9, None, "ec_px", 1, 1): 40, ("annotation", 9, None, "ec_ink_px", 1, 1): 9}
+    for n, expect in ((1, False), (2, False), (3, True)):
+        spill = dict(base)
+        spill.update({("annotation", 9, None, "ec_px", 2, 1): n,
+                      ("annotation", 9, None, "ec_ink_px", 2, 1): n})
+        # The spill also turns cell (2, 1) from empty to annotation-only.
+        b = _gfacts(present=spill, occupied={(1, 1): 2, (2, 1): 2})
+        a = _gfacts(present=base, occupied={(1, 1): 2})
+        for x, y in ((a, b), (b, a)):                       # appeared, and vanished
+            d = vcs.grid_diff(x, y)
+            assert d["differs"] is expect, n
+            assert d["boundary_only"] is (not expect)
+            assert d["one_sided_max_px"] == n
+    # An occupancy change in a cell no tolerated row explains still differs.
+    spill = dict(base)
+    spill[("annotation", 9, None, "ec_px", 2, 1)] = 1
+    d = vcs.grid_diff(_gfacts(present=base, occupied={(1, 1): 2}),
+                      _gfacts(present=spill, occupied={(1, 1): 2, (2, 1): 2, (5, 5): 1}))
+    assert d["differs"] is True and d["boundary_only"] is False
+    # And so does a different lattice, however small the rows.
+    d = vcs.grid_diff(_gfacts(present=base), _gfacts(present=spill, lattice=(2.0, (0, 0))))
+    assert d["differs"] is True
 
 
 def test_grid_facts_reads_presence_per_field_and_places_occupancy_by_range():
@@ -651,7 +708,7 @@ def test_grid_facts_reads_presence_per_field_and_places_occupancy_by_range():
               "ec_px": np.array([3, 0]), "ec_ink_px": np.array([1, 0]),
               "ec_black_px": np.array([0, 4]), "occupancy": occ}
     f = vcs.grid_facts(rec, arrays)
-    assert f["present"] == {("model", 7, None, "ec_px", -2, 5),
-                            ("model", 7, None, "ec_ink_px", -2, 5),
-                            ("annotation", 9, None, "ec_black_px", 0, 6)}
+    assert f["present"] == {("model", 7, None, "ec_px", -2, 5): 3,
+                            ("model", 7, None, "ec_ink_px", -2, 5): 1,
+                            ("annotation", 9, None, "ec_black_px", 0, 6): 4}
     assert f["occupied"] == {(-2, 6): 2}

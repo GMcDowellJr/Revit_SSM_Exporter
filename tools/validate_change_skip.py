@@ -27,6 +27,14 @@ one drafting view in different sessions differ by text anti-aliasing with no
 model change at all (OBSERVED 2026-10-29: four archive pairs pixel-identical,
 the other four 12-396 views a pair off by a few pixels each).
 
+A row present in ONE run only and carried there by at most ``BOUNDARY_PX``
+pixels is a fringe pixel that landed across a cell boundary, not an edit
+(OBSERVED 2026-10-29: the last 11 grid differences of the series were each
+exactly two one-sided rows -- one element's ec_px and ec_ink_px in one
+cell -- and three of those views flipped back the following week). A view
+whose only grid differences are such rows, and the occupancy of the cells
+they lie in, is counted ``boundary_tolerated``.
+
 Where either grid is missing or refused, or the two grids were made by
 different stage_a_grid versions, the pixel comparison decides: exact for the
 model pass, and for the annotation pass tolerant of FRINGE (``acd.fringe_only``:
@@ -61,9 +69,12 @@ from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven import view_fingerprint as vf  # noqa: E402
 
 SCHEMA = "vop.validate_change_skip.v1"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 OUTCOMES = ("true_unchanged", "false_unchanged", "not_comparable")
-TOLERATED = ("fringe_tolerated", "grid_tolerated")
+TOLERATED = ("fringe_tolerated", "grid_tolerated", "boundary_tolerated")
+# The most pixels a one-sided element x cell row may carry and still be a
+# fringe pixel across a cell boundary (module docstring).
+BOUNDARY_PX = 2
 BASES = ("grid", "pixels")
 EC_FIELDS = ("ec_px", "ec_ink_px", "ec_black_px", "ec_model_ink_under_px")
 
@@ -85,22 +96,22 @@ def grid_record(grid_dir, view_id):
 
 def grid_facts(rec, arrays):
     """PURE. What the comparison reads from one view's grid: the lattice
-    (cell size and origin), the set of (key, field, i, j) present, and each
-    occupied cell's occupancy code."""
+    (cell size and origin), ``present`` {(key, field, i, j): count} for every
+    nonzero row, and each occupied cell's occupancy code."""
     spec = rec.get("grid") or {}
     keys = rec.get("ec_keys") or []
-    present = set()
+    present = {}
     idx = np.asarray(arrays.get("ec_key", []), dtype=np.int64)
     ci = np.asarray(arrays.get("ec_i", []), dtype=np.int64)
     cj = np.asarray(arrays.get("ec_j", []), dtype=np.int64)
     for field in EC_FIELDS:
         if field not in arrays:
             continue
-        hit = np.nonzero(np.asarray(arrays[field]) > 0)[0]
-        for r in hit:
+        values = np.asarray(arrays[field])
+        for r in np.nonzero(values > 0)[0]:
             k = keys[int(idx[r])]
-            present.add((k.get("layer"), k.get("element_id"), k.get("link_category"),
-                         field, int(ci[r]), int(cj[r])))
+            present[(k.get("layer"), k.get("element_id"), k.get("link_category"),
+                     field, int(ci[r]), int(cj[r]))] = int(values[r])
     occupied = {}
     occ = arrays.get("occupancy")
     if occ is not None:
@@ -113,17 +124,27 @@ def grid_facts(rec, arrays):
             "tool_version": rec.get("tool_version")}
 
 
-def grid_diff(fa, fb):
-    """PURE. ``{"lattice_equal", "rows_added", "rows_removed", "cells_differ",
-    "differs"}`` between two grid_facts."""
+def grid_diff(fa, fb, boundary_px=BOUNDARY_PX):
+    """PURE. Two grid_facts compared. ``differs`` is False when they agree,
+    and also when every difference is boundary noise (``boundary_only``):
+    each one-sided row carries at most ``boundary_px`` pixels where it
+    exists, and each cell whose occupancy differs holds such a row."""
     lattice_equal = fa["lattice"] == fb["lattice"]
-    added = len(fb["present"] - fa["present"])
-    removed = len(fa["present"] - fb["present"])
+    added = dict((k, v) for k, v in fb["present"].items() if k not in fa["present"])
+    removed = dict((k, v) for k, v in fa["present"].items() if k not in fb["present"])
     cells = set(fa["occupied"]) | set(fb["occupied"])
-    differ = sum(1 for c in cells if fa["occupied"].get(c, 0) != fb["occupied"].get(c, 0))
-    return {"lattice_equal": lattice_equal, "rows_added": added, "rows_removed": removed,
-            "cells_differ": differ,
-            "differs": bool(not lattice_equal or added or removed or differ)}
+    differ = [c for c in cells if fa["occupied"].get(c, 0) != fb["occupied"].get(c, 0)]
+    one_sided = list(added.items()) + list(removed.items())
+    heavy = [k for k, v in one_sided if v > boundary_px]
+    noisy_cells = set((k[4], k[5]) for k, _v in one_sided)
+    unexplained = [c for c in differ if c not in noisy_cells]
+    exact = not (added or removed or differ)
+    boundary_only = bool(lattice_equal and not exact and not heavy and not unexplained)
+    return {"lattice_equal": lattice_equal, "rows_added": len(added),
+            "rows_removed": len(removed), "cells_differ": len(differ),
+            "one_sided_max_px": max([v for _k, v in one_sided] or [0]),
+            "boundary_px": boundary_px, "boundary_only": boundary_only,
+            "differs": bool(not lattice_equal or not (exact or boundary_only))}
 
 
 def compare_grid(view_id, grid_a, grid_b):
@@ -239,8 +260,13 @@ def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False, basis
                        None: "not_comparable"}[differs]
             _bump(pair["by_type"], vtype, outcome)
             if outcome == "true_unchanged" and entry and acd.capture_differs(entry):
-                _bump(pair["by_type"], vtype, "grid_tolerated" if entry.get("basis") == "grid"
-                      else "fringe_tolerated")
+                if entry.get("basis") != "grid":
+                    kind = "fringe_tolerated"
+                elif (entry.get("grid") or {}).get("boundary_only"):
+                    kind = "boundary_tolerated"
+                else:
+                    kind = "grid_tolerated"
+                _bump(pair["by_type"], vtype, kind)
             if outcome == "false_unchanged":
                 pair["false_unchanged"].append({
                     "view_id": int(vid), "view_type": vtype,
@@ -321,13 +347,14 @@ def main(argv=None):
     for pair in pairs:
         print("{0} -> {1}: {2}".format(Path(pair["a"]).name, Path(pair["b"]).name,
                                        pair.get("skipped") or pair["rules"]))
-    print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>6} {5:>7} {6:>8} {7:>6}  bar".format(
-        "view type", "views", "would_skip", "same", "grid", "fringe", "FALSE", "n/c"))
+    print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>6} {5:>8} {6:>7} {7:>8} {8:>6}  bar".format(
+        "view type", "views", "would_skip", "same", "grid", "boundary", "fringe", "FALSE",
+        "n/c"))
     for vtype, r in acc["by_type"].items():
-        print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>6} {5:>7} {6:>8} {7:>6}  {8}".format(
+        print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>6} {5:>8} {6:>7} {7:>8} {8:>6}  {9}".format(
             vtype, r["views"], r["would_skip"], r["true_unchanged"], r["grid_tolerated"],
-            r["fringe_tolerated"], r["false_unchanged"], r["not_comparable"],
-            "met" if r["meets_bar"] else "-"))
+            r["boundary_tolerated"], r["fringe_tolerated"], r["false_unchanged"],
+            r["not_comparable"], "met" if r["meets_bar"] else "-"))
     print("overall: {0} compared, {1} false unchanged, bar {2}".format(
         acc["compared_would_skip"], acc["false_unchanged"],
         "MET" if acc["overall_meets_bar"] else "not met"))
