@@ -271,6 +271,14 @@ resolve it, and a deleted source run would orphan the view.
     identical count in two consecutive pairs, so the middle CAPTURE was the
     odd one, not the model. Exactly 0 of the (cell, element) presence of
     PARTITION TYPES moved over 216 differing pixels.
+  - *Boundary noise.* An element x cell row present in one run only, carried
+    there by at most 2 pixels (`BOUNDARY_PX`), and the occupancy of the
+    cells such rows lie in, are tolerated (`boundary_tolerated`): a fringe
+    pixel across a cell boundary. OBSERVED 2026-10-29: after the grid basis
+    the series had 11 false unchanged, every one exactly two one-sided rows
+    (one element's ec_px and ec_ink_px in one cell), 8 of them from
+    fringe-only pixel differences, and three views flipped back the
+    following week (12091553, 12103192, 12225417).
   - *Fallback.* With a grid missing or refused in either run, or made by
     different stage_a_grid versions, the pixels decide: model exact,
     annotation tolerant of fringe (`FRINGE_RADIUS_PX` = 2,
@@ -278,7 +286,8 @@ resolve it, and a deleted source run would orphan the view.
     reads the grids. Each false unchanged records its `basis`.
   - *Declared limit.* An edit that adds or removes no element from any
     cell and changes no occupancy class (a one-glyph change inside cells
-    the note already occupies) reads as the same. For occupancy analysis
+    the note already occupies), or one that puts at most 2 pixels of an
+    element into a cell it did not reach before, reads as the same. For occupancy analysis
     it IS the same; for anything that reads pixel counts it is not. The
     audit uses the same definition, so the limit applies to it too.
 - *On a false unchanged.* If an audit or a refresh finds one, skipping is
