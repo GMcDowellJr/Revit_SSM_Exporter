@@ -264,8 +264,12 @@ SHADOW mode: nothing is skipped.
 - With `run_capture(record_fingerprints=True)` (the batch and the
   thinrunner), each view gets a SHA-1 over `id:Element.VersionGuid` of the
   view, its template, its filters, its members, its member types and its
-  ElementId parameters. One document graphics hash covers categories,
-  patterns, materials and graphics styles.
+  ElementId parameters, plus (basis 2, 2026-10-29) a `graphics` component:
+  line weights and line patterns of the root categories of its members and
+  all their subcategories. Only those reach the capture's pixels (it
+  overrides colour, fill patterns, transparency, halftone). Basis 1's
+  document-wide graphics hash blocked 7 of 8 archive pairs and is gone; the
+  line weight table is unread by the API and left to the full refresh.
 - They are read before any view is captured and written to
   `view_fingerprints_<d>.json` once the run is finalized; run_meta gains
   `view_fingerprints`. A failure is stamped and never fails the capture.

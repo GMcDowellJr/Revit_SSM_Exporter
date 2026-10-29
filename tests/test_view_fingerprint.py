@@ -22,12 +22,15 @@ from vop_interwoven import output_layout
 from vop_interwoven import view_fingerprint as vf
 
 
-def _inputs(members=(1, 2), template=-1, filters=(), types=(), refs=()):
+WALLS = (-2000011, "Walls", 3, 5, 90, -1)        # projection pattern 90, cut solid
+
+
+def _inputs(members=(1, 2), template=-1, filters=(), types=(), refs=(), rows=(WALLS,)):
     return {"members": list(members), "template_id": template, "filter_ids": list(filters),
-            "type_ids": list(types), "reference_ids": list(refs)}
+            "type_ids": list(types), "reference_ids": list(refs), "graphics_rows": list(rows)}
 
 
-GUIDS = dict((i, "g{0}".format(i)) for i in (1, 2, 3, 10, 50, 60, 70, 80))
+GUIDS = dict((i, "g{0}".format(i)) for i in (1, 2, 3, 10, 50, 60, 70, 80, 90))
 
 
 # --- the fingerprint -------------------------------------------------------------------
@@ -36,7 +39,8 @@ def test_each_component_moves_only_its_own_hash():
     base = vf.view_fingerprint(10, _inputs(template=50, filters=[60], types=[70], refs=[80]),
                                GUIDS)
     for name, guid_id in (("view", 10), ("template", 50), ("filters", 60),
-                          ("members", 1), ("types", 70), ("references", 80)):
+                          ("members", 1), ("types", 70), ("references", 80),
+                          ("graphics", 90)):
         guids = dict(GUIDS)
         guids[guid_id] = "changed"
         moved = vf.view_fingerprint(10, _inputs(template=50, filters=[60], types=[70],
@@ -54,22 +58,52 @@ def test_order_and_duplicates_do_not_matter_and_membership_does():
 
 
 def test_an_unread_input_is_an_unknown_fingerprint():
-    for key in ("members", "template_id", "filter_ids", "type_ids", "reference_ids"):
+    for key in ("members", "template_id", "filter_ids", "type_ids", "reference_ids",
+                "graphics_rows"):
         rec = vf.view_fingerprint(10, dict(_inputs(), **{key: None}), GUIDS)
         assert rec["fingerprint"] is None and rec["components"] is None
     assert vf.view_fingerprint(10, _inputs(), None)["fingerprint"] is None
 
 
-def test_the_graphics_fingerprint_sees_a_style_edit_and_ignores_row_order():
-    rows = [(1, "Walls", 3, 5, "0,0,0", -1, -1, None), (2, "Doors", 1, 1, "0,0,0", -1, -1, None)]
-    g = vf.graphics_fingerprint(rows, [60], GUIDS)
-    assert g == vf.graphics_fingerprint(list(reversed(rows)), [60], GUIDS)
-    heavier = [(1, "Walls", 4, 5, "0,0,0", -1, -1, None), rows[1]]
-    assert vf.graphics_fingerprint(heavier, [60], GUIDS) != g
-    guids = dict(GUIDS, **{})
-    guids[60] = "pattern edited"
-    assert vf.graphics_fingerprint(rows, [60], guids) != g
-    assert vf.graphics_fingerprint(None, [60], GUIDS) is None
+DOORS = (-2000023, "Doors", 1, 1, -1, -1)
+
+
+def test_the_graphics_component_sees_weights_and_patterns_not_row_order():
+    rows = [WALLS, DOORS]
+    g, _ = vf.graphics_component(rows, GUIDS)
+    assert g == vf.graphics_component(list(reversed(rows)), GUIDS)[0]
+    for edited in ((-2000011, "Walls", 4, 5, 90, -1),     # projection weight
+                   (-2000011, "Walls", 3, 6, 90, -1),     # cut weight
+                   (-2000011, "Walls", 3, 5, 91, -1),     # projection pattern
+                   (-2000011, "Walls", 3, 5, 90, 90),     # cut pattern
+                   (-2000011, "Walls", 3, 5, 90, "?")):   # now unreadable
+        assert vf.graphics_component([edited, DOORS], GUIDS)[0] != g, edited
+    guids = dict(GUIDS)
+    guids[90] = "pattern edited"
+    assert vf.graphics_component(rows, guids)[0] != g
+    # Only patterns that are elements carry a VersionGuid: the solid / no
+    # pattern ids and unreadable fields are not looked up.
+    assert vf.graphics_component([DOORS, (1, "x", 1, 1, "?", 0)], {})[1] == 0
+    assert vf.graphics_component([WALLS], {})[1] == 1
+
+
+def test_a_style_edit_moves_only_the_graphics_component():
+    base = vf.view_fingerprint(10, _inputs(), GUIDS)
+    heavier = vf.view_fingerprint(10, _inputs(rows=[(-2000011, "Walls", 4, 5, 90, -1)]), GUIDS)
+    assert vf.changed_components(base, heavier) == ["graphics"]
+    assert base["counts"]["graphics"] == 1
+
+
+def test_a_category_the_view_does_not_draw_cannot_move_its_fingerprint():
+    # Basis 1 hashed every category in the document: a Doors edit blocked a
+    # view that shows only walls. The rows are the view's own categories.
+    walls_only = vf.view_fingerprint(10, _inputs(rows=[WALLS]), GUIDS)
+    edited_doors = (-2000023, "Doors", 9, 9, -1, -1)
+    assert walls_only == vf.view_fingerprint(10, _inputs(rows=[WALLS]), GUIDS)
+    with_doors = vf.view_fingerprint(10, _inputs(rows=[WALLS, DOORS]), GUIDS)
+    assert vf.view_fingerprint(10, _inputs(rows=[WALLS, edited_doors]), GUIDS)[
+        "fingerprint"] != with_doors["fingerprint"]
+    assert "graphics_differs" not in vf.RULES and vf.BASIS_VERSION == 2
 
 
 def test_resolve_type_name_takes_a_name_or_looks_a_number_up():
@@ -84,7 +118,7 @@ def test_resolve_type_name_takes_a_name_or_looks_a_number_up():
 
 FACTS = {"config_hash": "9400eaef", "exporter_major": 4, "revit_build": "25.4.41.14",
          "open_mode": {"detached": True, "workshared": True, "closed_user_worksets": 0},
-         "basis_version": 1, "graphics": "gg"}
+         "basis_version": 2}
 
 
 def _view(fp="f1", links=False):
@@ -105,9 +139,7 @@ def test_every_rule_holds_and_the_view_would_skip():
     (dict(cur_facts={"revit_build": "26.0"}), "revit_build_differs"),
     (dict(cur_facts={"open_mode": {"detached": False}}), "open_mode_differs"),
     (dict(cur_facts={"open_mode": None}), "open_mode_differs"),
-    (dict(cur_facts={"basis_version": 2}), "basis_version_differs"),
-    (dict(cur_facts={"graphics": "edited"}), "graphics_differs"),
-    (dict(cur_facts={"graphics": None}), "graphics_differs"),
+    (dict(cur_facts={"basis_version": 1}), "basis_version_differs"),
     (dict(cur=_view(fp=None)), "fingerprint_unknown"),
     (dict(base=_view(fp=None)), "fingerprint_unknown"),
     (dict(cur=None), "fingerprint_unknown"),
@@ -140,8 +172,7 @@ def test_unknown_never_skips_over_generated_records():
 def test_run_facts_read_run_meta_and_the_fingerprints_file():
     meta = {"config_hash": "9400eaef", "exporter_version": "4.0.0+src.abc",
             "revit_version": {"state": "value", "value": {"version_build": "25.4.41.14"}}}
-    fp = {"basis_version": 1, "document": {"open_mode": FACTS["open_mode"],
-                                           "graphics": {"sha1": "gg"}}}
+    fp = {"basis_version": 2, "document": {"open_mode": FACTS["open_mode"]}}
     assert vf.run_facts(meta, fp) == FACTS
     assert vf.exporter_major("garbage") is None
 
@@ -235,8 +266,8 @@ def _run(root, name, date, views, status="success", facts=FACTS, anno_rects=None
             "revit_version": {"state": "value", "value": {"version_build": facts["revit_build"]}},
             "views": [{"view_id": v, "capture_status": status} for v in views]}
     (run / "run_meta_{0}.json".format(date)).write_text(json.dumps(meta))
-    fp = {"schema": vf.SCHEMA, "basis_version": 1,
-          "document": {"open_mode": facts["open_mode"], "graphics": {"sha1": facts["graphics"]}},
+    fp = {"schema": vf.SCHEMA, "basis_version": facts["basis_version"],
+          "document": {"open_mode": facts["open_mode"]},
           "views": dict((str(v), {"view_id": v, "view_type": "DraftingView" if v < 100 else
                                   "FloorPlan", "fingerprint": f, "components": {"members": f},
                                   "shows_links_or_imports": False})
@@ -389,3 +420,104 @@ def test_off_by_default_nothing_is_read_or_written(monkeypatch, tmp_path):
     capture_run.run_capture(object(), [1], object(), str(tmp_path))
     assert order == ["capture"]
     assert "view_fingerprints" not in json.loads((run / "run_meta_2025-12-20.json").read_text())
+
+
+# --- the Revit reads, on a fake API ------------------------------------------------------
+
+class _Id(object):
+    def __init__(self, value):
+        self.Value = value
+
+
+class _Cat(object):
+    def __init__(self, cid, name, weight=1, pattern=-1, parent=None, broken=False):
+        self.Id, self.Name, self.Parent = _Id(cid), name, parent
+        self.SubCategories = []
+        self._w, self._p, self._broken = weight, pattern, broken
+        if parent is not None:
+            parent.SubCategories.append(self)
+
+    def GetLineWeight(self, kind):
+        if self._broken:
+            raise RuntimeError("unreadable")
+        return self._w
+
+    def GetLinePatternId(self, kind):
+        return _Id(self._p)
+
+
+class _Elem(object):
+    def __init__(self, category, type_id=-1):
+        self.Category, self._t = category, type_id
+
+    def GetTypeId(self):
+        return _Id(self._t)
+
+
+class _View(object):
+    ViewTemplateId = _Id(-1)
+    Parameters = []
+
+    def AreGraphicsOverridesAllowed(self):
+        return False
+
+
+class _Doc(object):
+    def __init__(self, elems):
+        self._e = elems
+
+    def GetElement(self, eid):
+        return self._e.get(eid.Value)
+
+
+def _read(monkeypatch, elems, cache=None):
+    import sys
+    import types
+    from vop_interwoven import stage_a_registered_capture as rc
+    fake = types.ModuleType("Autodesk.Revit.DB")
+    fake.ElementId = _Id
+    fake.ImportInstance = type("ImportInstance", (), {})
+    fake.RevitLinkInstance = type("RevitLinkInstance", (), {})
+    fake.StorageType = types.SimpleNamespace(ElementId="ElementId")
+    fake.GraphicsStyleType = types.SimpleNamespace(Projection="P", Cut="C")
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake)
+    monkeypatch.setattr(rc, "view_membership_ids", lambda doc, view: sorted(elems))
+    return vf.read_view_inputs(_Doc(elems), _View(), cache)
+
+
+def test_graphics_rows_are_the_member_categories_roots_and_all_their_subcategories(
+        monkeypatch):
+    walls = _Cat(-2000011, "Walls", 3, 90)
+    _Cat(-2000012, "Common Edges", 1, parent=walls)
+    doors = _Cat(-2000023, "Doors")
+    frame = _Cat(-2000024, "Frame/Mullion", 2, parent=doors)
+    _Cat(-2000099, "Furniture")                    # in the document, not in the view
+    cache = {}
+    inputs, links, unread = _read(monkeypatch, {1: _Elem(walls, 70), 2: _Elem(frame)}, cache)
+    assert unread == {} and links is False and inputs["type_ids"] == [70]
+    ids = sorted(r[0] for r in inputs["graphics_rows"])
+    assert ids == [-2000024, -2000023, -2000012, -2000011]   # roots + subs, no furniture
+    assert (-2000011, "Walls", 3, 3, 90, 90) in inputs["graphics_rows"]
+    assert sorted(cache) == [-2000023, -2000011]             # read once per root
+    # A view of the same categories reads the same rows from the cache.
+    again, _l, _u = _read(monkeypatch, {1: _Elem(walls, 70), 2: _Elem(frame)}, cache)
+    assert again["graphics_rows"] == inputs["graphics_rows"]
+
+
+def test_an_unreadable_weight_is_a_stable_marker_and_a_failed_read_is_unknown(monkeypatch):
+    broken = _Cat(-2000011, "Walls", broken=True)
+    inputs, _links, unread = _read(monkeypatch, {1: _Elem(broken)})
+    assert inputs["graphics_rows"] == [(-2000011, "Walls", "?", "?", -1, -1)]
+    assert unread == {}
+
+    class _NoCategory(_Elem):
+        @property
+        def Category(self):
+            raise RuntimeError("category unreadable")
+
+        @Category.setter
+        def Category(self, value):
+            pass
+    inputs, _links, unread = _read(monkeypatch, {1: _NoCategory(None)})
+    assert inputs["graphics_rows"] is None and "graphics_rows" in unread
+    assert vf.view_fingerprint(10, inputs, GUIDS)["fingerprint"] is None

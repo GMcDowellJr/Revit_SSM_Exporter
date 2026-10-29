@@ -80,6 +80,7 @@ The pairs are, for the view as opened:
 | members | `view_membership_ids` (the same production read the capture already makes), each member's VersionGuid | added, removed, modified elements |
 | member types | `GetTypeId()` of each member, each type's VersionGuid | type edits (a wall type's structure, a tag family) |
 | view references | every ElementId-valued parameter of the view and template: phase, phase filter, scope box, underlay levels, associated level | phase and scope-box edits |
+| graphics (basis 2, S-2) | the root category of each member and all its subcategories: projection and cut line weight and line pattern id (values), plus each named line pattern's VersionGuid | object-style and line-style edits to what the view draws |
 
 The probe covered the first five components. The sixth is new: phase 1 must
 show that it never makes a stable view read "changed".
@@ -87,17 +88,30 @@ show that it never makes a stable view read "changed".
 Each component also gets its own SHA-1. The record then says which part
 moved, without storing thousands of ids per view.
 
-**S-2. A document-level graphics fingerprint gates every skip.** Some changes
-alter the drawing without touching any member: object styles, line weights,
-line patterns, fill patterns, materials. So one SHA-1 covers:
-- every Category and subcategory's line weights, colour, line pattern and
-  material (categories are not elements, so these are read as values);
-- the VersionGuid of every `LinePatternElement`, `FillPatternElement`,
-  `Material` and `GraphicsStyle`.
+**S-2. Graphics are a per-view component, scoped to what the view draws
+(basis 2, Greg 2026-10-29).** Some changes alter the drawing without touching
+any member: object styles and line styles. Categories are not elements, so
+their settings are read as values.
 
-If it differs from the baseline, **no view is skipped that run**. This
-deliberately over-captures: a style edit is rare, and it is exactly the kind
-of change a per-view fingerprint misses.
+- *What reaches the capture's pixels.* The capture overrides line colour,
+  surface and cut fill patterns, transparency and halftone on everything it
+  paints. Colour, fill patterns and materials therefore cannot change a
+  pixel. Line weight (a thicker line covers more pixels) and line pattern
+  (dashes leave gaps) are not overridden, so they can.
+- *What is hashed.* For the root category of every member, and every
+  subcategory under it: projection and cut line weight, and projection and
+  cut line pattern id. Plus the VersionGuid of each line pattern those name
+  (the solid pattern is not an element). All subcategories of a root are
+  included because a family can draw any of them, and which ones it uses is
+  geometry the fingerprint does not read (S-4). A detail line's category is
+  its line style, so a view with detail lines carries every line style.
+- *Why not the document.* Basis 1 hashed every category in the document and
+  every pattern, material and graphics style. It blocked 7 of 8 archive
+  pairs (`graphics_differs`, run of 2026-10-28): a new material or an
+  imported DWG's subcategories anywhere changed it for every view.
+- *Declared limit.* The line weight table (pen width per weight number per
+  scale) also changes pixels, and the Revit API does not expose it. No
+  component sees it; the full refresh (S-8) is what bounds it.
 
 **S-3. Re-minted ("volatile") elements are NOT excluded.** Ignoring them
 cleared 1 of 7 over-cautious views in the probe. It would also mean
@@ -132,11 +146,11 @@ captured as today, and the record names the first rule that failed:
    - Revit `version_build`;
    - open mode (detached, worksets);
    - the fingerprint basis version.
-4. The document graphics fingerprint (S-2) equals the baseline's.
-5. The view's fingerprint equals its source capture's fingerprint.
-6. The view shows no RVT link instance and no import (S-7).
-7. It is not this view's turn for a full refresh (S-8).
-8. The job is a new capture, not a recapture. Recapture lists always capture.
+4. The view's fingerprint, graphics included (S-2), equals its source
+   capture's fingerprint.
+5. The view shows no RVT link instance and no import (S-7).
+6. It is not this view's turn for a full refresh (S-8).
+7. The job is a new capture, not a recapture. Recapture lists always capture.
 
 **S-7. Views showing links or imports are always captured (in v1; decided).**
 A host VersionGuid does not move when the linked model or DWG changes. How
@@ -153,7 +167,10 @@ audit (S-13): every would-skip verdict is checked against a real capture.
 
 **S-9. The fingerprint has a basis version.** If S-1 or S-2 changes (a new
 component, a different read), the version goes up. A baseline from an older
-basis cannot be compared, and the view is captured.
+basis cannot be compared, and the view is captured. Basis 2 (2026-10-29)
+replaced the document graphics hash with the per-view graphics component;
+every basis-1 fingerprints file must be backfilled again, and the batch's
+fingerprint plan redoes any run whose stamp is not the current basis.
 
 ## What a skipped view looks like in the run
 
@@ -183,7 +200,7 @@ resolve it, and a deleted source run would orphan the view.
   the times, and the baseline compared.
 - `views_core.CaptureStatus` reads `unchanged`.
 - The run gains `skip_summary`: counts by outcome and by refusal rule, and
-  the graphics-fingerprint verdict.
+  which components moved.
 - Tools that count captures by status learn `unchanged`:
   `find_recapture_views`, `stage_a_grid_rollup`, the runs index, census
   pairs.
@@ -191,7 +208,7 @@ resolve it, and a deleted source run would orphan the view.
 ## Where it runs, and what it costs
 
 - **Placement.** After the archive opens, the batch reads every element's
-  VersionGuid once (about 5 s) and the document graphics fingerprint. Then,
+  VersionGuid once (about 5 s). Then,
   per view and before any collection or transaction, it reads membership,
   types, template, filters and references, and checks S-6. A captured view
   passes its membership read to the registered capture, which reads it today

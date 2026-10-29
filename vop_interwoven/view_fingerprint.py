@@ -15,13 +15,24 @@ hashes sorted ``id:VersionGuid`` pairs:
   members     view_membership_ids (the capture's own read)
   types       the types its members use (GetTypeId)
   references  every ElementId-valued parameter of the view and its template
+  graphics    (basis 2) the object styles of the categories the view DRAWS:
+              for the root category of every member and all of its
+              subcategories, projection and cut line weight and line pattern
+              id, plus the VersionGuid of those line patterns
 
-A document graphics fingerprint (S-2) hashes every category and
-subcategory's line weights, colour, line pattern and material, and the
-VersionGuid of every LinePatternElement, FillPatternElement, Material and
-GraphicsStyle. Any read that fails makes the fingerprint ``None``: unknown is
-never "unchanged" (S-5). No geometry is read (S-4): VersionGuid, parameters
-and ids only.
+Basis 1 had a DOCUMENT graphics fingerprint instead (every category's
+weights, colour, pattern and material, and every pattern, material and
+graphics style element), and it blocked 7 of 8 archive pairs: any material
+or new subcategory anywhere changed it. The capture overrides colour, fill
+patterns, transparency and halftone on every element it paints, so only
+line weight and line pattern reach its pixels, and only for categories the
+view shows. Not seen by any component (a declared limit): the line weight
+table (pen widths per scale), which the Revit API does not expose; the full
+refresh (S-8) is what catches it.
+
+Any read that fails makes the fingerprint ``None``: unknown is never
+"unchanged" (S-5). No geometry is read (S-4): VersionGuid, parameters and
+ids only.
 
 Pure parts are importable without Revit; the Revit parts import it inside
 the functions.
@@ -35,8 +46,12 @@ import time
 SCHEMA = "vop.view_fingerprints.v1"
 # S-9: raised whenever a component or a read changes. A baseline from another
 # basis is not comparable, and the view is captured.
-BASIS_VERSION = 1
-COMPONENTS = ("view", "template", "filters", "members", "types", "references")
+BASIS_VERSION = 2
+COMPONENTS = ("view", "template", "filters", "members", "types", "references",
+              "graphics")
+# A graphics row: (category id, name, projection weight, cut weight,
+# projection line pattern id, cut line pattern id). Unreadable fields are "?".
+GRAPHICS_PATTERN_FIELDS = (4, 5)
 MISSING_GUID = "-"
 # Capture statuses a baseline view may have to be skipped against (S-6.2).
 BASELINE_STATUSES = ("success",)
@@ -44,7 +59,7 @@ BASELINE_STATUSES = ("success",)
 # that fails (docs/DESIGN_CHANGE_SKIP.md, S-6).
 RULES = ("no_baseline_fingerprint", "baseline_capture_not_success",
          "config_hash_differs", "exporter_major_differs", "revit_build_differs",
-         "open_mode_differs", "basis_version_differs", "graphics_differs",
+         "open_mode_differs", "basis_version_differs",
          "fingerprint_unknown", "shows_links_or_imports", "fingerprint_differs")
 
 
@@ -65,13 +80,30 @@ def component_hash(ids, guids):
                           for i in ids)), missing
 
 
+def graphics_component(rows, guids):
+    """PURE. ``(sha1, missing count)`` over the graphics ``rows`` (order
+    free) and the VersionGuid of every line pattern they name (ids > 0; the
+    solid pattern and "no pattern" are not elements)."""
+    text = sorted("|".join(str(v) for v in row) for row in rows)
+    patterns = set()
+    for row in rows:
+        for k in GRAPHICS_PATTERN_FIELDS:
+            v = row[k] if k < len(row) else None
+            if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                patterns.add(v)
+    pattern_hash, missing = component_hash(patterns, guids)
+    return _sha1("rows:" + "\n".join(text) + "\npatterns:" + pattern_hash), missing
+
+
 def view_fingerprint(view_id, inputs, guids):
     """PURE. ``inputs``: ``{members, template_id, filter_ids, type_ids,
-    reference_ids}`` (lists of ints; ``template_id`` -1 for none). Returns
+    reference_ids}`` (lists of ints; ``template_id`` -1 for none) and
+    ``graphics_rows`` (graphics_component's rows). Returns
     ``{"fingerprint", "components", "counts", "missing_guids"}``, with
     ``fingerprint`` None (and no components) when any input is None or the
     VersionGuid map is."""
-    keys = ("members", "template_id", "filter_ids", "type_ids", "reference_ids")
+    keys = ("members", "template_id", "filter_ids", "type_ids", "reference_ids",
+            "graphics_rows")
     if inputs is None or guids is None or any(inputs.get(k) is None for k in keys):
         return {"fingerprint": None, "components": None, "counts": None,
                 "missing_guids": None}
@@ -86,24 +118,16 @@ def view_fingerprint(view_id, inputs, guids):
     }
     components, missing = {}, 0
     for name in COMPONENTS:
-        components[name], miss = component_hash(parts[name], guids)
+        if name == "graphics":
+            components[name], miss = graphics_component(inputs["graphics_rows"], guids)
+        else:
+            components[name], miss = component_hash(parts[name], guids)
         missing += miss
+    counts = dict((n, len(set(parts[n]))) for n in parts)
+    counts["graphics"] = len(inputs["graphics_rows"])
     return {"fingerprint": _sha1("|".join("{0}={1}".format(n, components[n])
                                           for n in COMPONENTS)),
-            "components": components,
-            "counts": dict((n, len(set(parts[n]))) for n in COMPONENTS),
-            "missing_guids": missing}
-
-
-def graphics_fingerprint(category_rows, element_ids, guids):
-    """PURE. ``category_rows``: one tuple of plain values per category and
-    subcategory; ``element_ids``: the pattern, material and graphics-style
-    elements. None when either input is None."""
-    if category_rows is None or element_ids is None or guids is None:
-        return None
-    rows = sorted("|".join(str(v) for v in row) for row in category_rows)
-    elements, _missing = component_hash(element_ids, guids)
-    return _sha1("categories:" + "\n".join(rows) + "\nelements:" + elements)
+            "components": components, "counts": counts, "missing_guids": missing}
 
 
 def exporter_major(version):
@@ -117,7 +141,8 @@ def exporter_major(version):
 def run_facts(run_meta, fingerprints):
     """PURE. What the skip rules compare between two runs: from run_meta the
     capture's config hash, exporter MAJOR and Revit build; from the
-    fingerprints file the open mode, basis version and graphics hash."""
+    fingerprints file the open mode and basis version. (Graphics are a
+    per-view component since basis 2.)"""
     meta = run_meta or {}
     fp = fingerprints or {}
     revit = meta.get("revit_version") or {}
@@ -127,8 +152,7 @@ def run_facts(run_meta, fingerprints):
             "exporter_major": exporter_major(meta.get("exporter_version")),
             "revit_build": (revit or {}).get("version_build"),
             "open_mode": (fp.get("document") or {}).get("open_mode"),
-            "basis_version": fp.get("basis_version"),
-            "graphics": ((fp.get("document") or {}).get("graphics") or {}).get("sha1")}
+            "basis_version": fp.get("basis_version")}
 
 
 def skip_verdict(base_facts, cur_facts, base_view, cur_view, base_status):
@@ -149,8 +173,7 @@ def skip_verdict(base_facts, cur_facts, base_view, cur_view, base_status):
                       ("exporter_major", "exporter_major_differs"),
                       ("revit_build", "revit_build_differs"),
                       ("open_mode", "open_mode_differs"),
-                      ("basis_version", "basis_version_differs"),
-                      ("graphics", "graphics_differs")):
+                      ("basis_version", "basis_version_differs")):
         a, b = base_facts.get(key), cur_facts.get(key)
         if a is None or b is None or a != b:
             return _fail(rule)
@@ -231,9 +254,10 @@ def read_version_guids(doc):
                  "ms": round((time.time() - t0) * 1000.0, 1)}
 
 
-def _category_row(cat):
-    """One category's drawing settings as plain values; an unreadable field
-    is ``?`` (stable while it stays unreadable)."""
+def _graphics_row(cat):
+    """One category's line settings as plain values (GRAPHICS_PATTERN_FIELDS
+    names the pattern ids); an unreadable field is ``?`` (stable while it
+    stays unreadable)."""
     from Autodesk.Revit.DB import GraphicsStyleType
 
     def _try(fn):
@@ -241,41 +265,33 @@ def _category_row(cat):
             return fn()
         except Exception:  # noqa: BLE001 -- recorded as "?" in the row
             return "?"
-    colour = _try(lambda: cat.LineColor)
-    if colour is not None and not isinstance(colour, str):
-        colour = _try(lambda: "{0},{1},{2}".format(colour.Red, colour.Green, colour.Blue))
     return (_eid(cat.Id), _try(lambda: str(cat.Name)),
             _try(lambda: cat.GetLineWeight(GraphicsStyleType.Projection)),
             _try(lambda: cat.GetLineWeight(GraphicsStyleType.Cut)),
-            colour,
             _try(lambda: _eid(cat.GetLinePatternId(GraphicsStyleType.Projection))),
-            _try(lambda: _eid(cat.GetLinePatternId(GraphicsStyleType.Cut))),
-            _try(lambda: _eid(cat.Material.Id) if cat.Material is not None else None))
+            _try(lambda: _eid(cat.GetLinePatternId(GraphicsStyleType.Cut))))
 
 
-def read_graphics_state(doc, guids):
-    """``(sha1 or None, record)``: the document graphics fingerprint (S-2)."""
-    from Autodesk.Revit.DB import (FillPatternElement, FilteredElementCollector,
-                                   GraphicsStyle, LinePatternElement, Material)
-    t0 = time.time()
-    rows, error = [], None
-    try:
-        for cat in doc.Settings.Categories:
-            rows.append(_category_row(cat))
-            for sub in cat.SubCategories:
-                rows.append(_category_row(sub))
-        element_ids = []
-        for cls in (LinePatternElement, FillPatternElement, Material, GraphicsStyle):
-            element_ids.extend(_eid(e.Id) for e in FilteredElementCollector(doc).OfClass(cls))
-    except Exception as ex:  # noqa: BLE001 -- the fingerprint is None, the reason kept
-        error = "{0}: {1}".format(type(ex).__name__, ex)
-        rows, element_ids = None, None
-    sha1 = graphics_fingerprint(rows, element_ids, guids)
-    return sha1, {"sha1": sha1, "categories": None if rows is None else len(rows),
-                  "elements": None if element_ids is None else len(element_ids),
-                  "unreadable_fields": None if rows is None else sum(
-                      1 for r in rows for v in r if v == "?"),
-                  "error": error, "ms": round((time.time() - t0) * 1000.0, 1)}
+def _root_category(cat):
+    """The top-level category of ``cat`` (itself when it has no parent)."""
+    seen = 0
+    while cat is not None and cat.Parent is not None and seen < 8:
+        cat, seen = cat.Parent, seen + 1
+    return cat
+
+
+def graphics_rows(root, cache):
+    """The graphics rows of ``root`` and every subcategory under it, read once
+    per document (``cache``: {root id: rows})."""
+    key = _eid(root.Id)
+    if key not in cache:
+        rows, stack = [], [root]
+        while stack:
+            cat = stack.pop()
+            rows.append(_graphics_row(cat))
+            stack.extend(cat.SubCategories)
+        cache[key] = rows
+    return cache[key]
 
 
 def read_open_mode(doc):
@@ -328,10 +344,11 @@ def _reference_ids(view):
     return out
 
 
-def read_view_inputs(doc, view):
+def read_view_inputs(doc, view, graphics_cache=None):
     """``(inputs, shows_links_or_imports, unread)`` for one view. A failed
     read leaves its input None (the fingerprint is then unknown) and is
-    named in ``unread``."""
+    named in ``unread``. ``graphics_cache`` shares category rows across the
+    views of one document."""
     from Autodesk.Revit.DB import ElementId, ImportInstance, RevitLinkInstance
     from .stage_a_registered_capture import view_membership_ids
     inputs, unread = {}, {}
@@ -364,13 +381,16 @@ def read_view_inputs(doc, view):
         inputs["reference_ids"], unread["reference_ids"] = None, "{0}: {1}".format(
             type(ex).__name__, ex)
     links = None
+    inputs["type_ids"] = inputs["graphics_rows"] = None
     if inputs.get("members") is not None:
+        elems = []
         try:
             types, links = set(), False
             for i in inputs["members"]:
                 elem = doc.GetElement(ElementId(int(i)))
                 if elem is None:
                     continue
+                elems.append(elem)
                 if isinstance(elem, (RevitLinkInstance, ImportInstance)):
                     links = True
                 tid = _eid(elem.GetTypeId())
@@ -380,8 +400,20 @@ def read_view_inputs(doc, view):
         except Exception as ex:  # noqa: BLE001 -- named in unread
             inputs["type_ids"], links = None, None
             unread["type_ids"] = "{0}: {1}".format(type(ex).__name__, ex)
-    else:
-        inputs["type_ids"] = None
+        try:
+            cache = {} if graphics_cache is None else graphics_cache
+            roots = {}
+            for elem in elems:
+                root = _root_category(elem.Category)
+                if root is not None:
+                    roots[_eid(root.Id)] = root
+            rows = []
+            for key in sorted(roots):
+                rows.extend(graphics_rows(roots[key], cache))
+            inputs["graphics_rows"] = rows
+        except Exception as ex:  # noqa: BLE001 -- named in unread
+            inputs["graphics_rows"] = None
+            unread["graphics_rows"] = "{0}: {1}".format(type(ex).__name__, ex)
     return inputs, links, unread
 
 
@@ -392,12 +424,12 @@ def fingerprint_views(doc, view_ids, mode, opened=None):
     from Autodesk.Revit.DB import ElementId, View
     t0 = time.time()
     guids, guid_stats = read_version_guids(doc)
-    graphics_sha1, graphics = read_graphics_state(doc, guids)
+    graphics_cache = {}
     record = {"schema": SCHEMA, "basis_version": BASIS_VERSION, "mode": mode,
               "computed_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "opened": opened,
               "document": {"title": getattr(doc, "Title", None),
                            "open_mode": read_open_mode(doc),
-                           "version_guids": guid_stats, "graphics": graphics},
+                           "version_guids": guid_stats},
               "views": {}}
     for vid in view_ids:
         t1 = time.time()
@@ -410,13 +442,15 @@ def fingerprint_views(doc, view_ids, mode, opened=None):
                 entry["view_type"] = view_type_name(view)
             except Exception:  # noqa: BLE001 -- None: the type is unknown
                 entry["view_type"] = None
-            inputs, links, unread = read_view_inputs(doc, view)
+            inputs, links, unread = read_view_inputs(doc, view, graphics_cache)
             entry.update(view_fingerprint(vid, inputs, guids))
             entry["shows_links_or_imports"] = links
             if unread:
                 entry["unread"] = unread
         entry["ms"] = round((time.time() - t1) * 1000.0, 1)
         record["views"][str(int(vid))] = entry
+    record["document"]["graphics"] = {"root_categories": len(graphics_cache),
+                                      "rows": sum(len(r) for r in graphics_cache.values())}
     record["summary"] = summarize(record["views"])
     record["ms"] = round((time.time() - t0) * 1000.0, 1)
     return record
