@@ -521,3 +521,137 @@ def test_an_unreadable_weight_is_a_stable_marker_and_a_failed_read_is_unknown(mo
     inputs, _links, unread = _read(monkeypatch, {1: _NoCategory(None)})
     assert inputs["graphics_rows"] is None and "graphics_rows" in unread
     assert vf.view_fingerprint(10, inputs, GUIDS)["fingerprint"] is None
+
+
+# --- the grid basis: real grids from tools/stage_a_grid ---------------------------------
+
+def _grid_run(root, name, link=True, whiten=None):
+    """A run whose one view (id 1) was captured and gridded by the real tools
+    (tests/test_stage_a_grid_element_cell._rich_view). ``whiten``: model
+    pixels (y, x) set white in the TIFF before the grid is made again."""
+    import shutil
+    from tests.test_stage_a_grid_element_cell import _rich_view
+    from PIL import Image
+    import numpy as np
+    from tools import stage_a_grid as grid
+    run = root / name
+    cap_dir = run / "color_id"
+    rec, _arr = _rich_view(cap_dir, link=link)
+    assert rec["status"] == "value", rec.get("reason")
+    shutil.move(str(cap_dir / "out"), str(run / "grid"))
+    if whiten:
+        tiff = cap_dir / "V_1.tiff"
+        img = np.asarray(Image.open(str(tiff)).convert("RGB")).copy()
+        for y, x in whiten:
+            img[y, x] = (255, 255, 255)
+        Image.fromarray(img).save(str(tiff), format="TIFF")
+        from tools import register_stage_a_annotation as reg
+        reg.register(cap_dir / "V_1_anno.json")    # the model TIFF it registered to moved
+        assert grid.grid_view(cap_dir / "V_1.json", run / "grid")["status"] == "value"
+    fp = {"basis_version": vf.BASIS_VERSION, "document": {"open_mode": FACTS["open_mode"]},
+          "views": {"1": {"view_id": 1, "view_type": "FloorPlan", "fingerprint": "f",
+                          "components": {"members": "f"}, "shows_links_or_imports": False}}}
+    meta = {"config_hash": FACTS["config_hash"], "exporter_version": "4.0.0",
+            "revit_version": {"value": {"version_build": FACTS["revit_build"]}}}
+    return {"run_dir": str(run), "meta": meta, "fingerprints": fp,
+            "statuses": {"1": "success"}, "reason": None}
+
+
+def _wall_edge_px():
+    """A pixel on the wall's top edge, mid-cell: whitening it moves no cell."""
+    from tests.test_stage_a_grid_element_cell import WALL, _model_px
+    y0, _y1, x0, x1 = _model_px(WALL)
+    return [(y0, (x0 + x1) // 2 + 9)]
+
+
+def _outcome(pair):
+    row = pair["by_type"]["FloorPlan"]
+    return dict((k, row[k]) for k in ("true_unchanged", "false_unchanged",
+                                      "grid_tolerated", "fringe_tolerated"))
+
+
+@pytest.fixture(scope="module")
+def grid_runs(tmp_path_factory):
+    root = tmp_path_factory.mktemp("grid_basis")
+    return {"a": _grid_run(root, "a"),
+            "noise": _grid_run(root, "noise", whiten=_wall_edge_px()),
+            "nolink": _grid_run(root, "nolink", link=False)}
+
+
+def test_a_pixel_change_that_moves_no_cell_is_the_same_on_the_grid(grid_runs):
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["noise"])
+    assert _outcome(pair) == {"true_unchanged": 1, "false_unchanged": 0,
+                              "grid_tolerated": 1, "fringe_tolerated": 0}
+    # The control: the pixels really differ, so on pixels it is a false unchanged.
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["noise"], basis="pixels")
+    assert _outcome(pair)["false_unchanged"] == 1
+    assert pair["false_unchanged"][0]["basis"] == "pixels"
+
+
+def test_a_change_the_grid_sees_is_a_false_unchanged_on_the_grid_basis(grid_runs):
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["nolink"])
+    assert _outcome(pair)["false_unchanged"] == 1
+    (fu,) = pair["false_unchanged"]
+    assert fu["basis"] == "grid" and fu["grid"]["rows_removed"] > 0
+    assert fu["grid"]["differs"] is True
+
+
+def test_identical_captures_need_no_grid(grid_runs, tmp_path):
+    import shutil
+    copy = tmp_path / "copy"
+    shutil.copytree(grid_runs["a"]["run_dir"], str(copy))
+    shutil.rmtree(str(copy / "grid"))
+    pair = vcs.score_pair(grid_runs["a"], dict(grid_runs["a"], run_dir=str(copy)))
+    assert _outcome(pair) == {"true_unchanged": 1, "false_unchanged": 0,
+                              "grid_tolerated": 0, "fringe_tolerated": 0}
+
+
+def test_without_a_comparable_grid_the_pixels_decide(grid_runs, tmp_path):
+    import shutil
+    for name, damage in (("missing", "remove"), ("version", "version")):
+        copy = tmp_path / name
+        shutil.copytree(grid_runs["noise"]["run_dir"], str(copy))
+        rec_path = copy / "grid" / "V_1.grid.json"
+        if damage == "remove":
+            rec_path.unlink()
+        else:
+            rec = json.loads(rec_path.read_text())
+            rec["tool_version"] = "0.0.1"
+            rec_path.write_text(json.dumps(rec))
+        pair = vcs.score_pair(grid_runs["a"], dict(grid_runs["noise"], run_dir=str(copy)))
+        (fu,) = pair["false_unchanged"]
+        assert fu["basis"] == "pixels", name
+        assert ("no grid record in run B" if damage == "remove"
+                else "grid versions differ") in fu["grid"]["reason"]
+
+
+def test_grid_diff_compares_presence_not_counts():
+    def facts(present=(("model", 7, None, "ec_px", 1, 1),), occupied=None, lattice=(1.0, (0, 0))):
+        return {"lattice": lattice, "present": set(present),
+                "occupied": occupied if occupied is not None else {(1, 1): 1},
+                "tool_version": "2.1.0"}
+    assert vcs.grid_diff(facts(), facts())["differs"] is False
+    moved = facts(present=(("model", 7, None, "ec_px", 2, 1),))
+    d = vcs.grid_diff(facts(), moved)
+    assert (d["rows_added"], d["rows_removed"], d["differs"]) == (1, 1, True)
+    assert vcs.grid_diff(facts(), facts(occupied={(1, 1): 3}))["cells_differ"] == 1
+    assert vcs.grid_diff(facts(), facts(occupied={}))["cells_differ"] == 1
+    assert vcs.grid_diff(facts(), facts(lattice=(1.0, (0.5, 0))))["differs"] is True
+
+
+def test_grid_facts_reads_presence_per_field_and_places_occupancy_by_range():
+    import numpy as np
+    rec = {"grid": {"cell_ft": 1.0, "origin_uv": [0, 0], "i_range": [-2, 1], "j_range": [5, 7]},
+           "ec_keys": [{"layer": "model", "element_id": 7, "link_category": None},
+                       {"layer": "annotation", "element_id": 9, "link_category": None}],
+           "tool_version": "2.1.0"}
+    occ = np.zeros((2, 3), dtype=np.uint8)
+    occ[1, 0] = 2                                   # row 1 = j 6, column 0 = i -2
+    arrays = {"ec_key": np.array([0, 1]), "ec_i": np.array([-2, 0]), "ec_j": np.array([5, 6]),
+              "ec_px": np.array([3, 0]), "ec_ink_px": np.array([1, 0]),
+              "ec_black_px": np.array([0, 4]), "occupancy": occ}
+    f = vcs.grid_facts(rec, arrays)
+    assert f["present"] == {("model", 7, None, "ec_px", -2, 5),
+                            ("model", 7, None, "ec_ink_px", -2, 5),
+                            ("annotation", 9, None, "ec_black_px", 0, 6)}
+    assert f["occupied"] == {(-2, 6): 2}

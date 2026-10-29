@@ -16,13 +16,23 @@ archive, B = this one):
   * with ``--compare-all``, the same comparison for the views it would
     capture, which measures over-caution (slower: every view is decoded).
 
-An annotation pass whose every differing pixel is text anti-aliasing FRINGE
-(``acd.fringe_only``: white on one side, the same element within
-``acd.FRINGE_RADIUS_PX`` on the other) counts as the same
-capture and is counted as ``fringe_tolerated`` inside ``true_unchanged``: two
-captures of one drafting view differ that way with no model change at all
-(OBSERVED 2026-10-29). ``--exact`` turns the tolerance off. The model pass is
-always compared exactly.
+"The same capture" is judged on what ANALYSIS reads (``--basis grid``, the
+default): the analysis grid of both runs (``grid/<stem>.grid.json`` + npz,
+tools/stage_a_grid.py) must agree on the grid itself (cell size, origin),
+on every element x cell row's PRESENCE per field (ec_px, ec_ink_px,
+ec_black_px, ec_model_ink_under_px > 0 -- counts may differ) and on every
+cell's occupancy class. A view whose pixels differ but whose grid is the
+same is counted ``grid_tolerated`` inside ``true_unchanged``. Two captures of
+one drafting view in different sessions differ by text anti-aliasing with no
+model change at all (OBSERVED 2026-10-29: four archive pairs pixel-identical,
+the other four 12-396 views a pair off by a few pixels each).
+
+Where either grid is missing or refused, or the two grids were made by
+different stage_a_grid versions, the pixel comparison decides: exact for the
+model pass, and for the annotation pass tolerant of FRINGE (``acd.fringe_only``:
+white on one side, the same element within ``acd.FRINGE_RADIUS_PX`` on the
+other), counted ``fringe_tolerated``. ``--exact`` turns that off; ``--basis
+pixels`` never reads the grids. Each false unchanged records its ``basis``.
 
 Acceptance (S-13, Greg 2026-10-28): 0 false unchanged over at least
 ``--min-pairs`` (1,000) compared would-skip views, and per view type at least
@@ -31,7 +41,7 @@ bar keeps being captured; the record says which types have.
 
     python tools/validate_change_skip.py RUN_A RUN_B [RUN_C ...] [--compare-all]
         [--out validate_change_skip.json] [--min-pairs 1000] [--min-per-type 30]
-        [--exact]
+        [--basis grid|pixels] [--exact]
 """
 from __future__ import annotations
 
@@ -43,13 +53,98 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import numpy as np  # noqa: E402
+
 from tools import analyze_change_detection_probe as acd  # noqa: E402
+from tools import stage_a_kinds as kinds  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven import view_fingerprint as vf  # noqa: E402
 
 SCHEMA = "vop.validate_change_skip.v1"
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 OUTCOMES = ("true_unchanged", "false_unchanged", "not_comparable")
+TOLERATED = ("fringe_tolerated", "grid_tolerated")
+BASES = ("grid", "pixels")
+EC_FIELDS = ("ec_px", "ec_ink_px", "ec_black_px", "ec_model_ink_under_px")
+
+
+# --- the grid basis ----------------------------------------------------------------
+
+def grid_record(grid_dir, view_id):
+    """The view's ``*_<id>.grid.json`` in ``grid_dir``, or None. Two is
+    ambiguous and refused."""
+    grid_dir = Path(grid_dir)
+    if not grid_dir.is_dir():
+        return None
+    hits = [p for p in grid_dir.glob("*_{0}.grid.json".format(view_id))]
+    if len(hits) > 1:
+        raise acd.Refusal("view {0}: more than one grid record in {1}: {2}".format(
+            view_id, grid_dir, sorted(p.name for p in hits)))
+    return hits[0] if hits else None
+
+
+def grid_facts(rec, arrays):
+    """PURE. What the comparison reads from one view's grid: the lattice
+    (cell size and origin), the set of (key, field, i, j) present, and each
+    occupied cell's occupancy code."""
+    spec = rec.get("grid") or {}
+    keys = rec.get("ec_keys") or []
+    present = set()
+    idx = np.asarray(arrays.get("ec_key", []), dtype=np.int64)
+    ci = np.asarray(arrays.get("ec_i", []), dtype=np.int64)
+    cj = np.asarray(arrays.get("ec_j", []), dtype=np.int64)
+    for field in EC_FIELDS:
+        if field not in arrays:
+            continue
+        hit = np.nonzero(np.asarray(arrays[field]) > 0)[0]
+        for r in hit:
+            k = keys[int(idx[r])]
+            present.add((k.get("layer"), k.get("element_id"), k.get("link_category"),
+                         field, int(ci[r]), int(cj[r])))
+    occupied = {}
+    occ = arrays.get("occupancy")
+    if occ is not None:
+        i0, j0 = (spec.get("i_range") or [0])[0], (spec.get("j_range") or [0])[0]
+        rows, cols = np.nonzero(np.asarray(occ))
+        for r, c in zip(rows, cols):
+            occupied[(int(c) + i0, int(r) + j0)] = int(occ[r, c])
+    lattice = (spec.get("cell_ft"), tuple(spec.get("origin_uv") or ()))
+    return {"lattice": lattice, "present": present, "occupied": occupied,
+            "tool_version": rec.get("tool_version")}
+
+
+def grid_diff(fa, fb):
+    """PURE. ``{"lattice_equal", "rows_added", "rows_removed", "cells_differ",
+    "differs"}`` between two grid_facts."""
+    lattice_equal = fa["lattice"] == fb["lattice"]
+    added = len(fb["present"] - fa["present"])
+    removed = len(fa["present"] - fb["present"])
+    cells = set(fa["occupied"]) | set(fb["occupied"])
+    differ = sum(1 for c in cells if fa["occupied"].get(c, 0) != fb["occupied"].get(c, 0))
+    return {"lattice_equal": lattice_equal, "rows_added": added, "rows_removed": removed,
+            "cells_differ": differ,
+            "differs": bool(not lattice_equal or added or removed or differ)}
+
+
+def compare_grid(view_id, grid_a, grid_b):
+    """``(differs or None, record)``: None when the grid cannot decide (a
+    record missing or refused, or made by different grid versions)."""
+    paths = [grid_record(grid_a, view_id), grid_record(grid_b, view_id)]
+    if None in paths:
+        return None, {"reason": "no grid record in run {0}".format(
+            "A" if paths[0] is None else "B")}
+    facts = []
+    for path in paths:
+        try:
+            rec, arrays = kinds.load_grid(path)
+        except kinds.KindsRefusal as ex:
+            return None, {"reason": "{0}: {1}".format(path.name, ex)}
+        facts.append(grid_facts(rec, arrays))
+    if facts[0]["tool_version"] != facts[1]["tool_version"]:
+        return None, {"reason": "grid versions differ: {0} / {1}".format(
+            facts[0]["tool_version"], facts[1]["tool_version"])}
+    out = grid_diff(*facts)
+    return out["differs"], out
 
 
 def _load(path):
@@ -82,24 +177,35 @@ def load_run(run_dir):
 
 def _bump(table, view_type, key):
     row = table.setdefault(view_type or "(unknown)", dict(
-        (k, 0) for k in ("views", "would_skip") + OUTCOMES + ("fringe_tolerated",)))
+        (k, 0) for k in ("views", "would_skip") + OUTCOMES + TOLERATED))
     row[key] += 1
 
 
-def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False):
+def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False, basis="grid"):
     """Score B's views against A. ``compare(view_id) -> (capture_differs,
     entry)`` (True / False / None) is injected; by default the captures of the
-    two runs are compared with the change-detection analyzer, tolerating
-    annotation fringe unless ``exact``."""
+    two runs are compared with the change-detection analyzer and, where the
+    pixels differ and ``basis`` is "grid", decided by their analysis grids
+    (module docstring)."""
     if compare is None:
         folder_a = acd.capture_folder(run_a["run_dir"])
         folder_b = acd.capture_folder(run_b["run_dir"])
+        grid_a = output_layout.grid_dir_for_capture(str(folder_a))
+        grid_b = output_layout.grid_dir_for_capture(str(folder_b))
 
         def compare(view_id):
             fa, fb = acd.view_files(folder_a, view_id), acd.view_files(folder_b, view_id)
             if not (fa["model"] or fa["anno"]) or not (fb["model"] or fb["anno"]):
                 return None, None
             entry = acd.compare_view(view_id, fa, fb)
+            entry["basis"] = "pixels"
+            if not acd.capture_differs(entry):
+                return False, entry
+            if basis == "grid":
+                differs, entry["grid"] = compare_grid(view_id, grid_a, grid_b)
+                if differs is not None:
+                    entry["basis"] = "grid"
+                    return differs, entry
             return acd.capture_differs(entry, tolerate_anno_fringe=not exact), entry
     pair = {"a": run_a["run_dir"], "b": run_b["run_dir"], "by_type": {}, "rules": {},
             "changed_components": {}, "false_unchanged": [], "over_cautious": []}
@@ -132,8 +238,9 @@ def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False):
             outcome = {True: "false_unchanged", False: "true_unchanged",
                        None: "not_comparable"}[differs]
             _bump(pair["by_type"], vtype, outcome)
-            if outcome == "true_unchanged" and acd.fringe_only((entry or {}).get("anno_pixels")):
-                _bump(pair["by_type"], vtype, "fringe_tolerated")
+            if outcome == "true_unchanged" and entry and acd.capture_differs(entry):
+                _bump(pair["by_type"], vtype, "grid_tolerated" if entry.get("basis") == "grid"
+                      else "fringe_tolerated")
             if outcome == "false_unchanged":
                 pair["false_unchanged"].append({
                     "view_id": int(vid), "view_type": vtype,
@@ -144,7 +251,9 @@ def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False):
                         "differing_px"),
                     "anno_fringe_px": ((entry or {}).get("anno_pixels") or {}).get(
                         "fringe_px"),
-                    "frame_diff": (entry or {}).get("frame_diff")})
+                    "frame_diff": (entry or {}).get("frame_diff"),
+                    "basis": (entry or {}).get("basis"),
+                    "grid": (entry or {}).get("grid")})
         elif differs is False:
             pair["over_cautious"].append({"view_id": int(vid), "view_type": vtype,
                                           "rule": verdict["rule"]})
@@ -185,7 +294,10 @@ def main(argv=None):
     ap.add_argument("--min-per-type", type=int, default=30)
     ap.add_argument("--out", default=None)
     ap.add_argument("--exact", action="store_true",
-                    help="count annotation anti-aliasing fringe as a difference")
+                    help="pixel basis: count annotation anti-aliasing fringe as a difference")
+    ap.add_argument("--basis", choices=BASES, default="grid",
+                    help="grid (default): decide differing pixels by the analysis grids; "
+                         "pixels: never read the grids")
     args = ap.parse_args(argv)
     if len(args.runs) < 2:
         ap.error("give at least two runs, in series order")
@@ -193,11 +305,12 @@ def main(argv=None):
     pairs = []
     for a, b in zip(runs, runs[1:]):
         t0 = time.perf_counter()
-        pair = score_pair(a, b, compare_all=args.compare_all, exact=args.exact)
+        pair = score_pair(a, b, compare_all=args.compare_all, exact=args.exact,
+                          basis=args.basis)
         pair["seconds"] = round(time.perf_counter() - t0, 1)
         pairs.append(pair)
     record = {"schema": SCHEMA, "tool_version": TOOL_VERSION, "runs": args.runs,
-              "compare_all": args.compare_all, "exact": args.exact,
+              "compare_all": args.compare_all, "exact": args.exact, "basis": args.basis,
               "fringe_radius_px": None if args.exact else acd.FRINGE_RADIUS_PX,
               "pairs": pairs,
               "acceptance": acceptance(pairs, args.min_pairs, args.min_per_type)}
@@ -208,12 +321,13 @@ def main(argv=None):
     for pair in pairs:
         print("{0} -> {1}: {2}".format(Path(pair["a"]).name, Path(pair["b"]).name,
                                        pair.get("skipped") or pair["rules"]))
-    print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>7} {5:>8} {6:>6}  bar".format(
-        "view type", "views", "would_skip", "same", "fringe", "FALSE", "n/c"))
+    print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>6} {5:>7} {6:>8} {7:>6}  bar".format(
+        "view type", "views", "would_skip", "same", "grid", "fringe", "FALSE", "n/c"))
     for vtype, r in acc["by_type"].items():
-        print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>7} {5:>8} {6:>6}  {7}".format(
-            vtype, r["views"], r["would_skip"], r["true_unchanged"], r["fringe_tolerated"],
-            r["false_unchanged"], r["not_comparable"], "met" if r["meets_bar"] else "-"))
+        print("{0:<14} {1:>6} {2:>10} {3:>8} {4:>6} {5:>7} {6:>8} {7:>6}  {8}".format(
+            vtype, r["views"], r["would_skip"], r["true_unchanged"], r["grid_tolerated"],
+            r["fringe_tolerated"], r["false_unchanged"], r["not_comparable"],
+            "met" if r["meets_bar"] else "-"))
     print("overall: {0} compared, {1} false unchanged, bar {2}".format(
         acc["compared_would_skip"], acc["false_unchanged"],
         "MET" if acc["overall_meets_bar"] else "not met"))

@@ -254,20 +254,33 @@ resolve it, and a deleted source run would orphan the view.
   captured, which is the safe outcome.
 - *The percentage is an audit fraction, not a tolerated error rate.* A false
   unchanged carries a stale capture forward silently.
-- *What counts as "the capture differs".* Model pass exactly. Annotation pass
-  exactly, except text anti-aliasing FRINGE: a pixel that is white in one
-  capture and an element in the other, with that same element within 2 px
-  (`FRINGE_RADIUS_PX`) in the first. Revit anti-aliases text whatever smooth
-  edges is set to, and the edge blend is not repeatable. OBSERVED
-  2026-10-29 on three of the 383 flagged drafting views of 12-27 -> 01-03
-  (1, 3 and 216 differing pixels): every differing pixel was fringe and
-  Text Notes only; colour assignments, element id sets and (1/8" cell,
-  element) presence were identical. The validator counts such views as
-  `fringe_tolerated` inside `true_unchanged`; `--exact` turns that off.
-  *Declared limit:* an edit whose every changed pixel lies within 2 px of
-  the same element's other pixels (a one-glyph change in very small text)
-  would read as fringe. The audit uses the same definition, so this limit
-  applies to it too.
+- *What counts as "the capture differs" (Greg 2026-10-29).* What analysis
+  would read differently. Identical pixels are the same. Where pixels
+  differ, the two runs' analysis grids decide: the same lattice (cell size,
+  origin), the same element x cell rows PRESENT for every field (ec_px,
+  ec_ink_px, ec_black_px, ec_model_ink_under_px; counts may differ) and the
+  same occupancy class in every cell. Such a view is `grid_tolerated`
+  inside `true_unchanged`.
+  - *Why not pixels.* Revit anti-aliases text whatever smooth edges is set
+    to, and the blend differs between capture sessions. OBSERVED 2026-10-29
+    over Hosp_Interior_AR 11-08 .. 01-03 (8 pairs, 5,177 would-skip views):
+    four pairs pixel-identical (2,592 views, 0 different); the other four
+    12-396 views per pair a few pixels off, nearly all of it text-edge
+    FRINGE (white on one side, the same element within 2 px on the other),
+    plus 1-12 isolated pixels in 81 views. Two views differed by the
+    identical count in two consecutive pairs, so the middle CAPTURE was the
+    odd one, not the model. Exactly 0 of the (cell, element) presence of
+    PARTITION TYPES moved over 216 differing pixels.
+  - *Fallback.* With a grid missing or refused in either run, or made by
+    different stage_a_grid versions, the pixels decide: model exact,
+    annotation tolerant of fringe (`FRINGE_RADIUS_PX` = 2,
+    `fringe_tolerated`; `--exact` turns it off). `--basis pixels` never
+    reads the grids. Each false unchanged records its `basis`.
+  - *Declared limit.* An edit that adds or removes no element from any
+    cell and changes no occupancy class (a one-glyph change inside cells
+    the note already occupies) reads as the same. For occupancy analysis
+    it IS the same; for anything that reads pixel counts it is not. The
+    audit uses the same definition, so the limit applies to it too.
 - *On a false unchanged.* If an audit or a refresh finds one, skipping is
   suspended for that model (`skip.suspended`, naming the view and what
   differed) until a person clears it. Every later run captures everything
