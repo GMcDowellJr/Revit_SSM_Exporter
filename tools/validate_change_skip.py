@@ -21,8 +21,10 @@ default): the analysis grid of both runs (``grid/<stem>.grid.json`` + npz,
 tools/stage_a_grid.py) must agree on the grid itself (cell size, origin),
 on every element x cell row's PRESENCE per field (ec_px, ec_ink_px,
 ec_black_px, ec_model_ink_under_px > 0 -- counts may differ) and on every
-cell's occupancy class. A view whose pixels differ but whose grid is the
-same is counted ``grid_tolerated`` inside ``true_unchanged``. Two captures of
+cell's occupancy class. The grid decides first; the TIFFs are decoded only
+to describe a view the grid finds different. A view whose capture files are
+not byte-identical but whose grid is the same is counted ``grid_tolerated``
+inside ``true_unchanged``. Two captures of
 one drafting view in different sessions differ by text anti-aliasing with no
 model change at all (OBSERVED 2026-10-29: four archive pairs pixel-identical,
 the other four 12-396 views a pair off by a few pixels each).
@@ -48,8 +50,14 @@ Acceptance (S-13, Greg 2026-10-28): 0 false unchanged over at least
 bar keeps being captured; the record says which types have.
 
     python tools/validate_change_skip.py RUN_A RUN_B [RUN_C ...] [--compare-all]
+    python tools/validate_change_skip.py --root EXPORTS_DIR [--jobs 4] ...
         [--out validate_change_skip.json] [--min-pairs 1000] [--min-per-type 30]
-        [--basis grid|pixels] [--exact]
+        [--basis grid|pixels] [--exact] [--jobs N]
+
+``--root`` finds every finalized run under a folder and makes one series per
+model folder (the folder that holds the runs), in as-of date order; a second
+run of the same as-of date in one series is dropped and listed (the latest
+run id is kept). ``--jobs`` scores pairs in parallel processes.
 """
 from __future__ import annotations
 
@@ -64,12 +72,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 
 from tools import analyze_change_detection_probe as acd  # noqa: E402
+from tools import decode_stage_a_color_id as dsc  # noqa: E402
 from tools import stage_a_kinds as kinds  # noqa: E402
 from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven import view_fingerprint as vf  # noqa: E402
 
 SCHEMA = "vop.validate_change_skip.v1"
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.4.0"
 OUTCOMES = ("true_unchanged", "false_unchanged", "not_comparable")
 TOLERATED = ("fringe_tolerated", "grid_tolerated", "boundary_tolerated")
 # The most pixels a one-sided element x cell row may carry and still be a
@@ -147,6 +156,44 @@ def grid_diff(fa, fb, boundary_px=BOUNDARY_PX):
             "differs": bool(not lattice_equal or not (exact or boundary_only))}
 
 
+def _tiff_of(sidecar):
+    """The capture TIFF of a sidecar: ``<stem>.tiff`` beside it, else the one
+    its record names (parsing a model sidecar is the slow way)."""
+    beside = Path(sidecar).with_suffix(".tiff")
+    if beside.is_file():
+        return beside
+    return dsc._resolve_tiff_path(Path(sidecar), acd._load(sidecar))
+
+
+def files_identical(files_a, files_b):
+    """True when every capture TIFF (model and annotation) of the view is
+    byte-identical in both runs; False when any differs or exists on one
+    side only."""
+    for key in ("model", "anno"):
+        sa, sb = files_a.get(key), files_b.get(key)
+        if bool(sa) != bool(sb):
+            return False
+        if not sa:
+            continue
+        if acd.sha256_file(_tiff_of(sa)) != acd.sha256_file(_tiff_of(sb)):
+            return False
+    return True
+
+
+def tolerated_kind(entry):
+    """PURE. Which tolerance made a true_unchanged view the same, or None when
+    it was the same outright: ``boundary_tolerated`` (grid, boundary rows
+    only), ``grid_tolerated`` (grid the same, capture files not identical),
+    ``fringe_tolerated`` (pixel basis, annotation fringe)."""
+    if not entry:
+        return None
+    if entry.get("basis") == "grid":
+        if (entry.get("grid") or {}).get("boundary_only"):
+            return "boundary_tolerated"
+        return None if entry.get("files_identical") else "grid_tolerated"
+    return "fringe_tolerated" if acd.capture_differs(entry) else None
+
+
 def compare_grid(view_id, grid_a, grid_b):
     """``(differs or None, record)``: None when the grid cannot decide (a
     record missing or refused, or made by different grid versions)."""
@@ -218,15 +265,25 @@ def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False, basis
             fa, fb = acd.view_files(folder_a, view_id), acd.view_files(folder_b, view_id)
             if not (fa["model"] or fa["anno"]) or not (fb["model"] or fb["anno"]):
                 return None, None
+            grid = None
+            if basis == "grid":
+                # GRID FIRST: where both grids can decide, they decide, and the
+                # TIFFs are decoded only to describe a difference. Identical
+                # pixels give identical grids, so this is the same verdict the
+                # pixels-then-grid order gave, without a decode per view.
+                differs, grid = compare_grid(view_id, grid_a, grid_b)
+                if differs is not None:
+                    entry = {"view_id": view_id, "files_identical": files_identical(fa, fb)}
+                    if differs:
+                        entry.update(acd.compare_view(view_id, fa, fb))
+                    entry.update(basis="grid", grid=grid)
+                    return differs, entry
             entry = acd.compare_view(view_id, fa, fb)
             entry["basis"] = "pixels"
+            if grid is not None:
+                entry["grid"] = grid          # why the grid could not decide
             if not acd.capture_differs(entry):
                 return False, entry
-            if basis == "grid":
-                differs, entry["grid"] = compare_grid(view_id, grid_a, grid_b)
-                if differs is not None:
-                    entry["basis"] = "grid"
-                    return differs, entry
             return acd.capture_differs(entry, tolerate_anno_fringe=not exact), entry
     pair = {"a": run_a["run_dir"], "b": run_b["run_dir"], "by_type": {}, "rules": {},
             "changed_components": {}, "false_unchanged": [], "over_cautious": []}
@@ -259,13 +316,8 @@ def score_pair(run_a, run_b, compare=None, compare_all=False, exact=False, basis
             outcome = {True: "false_unchanged", False: "true_unchanged",
                        None: "not_comparable"}[differs]
             _bump(pair["by_type"], vtype, outcome)
-            if outcome == "true_unchanged" and entry and acd.capture_differs(entry):
-                if entry.get("basis") != "grid":
-                    kind = "fringe_tolerated"
-                elif (entry.get("grid") or {}).get("boundary_only"):
-                    kind = "boundary_tolerated"
-                else:
-                    kind = "grid_tolerated"
+            kind = tolerated_kind(entry) if outcome == "true_unchanged" else None
+            if kind:
                 _bump(pair["by_type"], vtype, kind)
             if outcome == "false_unchanged":
                 pair["false_unchanged"].append({
@@ -311,9 +363,72 @@ def acceptance(pairs, min_pairs, min_per_type):
             "rule": "rule of three: 0 failures in n checks bounds the rate below 3/n at 95 %"}
 
 
+def discover(root):
+    """``(series, dropped)``: under ``root``, every directory holding exactly one
+    run_meta file is a run. Runs are grouped by their parent folder (one
+    model) and ordered by as-of date; a finalized run is required, and of two
+    runs with one as-of date the later run id is kept. ``series``: [{"model_dir",
+    "runs": [run_dir, ...]}]; ``dropped``: [{"run_dir", "reason"}]."""
+    found, dropped = {}, []
+    dirs = set(m.parent for m in Path(root).rglob("run_meta*.json"))
+    for run_dir in sorted(dirs):
+        path, why = output_layout.find_run_meta(str(run_dir))
+        if path is None:
+            dropped.append({"run_dir": str(run_dir), "reason": why})
+            continue
+        try:
+            meta = _load(path)
+        except (OSError, ValueError) as ex:
+            dropped.append({"run_dir": str(run_dir),
+                            "reason": "{0}: {1}".format(type(ex).__name__, ex)})
+            continue
+        if meta.get("finalized") is not True:
+            dropped.append({"run_dir": str(run_dir), "reason": "not finalized"})
+            continue
+        date = output_layout.census_file_date(meta, str(run_dir))
+        found.setdefault(str(run_dir.parent), []).append(
+            (date, str(meta.get("run_id") or ""), str(run_dir)))
+    series = []
+    for model_dir, runs in sorted(found.items()):
+        by_date = {}
+        for date, run_id, run_dir in sorted(runs):
+            if date in by_date:
+                dropped.append({"run_dir": by_date[date][1],
+                                "reason": "same as-of date {0} as {1}".format(date, run_dir)})
+            by_date[date] = (run_id, run_dir)
+        ordered = [by_date[d][1] for d in sorted(by_date)]
+        if len(ordered) > 1:
+            series.append({"model_dir": model_dir, "runs": ordered})
+        else:
+            dropped.extend({"run_dir": r, "reason": "only run of its model folder"}
+                           for r in ordered)
+    return series, dropped
+
+
+def _score_job(job):
+    """One pair, in a worker process: the runs are loaded there."""
+    run_a, run_b, options = job
+    t0 = time.perf_counter()
+    pair = score_pair(load_run(run_a), load_run(run_b), **options)
+    pair["seconds"] = round(time.perf_counter() - t0, 1)
+    return pair
+
+
+def score_pairs(jobs, n_jobs):
+    """Every job scored, in job order; in ``n_jobs`` processes when > 1."""
+    if n_jobs <= 1 or len(jobs) <= 1:
+        return [_score_job(j) for j in jobs]
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        return list(pool.map(_score_job, jobs))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("runs", nargs="+", help="run directories of ONE model, in series order")
+    ap.add_argument("runs", nargs="*", help="run directories of ONE model, in series order")
+    ap.add_argument("--root", default=None,
+                    help="find the runs under this folder: one series per model folder")
+    ap.add_argument("--jobs", type=int, default=1, help="pairs scored in parallel")
     ap.add_argument("--compare-all", action="store_true",
                     help="also compare the views it would capture (measures over-caution)")
     ap.add_argument("--min-pairs", type=int, default=1000)
@@ -325,17 +440,24 @@ def main(argv=None):
                     help="grid (default): decide differing pixels by the analysis grids; "
                          "pixels: never read the grids")
     args = ap.parse_args(argv)
-    if len(args.runs) < 2:
-        ap.error("give at least two runs, in series order")
-    runs = [load_run(r) for r in args.runs]
-    pairs = []
-    for a, b in zip(runs, runs[1:]):
-        t0 = time.perf_counter()
-        pair = score_pair(a, b, compare_all=args.compare_all, exact=args.exact,
-                          basis=args.basis)
-        pair["seconds"] = round(time.perf_counter() - t0, 1)
-        pairs.append(pair)
-    record = {"schema": SCHEMA, "tool_version": TOOL_VERSION, "runs": args.runs,
+    if bool(args.root) == bool(args.runs):
+        ap.error("give either run directories (at least two, in series order) or --root")
+    dropped = []
+    if args.root:
+        series, dropped = discover(args.root)
+        if not series:
+            ap.error("no model folder under {0} holds two finalized runs".format(args.root))
+    else:
+        if len(args.runs) < 2:
+            ap.error("give at least two runs, in series order")
+        series = [{"model_dir": None, "runs": list(args.runs)}]
+    options = {"compare_all": args.compare_all, "exact": args.exact, "basis": args.basis}
+    jobs = [(a, b, options) for s in series for a, b in zip(s["runs"], s["runs"][1:])]
+    print("{0} series, {1} pairs, {2} job(s)".format(len(series), len(jobs), args.jobs))
+    pairs = score_pairs(jobs, args.jobs)
+    record = {"schema": SCHEMA, "tool_version": TOOL_VERSION,
+              "runs": [r for s in series for r in s["runs"]], "series": series,
+              "dropped_runs": dropped, "jobs": args.jobs,
               "compare_all": args.compare_all, "exact": args.exact, "basis": args.basis,
               "fringe_radius_px": None if args.exact else acd.FRINGE_RADIUS_PX,
               "pairs": pairs,

@@ -271,6 +271,10 @@ resolve it, and a deleted source run would orphan the view.
     identical count in two consecutive pairs, so the middle CAPTURE was the
     odd one, not the model. Exactly 0 of the (cell, element) presence of
     PARTITION TYPES moved over 216 differing pixels.
+  - *Order.* The grid decides first; TIFFs are decoded only to describe a
+    view the grid finds different, and `grid_tolerated` means the capture
+    files were not byte-identical while the grid agreed. The pixel rule is
+    only the fallback.
   - *Boundary noise.* An element x cell row present in one run only, carried
     there by at most 2 pixels (`BOUNDARY_PX`), and the occupancy of the
     cells such rows lie in, are tolerated (`boundary_tolerated`): a fringe

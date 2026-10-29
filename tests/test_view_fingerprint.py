@@ -712,3 +712,83 @@ def test_grid_facts_reads_presence_per_field_and_places_occupancy_by_range():
                             ("model", 7, None, "ec_ink_px", -2, 5): 1,
                             ("annotation", 9, None, "ec_black_px", 0, 6): 4}
     assert f["occupied"] == {(-2, 6): 2}
+
+
+# --- grid first, discovery, parallel pairs ------------------------------------------------
+
+def test_the_grid_decides_without_decoding_and_decodes_only_a_difference(grid_runs, monkeypatch):
+    from tools import analyze_change_detection_probe as acd
+    calls = []
+    real = acd.compare_view
+
+    def spy(view_id, fa, fb):
+        calls.append(view_id)
+        return real(view_id, fa, fb)
+    monkeypatch.setattr(acd, "compare_view", spy)
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["noise"])
+    assert _outcome(pair)["grid_tolerated"] == 1 and calls == []      # no decode
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["nolink"])
+    (fu,) = pair["false_unchanged"]
+    assert calls == [1] and fu["basis"] == "grid"
+    assert fu["anno_differing_px"] is not None or fu["model_differing_px"] is not None
+
+
+def test_byte_identical_captures_with_grids_count_no_tolerance(grid_runs, tmp_path):
+    import shutil
+    copy = tmp_path / "same"
+    shutil.copytree(grid_runs["a"]["run_dir"], str(copy))
+    pair = vcs.score_pair(grid_runs["a"], dict(grid_runs["a"], run_dir=str(copy)))
+    assert _outcome(pair) == {"true_unchanged": 1, "false_unchanged": 0,
+                              "grid_tolerated": 0, "fringe_tolerated": 0}
+
+
+def _meta_run(root, model, name, date, finalized=True, run_id=None):
+    run = root / model / name
+    run.mkdir(parents=True)
+    (run / "run_meta_{0}.json".format(date)).write_text(json.dumps(
+        {"run_id": run_id or name.split("__")[-1], "date": date, "finalized": finalized}))
+    return str(run)
+
+
+def test_discover_makes_one_series_per_model_folder_in_date_order(tmp_path):
+    r3 = _meta_run(tmp_path, "M1", "2025-11-22__20261021T1209", "2025-11-22")
+    r1 = _meta_run(tmp_path, "M1", "2025-11-08__20261021T0738", "2025-11-08")
+    old = _meta_run(tmp_path, "M1", "2025-11-15__20261021T0859", "2025-11-15")
+    new = _meta_run(tmp_path, "M1", "2025-11-15__20261025T1000", "2025-11-15")
+    unf = _meta_run(tmp_path, "M1", "2025-11-29__20261021T1345", "2025-11-29", finalized=False)
+    lone = _meta_run(tmp_path, "M2", "2025-11-08__20261022T0800", "2025-11-08")
+    series, dropped = vcs.discover(tmp_path)
+    assert series == [{"model_dir": str(tmp_path / "M1"), "runs": [r1, new, r3]}]
+    reasons = dict((d["run_dir"], d["reason"]) for d in dropped)
+    assert reasons[unf] == "not finalized"
+    assert reasons[old].startswith("same as-of date 2025-11-15")
+    assert reasons[lone] == "only run of its model folder"
+
+
+def test_root_and_parallel_jobs_score_the_same_pairs(tmp_path):
+    model = tmp_path / "KSRF" / "Hosp"
+    model.mkdir(parents=True)
+    views = {1: ("same", {11: (0, 0, 10, 10)}), 101: ("old", {31: (0, 0, 10, 10)})}
+    _run(model, "2025-12-13__r1", "2025-12-13", views)
+    _run(model, "2025-12-20__r2", "2025-12-20", views)
+    _run(model, "2025-12-27__r3", "2025-12-27", {1: ("same", {11: (0, 0, 10, 10)}),
+                                                  101: ("new", {31: (0, 0, 10, 10)})})
+    serial, parallel = tmp_path / "s.json", tmp_path / "p.json"
+    assert vcs.main(["--root", str(tmp_path), "--out", str(serial)]) == 0
+    assert vcs.main(["--root", str(tmp_path), "--jobs", "2", "--out", str(parallel)]) == 0
+    a, b = json.loads(serial.read_text()), json.loads(parallel.read_text())
+    assert [p["b"] for p in a["pairs"]] == [p["b"] for p in b["pairs"]]
+    assert len(a["pairs"]) == 2 and a["acceptance"] == b["acceptance"]
+    assert a["series"][0]["model_dir"] == str(model)
+    for pa, pb in zip(a["pairs"], b["pairs"]):
+        pa.pop("seconds"), pb.pop("seconds")
+        assert pa == pb
+
+
+def test_runs_and_root_are_one_or_the_other(tmp_path):
+    with pytest.raises(SystemExit):
+        vcs.main(["--root", str(tmp_path), "x", "y"])
+    with pytest.raises(SystemExit):
+        vcs.main([])
+    with pytest.raises(SystemExit):
+        vcs.main(["--root", str(tmp_path)])                  # nothing found
