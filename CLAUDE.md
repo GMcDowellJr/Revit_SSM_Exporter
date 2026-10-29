@@ -282,6 +282,22 @@ SHADOW mode: nothing is skipped.
   `GetChangedElements` cannot compare detached opens. VersionGuid re-mints
   about 0.4 % of elements on every detached open.
 
+**Hash-and-skip phase 2** (2026-10-29, `vop_interwoven/change_skip.py`, OFF
+by default: `skip_unchanged`). Only **drafting views and legends** skip
+(`skip_view_types`): held-out validation found a floor plan whose stair
+path label changed under an identical fingerprint (issue #251).
+- The baseline is the series' latest earlier finalized run in the same
+  output root (`series_key` of the document title); the verdict is
+  `skip_verdict`; a seeded audit (10 %, >= 3 per type) is captured anyway;
+  every 7th run is a full refresh; `skip_suspended.json` stops a series.
+- Skipped views are left out of the capture and, AFTER the run is
+  finalized, their source capture's files are copied in (sha256-checked,
+  one hop) and DECLARED: run_meta `capture_status: "unchanged"` +
+  `carried_from`, views_core CaptureStatus `unchanged`, run_meta `skip`. A
+  failed copy is declared `failed` (`carry_failed`), never `unchanged`.
+- `change_skip.MEASURED_STATUSES` is the one tuple readers use to tie a
+  sidecar to its run. The validator never compares a carried view.
+
 **Sidecar shape (PR #221).** Readers must accept the old and new shapes
 alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field
 that exists in more than one shape, and `tools/reencode_stage_a_sidecar.py`

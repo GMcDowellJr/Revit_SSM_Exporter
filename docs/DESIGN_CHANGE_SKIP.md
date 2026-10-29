@@ -1,8 +1,10 @@
 # Design note: hash-and-skip (capture only the views that changed)
 
 Status: **decided by Greg 2026-10-28; S-13 confirmed the same day. Phase 1
-implemented** (shadow: fingerprints recorded, nothing skipped). Phases 2 and 3
-are not.
+implemented** (shadow). **Phase 2 implemented 2026-10-29 for drafting views and
+legends only** (`vop_interwoven/change_skip.py`, off by default): the held-out
+validation found one false unchanged on a floor plan (issue #251, Future
+issues below), so no model-bearing type skips. Phase 3 is not implemented.
 
 | decision | Greg, 2026-10-28 |
 |---|---|
@@ -342,15 +344,74 @@ The original plan for phase 1:
   50, including daily pairs if any exist, plus the link/import exclusion
   rate (S-7) and the S-1 references component's behaviour.
 
-**Phase 2, skip.**
+**Phase 2, skip (IMPLEMENTED 2026-10-29, drafting views and legends).**
 - Enabled per batch once phase 1 meets the acceptance bar (S-13). Implements
   S-8, S-10, S-11, S-12, S-13 and the reader changes.
+- Validation that let it in (Greg, 2026-10-29): Hosp_Interior_AR, 53 archive
+  pairs 2025-02-03 .. 2026-01-10. Drafting views 5,568 and legends 517
+  compared would-skip views, 0 false unchanged; 1,242 of them on the 45
+  pairs the tolerance rules were not tuned on.
+- What exists (`vop_interwoven/change_skip.py`,
+  `capture_run.run_capture(skip=...)`):
+  - settings (`parse_settings`, a bad value refused): `skip_unchanged`
+    (false), `skip_view_types` (`["DraftingView", "Legend"]`),
+    `skip_full_refresh_every_n_runs` (7), `skip_audit_fraction` (0.10),
+    `skip_audit_min_per_type` (3). The batch button reads them from
+    `batch_settings.json` and checks them before the batch starts; the
+    thinrunner's IN[8] turns skipping on with the defaults;
+  - the baseline: the latest finalized run, in the same output root, of an
+    earlier as-of date whose document title has the same `series_key`
+    (`<model>_V<n>..._<YYYY-MM-DD>` -> `<model>`), with current-basis
+    fingerprints. A title with no archive date has no series and skips
+    nothing (recorded);
+  - the plan (`plan_skips`): `skip_verdict` per view, then the type
+    allow-list (`type_not_enabled`), then the audit (seeded by the run id),
+    then the full refresh (`full_refresh_due`) and suspension
+    (`skip_suspended.json` in the output root, keyed by series; unreadable
+    suspends everything);
+  - when every view would skip, one is audited instead, so a run always
+    captures something (`audit_forced`);
+  - after the run is finalized, each skipped view's four capture files are
+    copied from its source capture (one hop: a baseline that carried the
+    view points at its own source), sha256-verified, never over a file the
+    run holds, and declared: run_meta.views[] `unchanged` with
+    `carried_from`, `fingerprint`, `skip_check`, `carried_files`; a
+    views_core row with CaptureStatus `unchanged` (live view metadata,
+    ElapsedSec 0); `views_requested` extended; run_meta `skip` with the
+    whole plan. run_meta is written LAST;
+  - a copy that cannot be made or verified is declared `failed`
+    (`carry_failed: ...`), so `find_recapture_views` lists it for a
+    recapture. DEVIATION from S-10's "a mismatch captures the view instead":
+    the copy runs after the capture, when the run is closed;
+  - readers: `change_skip.MEASURED_STATUSES` (`success`, `unchanged`) is
+    the one tuple `stage_a_grid_rollup` and `census_registration` use to tie
+    a sidecar to its run; `stage_a_timing_report` says a carried view has no
+    timing; `validate_change_skip` counts a view the later run carried as
+    `carried` and never compares it (its files are the source's), and
+    `--suspend` writes the suspension for a skipping run with a false
+    unchanged.
 - The audit (S-13) and every full refresh (S-8) keep measuring the
   false-unchanged count, so it is never assumed once.
 
 **Phase 3, analysis reuse (optional).** The grid and derive steps can link
 their outputs for a carried view whose input hashes equal the source's,
 instead of recomputing identical results.
+
+## Future issues
+
+- **The fingerprint misses a change to a member's dependents**
+  ([#251](https://github.com/GMcDowellJr/Revit_SSM_Exporter/issues/251)).
+  OBSERVED 2026-10-29 on held-out data (Hosp_Interior_AR, 45 pairs the
+  tolerance rules were not tuned on, 1,549 would-skip views): one false
+  unchanged. Floor plan 930011, V22 (05-22) -> V23 (05-24): stair path
+  5842478 loses its "UP" label while the view's fingerprint -- every member,
+  type, filter, reference and graphics row -- is identical, and the
+  capture code did not change (1.0.0 -> 1.1.0 was timing diagnostics only).
+  INFERENCE: the label is governed by an element outside the member set
+  (stair runs and landings are separate elements and none is a member).
+  Until a basis-3 `dependents` component is probed, built and validated,
+  **only drafting views and legends skip** (`skip_view_types`): they hold no
+  model elements, and held on the held-out data (1,242 compared, 0 false).
 
 ## Future options (recorded, not in v1)
 
