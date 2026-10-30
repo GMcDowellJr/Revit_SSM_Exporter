@@ -1264,6 +1264,26 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     return summaries
 
 
+def force_streaming_settings(cfg):
+    """The Config values every streaming run forces BEFORE it hashes the
+    config (run_meta.config_hash, views_core.ConfigHash). One place: the run
+    applies them here, and run_config_hash() hashes a copy with them, so a
+    hash computed before the run (change_skip's plan) is the one the run
+    records. tests/test_change_skip.py fails if the run sets another hashed
+    field without it being added here."""
+    cfg.retain_rasters_in_memory = True
+
+
+def run_config_hash(cfg):
+    """The config hash a streaming run of ``cfg`` will record, computed
+    without changing ``cfg`` (a shallow copy takes the forced values)."""
+    import copy
+    from vop_interwoven.csv_export import compute_config_hash
+    forced = copy.copy(cfg)
+    force_streaming_settings(forced)
+    return compute_config_hash(forced)
+
+
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
                                 pixels_per_cell=4, date_override=None,
@@ -1368,7 +1388,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
 
     # CRITICAL: Force raster retention for streaming exports
     # This ensures PNGs and CSVs can be exported before memory is discarded
-    cfg.retain_rasters_in_memory = True
+    force_streaming_settings(cfg)
     
     # Initialize root-style cache (works with streaming!)
     project_guid = doc.ProjectInformation.UniqueId if doc.ProjectInformation else "unknown"

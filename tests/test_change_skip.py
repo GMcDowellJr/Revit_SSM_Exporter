@@ -179,6 +179,19 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _recorded_hash(cfg):
+    """The config hash a real run records: run_vop_pipeline_streaming forces
+    its settings on the run's Config, THEN hashes it. The fake capture below
+    records it the same way, so a planner hashing the Config as given (the
+    2026-01-24 defect: every view config_hash_differs) fails these tests."""
+    import copy
+    from vop_interwoven import streaming
+    from vop_interwoven.csv_export import compute_config_hash
+    run_cfg = copy.copy(cfg)
+    run_cfg.retain_rasters_in_memory = True        # as the run sets it
+    return compute_config_hash(run_cfg)
+
+
 def _baseline(root, name, date, fps, statuses=None, carried=None, captures=True):
     """A finalized run with captures (cap._view) and a fingerprints file."""
     from vop_interwoven.config import Config
@@ -198,7 +211,7 @@ def _baseline(root, name, date, fps, statuses=None, carried=None, captures=True)
     meta = {"schema": "vop.run_meta.v1", "run_id": name.split("__")[1], "date": date,
             "finalized": True, "doc_title": {"state": "value",
                                              "value": "KSRF_M_V1_1 GB_{0}_detached".format(date)},
-            "config_hash": compute_config_hash(Config()),
+            "config_hash": _recorded_hash(Config()),
             "exporter_version": provenance_fields()["exporter_version"],
             "revit_version": {"state": "value", "value": {"version_build": _App.VersionBuild}},
             "views": views, "views_requested": sorted(fps)}
@@ -228,7 +241,7 @@ def _capture(monkeypatch, root, fps, settings, date="2025-12-20"):
         (run / "run_meta_{0}.json".format(identity["as_of_date"])).write_text(json.dumps(
             {"schema": "vop.run_meta.v1", "run_id": identity["run_id"],
              "date": identity["as_of_date"], "finalized": True,
-             "config_hash": compute_config_hash(cfg),
+             "config_hash": _recorded_hash(cfg),
              "views": [{"view_id": v, "capture_status": "success"} for v in view_ids],
              "views_requested": list(view_ids)}))
         return {}, str(run), identity["run_id"]
@@ -425,3 +438,53 @@ def test_a_carry_that_raises_is_recorded_and_fails_the_run(monkeypatch, tmp_path
     (run,) = [p for p in tmp_path.iterdir() if p.name.startswith("2025-12-20__")]
     skip = _meta(run)["skip"]
     assert skip["skip_view_ids"] == [1] and skip["carry_error"] == "RuntimeError: disk gone"
+
+
+# --- the config hash the plan compares is the one the run records ----------------------
+
+def test_the_planned_hash_is_the_run_hash_not_the_given_configs():
+    from vop_interwoven.config import Config
+    from vop_interwoven.csv_export import compute_config_hash
+    from vop_interwoven.streaming import run_config_hash
+    cfg = Config()
+    cfg.enable_color_id_buffer_stage_a = True
+    assert cfg.retain_rasters_in_memory is False      # the default the run overrides
+    assert run_config_hash(cfg) == _recorded_hash(cfg)
+    assert run_config_hash(cfg) != compute_config_hash(cfg)   # discriminates
+    assert cfg.retain_rasters_in_memory is False      # the caller's Config is untouched
+
+
+def test_every_hashed_field_the_run_sets_before_hashing_is_forced_in_one_place():
+    """run_vop_pipeline_streaming sets Config fields before it hashes the
+    config. Any field it sets that Config.to_dict carries must be set by
+    force_streaming_settings, or run_config_hash (the plan's) would differ
+    from the hash the run records."""
+    import ast
+    import inspect
+    from vop_interwoven import streaming
+    from vop_interwoven.config import Config
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(streaming.run_vop_pipeline_streaming)))
+    hash_lines = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                  and any(getattr(t, "id", None) == "config_hash" for t in n.targets)
+                  and isinstance(n.value, ast.Call)
+                  and getattr(n.value.func, "id", None) == "compute_config_hash"]
+    assert len(hash_lines) == 1, "the run no longer hashes cfg where this test expects"
+    hashed = set(Config().to_dict())
+    set_before, calls_force = set(), False
+    for node in ast.walk(tree):
+        if getattr(node, "lineno", 10 ** 9) >= hash_lines[0]:
+            continue
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Attribute) and getattr(t.value, "id", None) == "cfg":
+                    set_before.add(t.attr)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == \
+                "force_streaming_settings":
+            calls_force = True
+    forced = set()
+    for node in ast.walk(ast.parse(inspect.getsource(streaming.force_streaming_settings))):
+        if isinstance(node, ast.Assign):
+            forced.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
+    assert calls_force
+    assert (set_before & hashed) <= forced, sorted((set_before & hashed) - forced)

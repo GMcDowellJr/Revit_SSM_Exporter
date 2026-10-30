@@ -368,8 +368,8 @@ def plan_for_run(doc, cfg, output_root, identity, fingerprints, settings):
     complete, recorded as run_meta ``skip``. Never raises for a missing or
     unreadable baseline: that skips nothing, with the reason."""
     from .batch_capture import index_runs
-    from .csv_export import compute_config_hash
     from .run_meta import provenance_fields, revit_version
+    from .streaming import run_config_hash
     from .view_fingerprint import run_facts
     t0 = time.time()
     record = {"schema": SCHEMA, "enabled": True, "settings": settings,
@@ -388,7 +388,10 @@ def plan_for_run(doc, cfg, output_root, identity, fingerprints, settings):
     due, since = full_refresh_due(prior, settings["skip_full_refresh_every_n_runs"])
     record.update(full_refresh=due, runs_since_full=since,
                   suspended=read_suspension(output_root, key))
-    cur_meta = {"config_hash": compute_config_hash(cfg),
+    # The hash the run WILL record: the run forces some values before hashing
+    # (streaming.force_streaming_settings). Hashing ``cfg`` as given never
+    # matched a run (2026-01-24: every view config_hash_differs).
+    cur_meta = {"config_hash": run_config_hash(cfg),
                 "exporter_version": provenance_fields()["exporter_version"],
                 "revit_version": revit_version(doc)}
     cur_facts = run_facts(cur_meta, fingerprints)
