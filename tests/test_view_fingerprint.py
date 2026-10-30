@@ -117,7 +117,9 @@ def test_resolve_type_name_takes_a_name_or_looks_a_number_up():
 
 # --- the verdict -------------------------------------------------------------------------
 
-FACTS = {"config_hash": "9400eaef", "exporter_major": 4, "revit_build": "25.4.41.14",
+# A run_meta ``config``: one capture setting and one location.
+CONFIG = {"tile_size": 16, "metrics_manifest_path": "C:/Users/a/repo/metrics_manifest.v1.json"}
+FACTS = {"config_hash": vf.portable_config_hash(CONFIG), "exporter_major": 4, "revit_build": "25.4.41.14",
          "open_mode": {"detached": True, "workshared": True, "closed_user_worksets": 0},
          "basis_version": 2}
 
@@ -175,7 +177,7 @@ def test_unknown_never_skips_over_generated_records():
 
 
 def test_run_facts_read_run_meta_and_the_fingerprints_file():
-    meta = {"config_hash": "9400eaef", "exporter_version": "4.0.0+src.abc",
+    meta = {"config_hash": "9400eaef", "config": CONFIG, "exporter_version": "4.0.0+src.abc",
             "revit_version": {"state": "value", "value": {"version_build": "25.4.41.14"}}}
     fp = {"basis_version": 2, "document": {"open_mode": FACTS["open_mode"]}}
     assert vf.run_facts(meta, fp) == FACTS
@@ -267,7 +269,7 @@ def _run(root, name, date, views, status="success", facts=FACTS, anno_rects=None
         extra = {"anno_rect": anno_rects[vid]} if vid in (anno_rects or {}) else {}
         cap._view(run, vid, rects, dict((e, RED) for e in rects), **extra)
     meta = {"schema": "vop.run_meta.v1", "run_id": name, "date": date, "finalized": True,
-            "config_hash": facts["config_hash"], "exporter_version": "4.0.0+src.x",
+            "config_hash": "9400eaef", "config": CONFIG, "exporter_version": "4.0.0+src.x",
             "revit_version": {"state": "value", "value": {"version_build": facts["revit_build"]}},
             "views": [{"view_id": v, "capture_status": status} for v in views]}
     (run / "run_meta_{0}.json".format(date)).write_text(json.dumps(meta))
@@ -560,7 +562,7 @@ def _grid_run(root, name, link=True, whiten=None, wall_px=None):
     fp = {"basis_version": vf.BASIS_VERSION, "document": {"open_mode": FACTS["open_mode"]},
           "views": {"1": {"view_id": 1, "view_type": "FloorPlan", "fingerprint": "f",
                           "components": {"members": "f"}, "shows_links_or_imports": False}}}
-    meta = {"config_hash": FACTS["config_hash"], "exporter_version": "4.0.0",
+    meta = {"config_hash": "9400eaef", "config": CONFIG, "exporter_version": "4.0.0",
             "revit_version": {"value": {"version_build": FACTS["revit_build"]}}}
     return {"run_dir": str(run), "meta": meta, "fingerprints": fp,
             "statuses": {"1": "success"}, "reason": None}
@@ -836,3 +838,41 @@ def test_suspend_writes_only_for_a_run_that_skipped_and_failed(tmp_path):
     assert change_skip.read_suspension(_os.path.dirname(b), "KSRF_M")["view_ids"] == [1]
     rec = json.loads((tmp_path / "v2.json").read_text())
     assert rec["suspended"][0]["file"] == str(target)
+
+
+
+# --- the portable config hash the skip rule compares -------------------------------------
+
+def test_the_skip_rule_ignores_where_the_checkout_is_and_nothing_else():
+    moved = dict(CONFIG, metrics_manifest_path="D:/elsewhere/metrics_manifest.v1.json",
+                 view_diagnostics_output_dir="D:/out", perf_csv_output_dir="D:/perf",
+                 view_cache_dir="D:/cache", view_cache_enabled=True,
+                 view_cache_require_doc_unmodified=False)
+    assert vf.portable_config_hash(moved) == vf.portable_config_hash(CONFIG)
+    assert vf.portable_config_hash(dict(CONFIG, tile_size=8)) != vf.portable_config_hash(CONFIG)
+    assert vf.portable_config_hash(None) is None
+    # The recorded hash is untouched: run_facts reads the config, not it.
+    a = vf.run_facts({"config_hash": "aaaa", "config": CONFIG}, {})
+    b = vf.run_facts({"config_hash": "bbbb", "config": moved}, {})
+    assert a["config_hash"] == b["config_hash"]
+    assert vf.run_facts({"config_hash": "aaaa"}, {})["config_hash"] is None   # unknown
+
+
+def test_a_live_config_and_its_run_meta_copy_hash_alike():
+    from vop_interwoven.config import Config
+    from vop_interwoven.streaming import run_config
+    live = run_config(Config())
+    on_disk = json.loads(json.dumps(live, default=str))
+    assert vf.portable_config_hash(live) == vf.portable_config_hash(on_disk)
+
+
+def test_every_config_key_named_like_a_location_is_decided():
+    """A new Config key ending _path/_dir/_folder/_root must be named in
+    CONFIG_LOCATION_KEYS (left out of the skip comparison) or here (a key
+    that changes the capture, so it stays in)."""
+    from vop_interwoven.config import Config
+    captures = set()
+    named = [k for k in Config().to_dict()
+             if k.endswith(("_path", "_dir", "_folder", "_root", "_directory"))]
+    undecided = [k for k in named if k not in vf.CONFIG_LOCATION_KEYS and k not in captures]
+    assert named and not undecided, undecided

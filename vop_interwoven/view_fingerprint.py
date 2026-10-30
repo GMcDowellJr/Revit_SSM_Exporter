@@ -141,17 +141,40 @@ def exporter_major(version):
         return None
 
 
+# Config keys that say WHERE things are, not how a view is captured: left out
+# of the hash the skip rule compares, so a checkout moved to another folder or
+# machine still compares (Greg, 2026-10-30). The run's RECORDED config_hash
+# (run_meta, views_core) is unchanged and still includes them. A new Config key
+# named like a location must be decided here (tests/test_view_fingerprint.py).
+CONFIG_LOCATION_KEYS = ("metrics_manifest_path", "perf_csv_output_dir",
+                        "view_diagnostics_output_dir", "view_cache_enabled",
+                        "view_cache_dir", "view_cache_require_doc_unmodified")
+
+
+def portable_config_hash(config):
+    """PURE. SHA-256 (12 hex) of a run's config dict (run_meta ``config``)
+    without CONFIG_LOCATION_KEYS, after a JSON round trip so a live
+    ``Config.to_dict()`` and the same dict read back from run_meta hash
+    alike. None when there is no dict: unknown never skips."""
+    if not isinstance(config, dict):
+        return None
+    plain = json.loads(json.dumps(config, sort_keys=True, default=str))
+    for key in CONFIG_LOCATION_KEYS:
+        plain.pop(key, None)
+    return hashlib.sha256(json.dumps(plain, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+
+
 def run_facts(run_meta, fingerprints):
     """PURE. What the skip rules compare between two runs: from run_meta the
-    capture's config hash, exporter MAJOR and Revit build; from the
-    fingerprints file the open mode and basis version. (Graphics are a
-    per-view component since basis 2.)"""
+    capture's config (as ``portable_config_hash``: locations left out),
+    exporter MAJOR and Revit build; from the fingerprints file the open mode
+    and basis version. (Graphics are a per-view component since basis 2.)"""
     meta = run_meta or {}
     fp = fingerprints or {}
     revit = meta.get("revit_version") or {}
     if isinstance(revit, dict) and "value" in revit:
         revit = revit.get("value") or {}
-    return {"config_hash": meta.get("config_hash"),
+    return {"config_hash": portable_config_hash(meta.get("config")),
             "exporter_major": exporter_major(meta.get("exporter_version")),
             "revit_build": (revit or {}).get("version_build"),
             "open_mode": (fp.get("document") or {}).get("open_mode"),

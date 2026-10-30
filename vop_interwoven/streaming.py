@@ -1274,14 +1274,24 @@ def force_streaming_settings(cfg):
     cfg.retain_rasters_in_memory = True
 
 
+def _forced_copy(cfg):
+    import copy
+    forced = copy.copy(cfg)
+    force_streaming_settings(forced)
+    return forced
+
+
 def run_config_hash(cfg):
     """The config hash a streaming run of ``cfg`` will record, computed
     without changing ``cfg`` (a shallow copy takes the forced values)."""
-    import copy
     from vop_interwoven.csv_export import compute_config_hash
-    forced = copy.copy(cfg)
-    force_streaming_settings(forced)
-    return compute_config_hash(forced)
+    return compute_config_hash(_forced_copy(cfg))
+
+
+def run_config(cfg):
+    """The config dict a streaming run of ``cfg`` will record (run_meta
+    ``config``), without changing ``cfg``."""
+    return _forced_copy(cfg).to_dict()
 
 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,

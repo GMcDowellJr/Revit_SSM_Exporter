@@ -192,6 +192,18 @@ def _recorded_hash(cfg):
     return compute_config_hash(run_cfg)
 
 
+def _recorded_config(cfg, manifest=None):
+    """The ``config`` a real run records (its Config after the run's forced
+    settings); ``manifest`` moves the checkout, as another machine would."""
+    import copy
+    run_cfg = copy.copy(cfg)
+    run_cfg.retain_rasters_in_memory = True        # as the run sets it
+    out = run_cfg.to_dict()
+    if manifest:
+        out["metrics_manifest_path"] = manifest
+    return out
+
+
 def _baseline(root, name, date, fps, statuses=None, carried=None, captures=True):
     """A finalized run with captures (cap._view) and a fingerprints file."""
     from vop_interwoven.config import Config
@@ -212,6 +224,8 @@ def _baseline(root, name, date, fps, statuses=None, carried=None, captures=True)
             "finalized": True, "doc_title": {"state": "value",
                                              "value": "KSRF_M_V1_1 GB_{0}_detached".format(date)},
             "config_hash": _recorded_hash(Config()),
+            # Captured from a checkout in another folder: still the same config.
+            "config": _recorded_config(Config(), manifest="D:/old/checkout/manifest.json"),
             "exporter_version": provenance_fields()["exporter_version"],
             "revit_version": {"state": "value", "value": {"version_build": _App.VersionBuild}},
             "views": views, "views_requested": sorted(fps)}
@@ -241,7 +255,7 @@ def _capture(monkeypatch, root, fps, settings, date="2025-12-20"):
         (run / "run_meta_{0}.json".format(identity["as_of_date"])).write_text(json.dumps(
             {"schema": "vop.run_meta.v1", "run_id": identity["run_id"],
              "date": identity["as_of_date"], "finalized": True,
-             "config_hash": _recorded_hash(cfg),
+             "config_hash": _recorded_hash(cfg), "config": _recorded_config(cfg),
              "views": [{"view_id": v, "capture_status": "success"} for v in view_ids],
              "views_requested": list(view_ids)}))
         return {}, str(run), identity["run_id"]
@@ -488,3 +502,18 @@ def test_every_hashed_field_the_run_sets_before_hashing_is_forced_in_one_place()
             forced.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
     assert calls_force
     assert (set_before & hashed) <= forced, sorted((set_before & hashed) - forced)
+
+
+
+def test_a_different_capture_setting_skips_nothing(monkeypatch, tmp_path):
+    """Control for the portable hash: the baseline was captured with another
+    tile size, so every view is refused config_hash_differs."""
+    base = _baseline(tmp_path, "2025-12-13__20261021T1658", "2025-12-13", {1: "f", 4: "f"})
+    path = base / "run_meta_2025-12-13.json"
+    meta = json.loads(path.read_text())
+    meta["config"]["tile_size"] = 8
+    path.write_text(json.dumps(meta))
+    run, captured = _capture(monkeypatch, tmp_path, {1: "f", 4: "f"}, SETTINGS)
+    skip = _meta(run)["skip"]
+    assert captured == [1, 4] and skip["carried_view_ids"] == []
+    assert skip["summary"]["by_type"]["DraftingView"] == {"config_hash_differs": 1}

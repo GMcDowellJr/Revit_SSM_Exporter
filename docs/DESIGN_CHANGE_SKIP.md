@@ -154,6 +154,18 @@ captured as today, and the record names the first rule that failed:
 6. It is not this view's turn for a full refresh (S-8).
 7. The job is a new capture, not a recapture. Recapture lists always capture.
 
+**S-6.3. The config is compared without its locations (Greg, 2026-10-30).**
+Rule 3's `config_hash` is `view_fingerprint.portable_config_hash` of each
+run's recorded `config`, leaving out `CONFIG_LOCATION_KEYS`
+(`metrics_manifest_path`, the output and view-cache folders): the checkout
+will move off one machine, and where it sits does not change a capture. The
+RECORDED `config_hash` (run_meta, views_core) is unchanged and still includes
+them, so nothing already recorded changes meaning. The planner takes the
+current run's config as the run will record it (`streaming.run_config`,
+after `force_streaming_settings`): hashing the Config as given refused every
+view of the 2026-01-24 run (`config_hash_differs`). A new Config key named
+like a location must be classified (a test fails until it is).
+
 **S-7. Views showing links or imports are always captured (in v1; decided).**
 A host VersionGuid does not move when the linked model or DWG changes. How
 many views this excludes is measured in phase 1. A stand-in that would let

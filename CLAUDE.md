@@ -297,6 +297,11 @@ path label changed under an identical fingerprint (issue #251).
   failed copy is declared `failed` (`carry_failed`), never `unchanged`.
 - `change_skip.MEASURED_STATUSES` is the one tuple readers use to tie a
   sidecar to its run. The validator never compares a carried view.
+- The skip rule compares `portable_config_hash` of each run's recorded
+  `config` (locations such as `metrics_manifest_path` left out), never the
+  recorded `config_hash`, which still includes them. The current run's
+  config is taken as the run will record it (`streaming.run_config`): the
+  run forces `retain_rasters_in_memory` before recording (S-6.3).
 
 **Sidecar shape (PR #221).** Readers must accept the old and new shapes
 alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field
