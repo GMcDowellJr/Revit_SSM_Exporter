@@ -99,18 +99,128 @@ def relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_summ
 
 
 def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=None,
-                export_view_raster=True):
+                export_view_raster=True, record_fingerprints=False, skip=None):
     """_run_capture inside a provenance session: what executed is read once,
-    here, unless an enclosing batch already pinned it (run_meta.provenance_fields)."""
-    from vop_interwoven.run_meta import provenance_session
+    here, unless an enclosing batch already pinned it (run_meta.provenance_fields).
+
+    ``record_fingerprints``: hash-and-skip phase 1 (shadow,
+    docs/DESIGN_CHANGE_SKIP.md). The views' change fingerprints are read from
+    the document BEFORE any view is captured and written to the run's
+    ``view_fingerprints_<d>.json`` once it is finalized; run_meta gains
+    ``view_fingerprints``. Nothing captured changes. A failure here is
+    recorded under ``view_fingerprints.error`` and never fails the capture.
+
+    ``skip``: hash-and-skip phase 2 settings (vop_interwoven/change_skip.py,
+    OFF unless ``skip_unchanged``). When on, the fingerprints are read (as
+    above), the views that would skip against the series' baseline are left
+    out of the capture, and AFTER the run is finalized their source captures
+    are copied in and declared ``unchanged``; run_meta gains ``skip``. When
+    skip settings are given but off, run_meta records ``skip.enabled: false``
+    (a full capture, for the next run's refresh count)."""
+    from vop_interwoven import change_skip
+    from vop_interwoven.run_meta import provenance_session, run_identity
+    settings = change_skip.parse_settings(skip) if skip is not None else None
+    skipping = bool(settings and settings["skip_unchanged"])
+    fingerprints = None
+    if record_fingerprints or skipping:
+        fingerprints = _fingerprint_before_capture(doc, view_ids)
+    identity = run_identity(date_override)
     with provenance_session("run_capture"):
-        return _run_capture(doc, view_ids, cfg, output_dir, batch_size=batch_size,
-                            date_override=date_override,
-                            export_view_raster=export_view_raster)
+        plan, base = None, None
+        if skipping:
+            plan, base = _plan_skip(doc, cfg, output_dir, identity, fingerprints, settings)
+        skipped = set(plan["skip_view_ids"]) if plan else set()
+        capture_ids = [v for v in view_ids if int(v) not in skipped]
+        if view_ids and not capture_ids:
+            # Every view would skip: one is audited instead, so the run
+            # still captures (and records) something -- the capture loop
+            # has never been run with no views.
+            forced = min(plan["skip_view_ids"])
+            plan["skip_view_ids"].remove(forced)
+            plan["audit_view_ids"] = sorted(plan["audit_view_ids"] + [forced])
+            plan["audit_forced"] = forced
+            capture_ids = [v for v in view_ids if int(v) == forced]
+        out = _run_capture(doc, capture_ids, cfg, output_dir, batch_size=batch_size,
+                           date_override=date_override,
+                           export_view_raster=export_view_raster, identity=identity)
+        if settings is not None:
+            _record_skip(doc, cfg, out[1], plan, base, fingerprints)
+    if record_fingerprints or skipping:
+        _write_fingerprints_after_capture(out[1], fingerprints)
+    return out
+
+
+def _plan_skip(doc, cfg, output_dir, identity, fingerprints, settings):
+    """``(plan, baseline)``: the run's skip plan, or a plan that skips nothing
+    with the reason (no fingerprints, or an error planning)."""
+    from vop_interwoven import change_skip
+    record, error = fingerprints
+    if record is None:
+        return dict(_disabled_skip(settings), reason="no_fingerprints: {0}".format(error)), None
+    try:
+        plan, base = change_skip.plan_for_run(doc, cfg, output_dir, identity, record, settings)
+    except Exception as ex:  # noqa: BLE001 -- planning failed: capture everything, say why
+        return dict(_disabled_skip(settings),
+                    reason="plan_failed: {0}: {1}".format(type(ex).__name__, ex)), None
+    if not plan["skip_view_ids"]:
+        base = None
+    return plan, base
+
+
+def _disabled_skip(settings):
+    from vop_interwoven import change_skip
+    return {"schema": change_skip.SCHEMA, "enabled": bool(settings["skip_unchanged"]),
+            "settings": settings, "skip_view_ids": [], "carried_view_ids": [],
+            "audit_view_ids": [], "carry_failed": [], "reason": None}
+
+
+def _record_skip(doc, cfg, run_dir, plan, base, fingerprints):
+    """Carry the skipped views into the finalized run and declare them, or
+    record that the run did not skip."""
+    from vop_interwoven import change_skip
+    from vop_interwoven.batch_capture import stamp_run_meta
+    if plan is None:
+        return stamp_run_meta(run_dir, "skip", {"schema": change_skip.SCHEMA, "enabled": False})
+    if base is None:
+        return stamp_run_meta(run_dir, "skip", plan)
+    try:
+        change_skip.carry_into_run(doc, cfg, run_dir, plan, base, fingerprints[0])
+    except Exception as ex:
+        # The skipped views were neither captured nor declared: say so in
+        # run_meta, then fail the run loudly -- never a silent omission.
+        stamp_run_meta(run_dir, "skip", dict(plan, carry_error="{0}: {1}".format(
+            type(ex).__name__, ex)))
+        raise
+    return None
+
+
+def _fingerprint_before_capture(doc, view_ids):
+    """``(record, None)`` or ``(None, error)``: telemetry, never raised."""
+    try:
+        from vop_interwoven.view_fingerprint import fingerprint_views
+        return fingerprint_views(doc, view_ids, "capture"), None
+    except Exception as ex:  # noqa: BLE001 -- recorded in run_meta by the writer
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+def _write_fingerprints_after_capture(run_dir, fingerprints):
+    """Write the record, or stamp the reason there is none."""
+    from vop_interwoven.batch_capture import stamp_run_meta
+    record, error = fingerprints
+    if record is not None:
+        try:
+            from vop_interwoven.view_fingerprint import write_fingerprints
+            _path, stamp_err = write_fingerprints(run_dir, record)
+            if stamp_err is None:
+                return
+            error = "run_meta not stamped: {0}".format(stamp_err)
+        except Exception as ex:  # noqa: BLE001 -- recorded below
+            error = "{0}: {1}".format(type(ex).__name__, ex)
+    stamp_run_meta(run_dir, "view_fingerprints", {"error": error})
 
 
 def _run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=None,
-                 export_view_raster=True):
+                 export_view_raster=True, identity=None):
     """Capture ``view_ids`` of ``doc`` as ONE run under the root ``output_dir``.
 
     Returns ``(result, run_dir, run_id)``: the streaming result (merged over
@@ -126,7 +236,9 @@ def _run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=
     # any view is captured if it holds another run.
     from vop_interwoven.run_meta import (
         run_identity, run_directory, check_run_directory)
-    run_identity_ = run_identity(date_override)
+    # ``identity``: minted once by run_capture when a skip plan needed the
+    # run id first (its audit seed); the same as minting it here.
+    run_identity_ = identity or run_identity(date_override)
     shared_run_id = run_identity_["run_id"]
     run_dir = run_directory(output_dir, run_identity_)
     check_run_directory(run_dir, shared_run_id)

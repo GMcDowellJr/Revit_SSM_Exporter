@@ -1,0 +1,878 @@
+"""Hash-and-skip phase 1 (docs/DESIGN_CHANGE_SKIP.md): the fingerprint, the
+skip verdict, the batch's fingerprint backfill mode and the validation tool.
+
+Revit is not here. What is asserted is the pure arithmetic production runs
+(vop_interwoven.view_fingerprint), the plan and loop with Revit injected (as
+tests/test_batch_capture.py does), and the validation tool end to end on
+synthetic runs: run_meta, fingerprints files and captures written here, the
+record read from the FILE the tool wrote (CLAUDE.md, defect class 4).
+"""
+import json
+import os
+import random
+from datetime import datetime
+
+import pytest
+
+from tests import test_analyze_change_detection_probe as cap
+from tests import test_batch_capture as tb
+from tests.layout_helpers import run_meta_file
+from tools import validate_change_skip as vcs
+from vop_interwoven import batch_capture as bc
+from vop_interwoven import output_layout
+from vop_interwoven import view_fingerprint as vf
+
+
+WALLS = (-2000011, "Walls", 3, 5, 90, -1)        # projection pattern 90, cut solid
+
+
+def _inputs(members=(1, 2), template=-1, filters=(), types=(), refs=(), rows=(WALLS,)):
+    return {"members": list(members), "template_id": template, "filter_ids": list(filters),
+            "type_ids": list(types), "reference_ids": list(refs), "graphics_rows": list(rows)}
+
+
+GUIDS = dict((i, "g{0}".format(i)) for i in (1, 2, 3, 10, 50, 60, 70, 80, 90))
+
+
+# --- the fingerprint -------------------------------------------------------------------
+
+def test_each_component_moves_only_its_own_hash():
+    base = vf.view_fingerprint(10, _inputs(template=50, filters=[60], types=[70], refs=[80]),
+                               GUIDS)
+    for name, guid_id in (("view", 10), ("template", 50), ("filters", 60),
+                          ("members", 1), ("types", 70), ("references", 80),
+                          ("graphics", 90)):
+        guids = dict(GUIDS)
+        guids[guid_id] = "changed"
+        moved = vf.view_fingerprint(10, _inputs(template=50, filters=[60], types=[70],
+                                                refs=[80]), guids)
+        assert moved["fingerprint"] != base["fingerprint"]
+        assert vf.changed_components(base, moved) == [name]
+
+
+def test_order_and_duplicates_do_not_matter_and_membership_does():
+    a = vf.view_fingerprint(10, _inputs(members=[2, 1, 1]), GUIDS)
+    b = vf.view_fingerprint(10, _inputs(members=[1, 2]), GUIDS)
+    c = vf.view_fingerprint(10, _inputs(members=[1, 2, 3]), GUIDS)
+    assert a["fingerprint"] == b["fingerprint"] != c["fingerprint"]
+    assert vf.changed_components(b, c) == ["members"]
+
+
+def test_an_unread_input_is_an_unknown_fingerprint():
+    for key in ("members", "template_id", "filter_ids", "type_ids", "reference_ids",
+                "graphics_rows"):
+        rec = vf.view_fingerprint(10, dict(_inputs(), **{key: None}), GUIDS)
+        assert rec["fingerprint"] is None and rec["components"] is None
+    assert vf.view_fingerprint(10, _inputs(), None)["fingerprint"] is None
+
+
+DOORS = (-2000023, "Doors", 1, 1, -1, -1)
+
+
+def test_the_graphics_component_sees_weights_and_patterns_not_row_order():
+    rows = [WALLS, DOORS]
+    g, _ = vf.graphics_component(rows, GUIDS)
+    assert g == vf.graphics_component(list(reversed(rows)), GUIDS)[0]
+    for edited in ((-2000011, "Walls", 4, 5, 90, -1),     # projection weight
+                   (-2000011, "Walls", 3, 6, 90, -1),     # cut weight
+                   (-2000011, "Walls", 3, 5, 91, -1),     # projection pattern
+                   (-2000011, "Walls", 3, 5, 90, 90),     # cut pattern
+                   (-2000011, "Walls", 3, 5, 90, "?")):   # now unreadable
+        assert vf.graphics_component([edited, DOORS], GUIDS)[0] != g, edited
+    guids = dict(GUIDS)
+    guids[90] = "pattern edited"
+    assert vf.graphics_component(rows, guids)[0] != g
+    # Only patterns that are elements carry a VersionGuid: the solid / no
+    # pattern ids and unreadable fields are not looked up.
+    assert vf.graphics_component([DOORS, (1, "x", 1, 1, "?", 0)], {})[1] == 0
+    assert vf.graphics_component([WALLS], {})[1] == 1
+
+
+def test_a_style_edit_moves_only_the_graphics_component():
+    base = vf.view_fingerprint(10, _inputs(), GUIDS)
+    heavier = vf.view_fingerprint(10, _inputs(rows=[(-2000011, "Walls", 4, 5, 90, -1)]), GUIDS)
+    assert vf.changed_components(base, heavier) == ["graphics"]
+    assert base["counts"]["graphics"] == 1
+
+
+def test_a_category_the_view_does_not_draw_cannot_move_its_fingerprint():
+    # Basis 1 hashed every category in the document: a Doors edit blocked a
+    # view that shows only walls. The rows are the view's own categories.
+    walls_only = vf.view_fingerprint(10, _inputs(rows=[WALLS]), GUIDS)
+    edited_doors = (-2000023, "Doors", 9, 9, -1, -1)
+    assert walls_only == vf.view_fingerprint(10, _inputs(rows=[WALLS]), GUIDS)
+    with_doors = vf.view_fingerprint(10, _inputs(rows=[WALLS, DOORS]), GUIDS)
+    assert vf.view_fingerprint(10, _inputs(rows=[WALLS, edited_doors]), GUIDS)[
+        "fingerprint"] != with_doors["fingerprint"]
+    assert "graphics_differs" not in vf.RULES and vf.BASIS_VERSION == 2
+
+
+def test_resolve_type_name_takes_a_name_or_looks_a_number_up():
+    names = {1: "FloorPlan"}
+    assert vf.resolve_type_name("Section", names.get) == "Section"
+    assert vf.resolve_type_name("1", names.get) == "FloorPlan"
+    assert vf.resolve_type_name("9", names.get) is None
+    assert vf.resolve_type_name(None, names.get) is None
+
+
+# --- the verdict -------------------------------------------------------------------------
+
+# A run_meta ``config``: one capture setting and one location.
+CONFIG = {"tile_size": 16, "metrics_manifest_path": "C:/Users/a/repo/metrics_manifest.v1.json"}
+FACTS = {"config_hash": vf.portable_config_hash(CONFIG), "exporter_major": 4, "revit_build": "25.4.41.14",
+         "open_mode": {"detached": True, "workshared": True, "closed_user_worksets": 0},
+         "basis_version": 2}
+
+
+def _view(fp="f1", links=False):
+    return {"fingerprint": fp, "components": {"members": fp}, "shows_links_or_imports": links}
+
+
+def test_every_rule_holds_and_the_view_would_skip():
+    assert vf.skip_verdict(FACTS, dict(FACTS), _view(), _view(), "success") == {
+        "would_skip": True, "rule": None}
+    # A baseline that carried the view (phase 2) is a valid baseline too.
+    assert vf.skip_verdict(FACTS, dict(FACTS), _view(), _view(), "unchanged") == {
+        "would_skip": True, "rule": None}
+
+
+@pytest.mark.parametrize("change, rule", [
+    (dict(base=None), "no_baseline_fingerprint"),
+    (dict(status="failed"), "baseline_capture_not_success"),
+    (dict(status="unmeasurable"), "baseline_capture_not_success"),
+    (dict(status="registration_failed"), "baseline_capture_not_success"),
+    (dict(cur_facts={"config_hash": "other"}), "config_hash_differs"),
+    (dict(cur_facts={"exporter_major": 5}), "exporter_major_differs"),
+    (dict(cur_facts={"revit_build": "26.0"}), "revit_build_differs"),
+    (dict(cur_facts={"open_mode": {"detached": False}}), "open_mode_differs"),
+    (dict(cur_facts={"open_mode": None}), "open_mode_differs"),
+    (dict(cur_facts={"basis_version": 1}), "basis_version_differs"),
+    (dict(cur=_view(fp=None)), "fingerprint_unknown"),
+    (dict(base=_view(fp=None)), "fingerprint_unknown"),
+    (dict(cur=None), "fingerprint_unknown"),
+    (dict(cur=_view(links=True)), "shows_links_or_imports"),
+    (dict(base=_view(links=None)), "shows_links_or_imports"),
+    (dict(cur=_view(fp="f2")), "fingerprint_differs"),
+])
+def test_each_rule_alone_refuses_the_skip_and_is_named(change, rule):
+    cur_facts = dict(FACTS, **change.get("cur_facts", {}))
+    base = change["base"] if "base" in change else _view()
+    cur = change["cur"] if "cur" in change else _view()
+    out = vf.skip_verdict(FACTS, cur_facts, base, cur, change.get("status", "success"))
+    assert out == {"would_skip": False, "rule": rule}
+    assert rule in vf.RULES
+
+
+def test_unknown_never_skips_over_generated_records():
+    rng = random.Random(3)
+    for _ in range(3000):
+        base = rng.choice([None, _view(), _view(fp=None), _view(links=None)])
+        cur = rng.choice([None, _view(), _view(fp=None), _view(links=None)])
+        facts = dict(FACTS, **dict((k, None) for k in FACTS if rng.random() < 0.1))
+        out = vf.skip_verdict(FACTS, facts, base, cur, rng.choice(["success", None]))
+        if out["would_skip"]:
+            assert base and cur and base["fingerprint"] == cur["fingerprint"]
+            assert base["shows_links_or_imports"] is False is cur["shows_links_or_imports"]
+            assert all(facts[k] is not None for k in FACTS)
+
+
+def test_run_facts_read_run_meta_and_the_fingerprints_file():
+    meta = {"config_hash": "9400eaef", "config": CONFIG, "exporter_version": "4.0.0+src.abc",
+            "revit_version": {"state": "value", "value": {"version_build": "25.4.41.14"}}}
+    fp = {"basis_version": 2, "document": {"open_mode": FACTS["open_mode"]}}
+    assert vf.run_facts(meta, fp) == FACTS
+    assert vf.exporter_major("garbage") is None
+
+
+# --- the batch's fingerprint backfill --------------------------------------------------
+
+def test_the_fingerprint_plan_lists_each_files_runs_and_skips_the_rest():
+    index = [{"run_dir": "E/2025-12-13__r1", "doc_title": "A_2025-12-13", "finalized": True},
+             {"run_dir": "E/2025-12-13__r2", "doc_title": "A_2025-12-13", "finalized": True},
+             {"run_dir": "E/2025-12-20__r3", "doc_title": "A_2025-12-20", "finalized": False}]
+    plan = bc.build_plan(tb._entries("A_2025-12-13", "A_2025-12-20"), "E",
+                         run_index=index, mode="fingerprint")
+    (job,) = plan["jobs"]
+    assert job["kind"] == "fingerprint" and job["stem"] == "A_2025-12-13"
+    assert job["fingerprint_runs"] == ["E/2025-12-13__r1", "E/2025-12-13__r2"]
+    assert plan["skipped"] == [{"key": "KSRF/A_2025-12-20.rvt",
+                                "reason": "no run to fingerprint"}]
+
+
+def test_a_fingerprint_job_is_done_only_with_a_current_basis_and_no_error(tmp_path):
+    run = tb._run_dir(tmp_path, "A_2025-12-13")
+    job = {"kind": "fingerprint", "fingerprint_runs": [run]}
+    assert bc.job_done(job) == (False, None)
+    for stamp, done in (({"error": "x"}, False), ({"basis_version": 0}, False),
+                        ({"basis_version": vf.BASIS_VERSION}, True)):
+        meta = json.loads(run_meta_file(run).read_text())
+        meta["view_fingerprints"] = stamp
+        run_meta_file(run).write_text(json.dumps(meta))
+        assert bc.job_done(job)[0] is done
+
+
+def test_the_loop_runs_a_fingerprint_job_and_never_overwrites_opened_from(tmp_path):
+    root = tmp_path / "Exports"
+    run = tb._run_dir(root, "A_2025-12-13")
+    meta = json.loads(run_meta_file(run).read_text())
+    meta["opened_from"] = {"source": "batch_capture", "title": "the capture's open"}
+    run_meta_file(run).write_text(json.dumps(meta))
+    plan = {"schema": bc.PLAN_SCHEMA, "mode": "fingerprint", "output_root": str(root),
+            "jobs": [{"kind": "fingerprint", "key": "KSRF/A_2025-12-13.rvt",
+                      "stem": "A_2025-12-13", "full_path": "C:\\ACC\\A_2025-12-13.rvt",
+                      "display_name": "KSRF/A_2025-12-13.rvt", "fingerprint_runs": [run]}]}
+    events, open_doc, close_doc, capture, recapture = tb._harness(tmp_path)
+    seen = []
+
+    def fingerprint(doc, job):
+        seen.append(job["fingerprint_runs"])
+        m = json.loads(run_meta_file(run).read_text())
+        m["view_fingerprints"] = {"basis_version": vf.BASIS_VERSION}
+        run_meta_file(run).write_text(json.dumps(m))
+        return {"run_dirs": [run]}
+    record = bc.run_batch(plan, open_doc, close_doc, capture, recapture, log=lambda s: None,
+                          now=datetime(2026, 10, 28, 9, 0, 0), fingerprint=fingerprint)
+    assert record["ok"] == 1 and seen == [[run]]
+    assert ("capture", "A_2025-12-13") not in events
+    after = json.loads(run_meta_file(run).read_text())
+    assert after["opened_from"]["title"] == "the capture's open"
+    assert after["fingerprint_opened_from"]["title"] == "A_2025-12-13_detached"
+    # Without the callable the job fails loudly, never as a capture.
+    plan2 = dict(plan, jobs=[dict(plan["jobs"][0], fingerprint_runs=[run + "_x"])])
+    rec2 = bc.run_batch(plan2, open_doc, close_doc, capture, recapture, log=lambda s: None,
+                        now=datetime(2026, 10, 28, 9, 5, 0), write_log=False)
+    assert rec2["failed"] == 1 and "no fingerprint callable" in rec2["jobs"][0]["error"]
+
+
+def test_a_saved_fingerprint_plan_loads():
+    path_free = {"schema": bc.PLAN_SCHEMA, "jobs": [{"kind": "fingerprint", "key": "k"}]}
+    import tempfile
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "plan.json")
+        with open(p, "w") as fh:
+            json.dump(path_free, fh)
+        assert bc.load_plan(p)["jobs"][0]["kind"] == "fingerprint"
+
+
+# --- the validation tool ------------------------------------------------------------------
+
+RED = (200, 0, 0)
+
+
+def _run(root, name, date, views, status="success", facts=FACTS, anno_rects=None):
+    """A run with run_meta, captures (cap._view) and a fingerprints file.
+    ``views``: {view_id: (fingerprint, rects)}; ``anno_rects`` {view_id: the
+    text note's rect} where it is not the default."""
+    run = root / name
+    for vid, (_fp, rects) in views.items():
+        extra = {"anno_rect": anno_rects[vid]} if vid in (anno_rects or {}) else {}
+        cap._view(run, vid, rects, dict((e, RED) for e in rects), **extra)
+    meta = {"schema": "vop.run_meta.v1", "run_id": name, "date": date, "finalized": True,
+            "config_hash": "9400eaef", "config": CONFIG, "exporter_version": "4.0.0+src.x",
+            "revit_version": {"state": "value", "value": {"version_build": facts["revit_build"]}},
+            "views": [{"view_id": v, "capture_status": status} for v in views]}
+    (run / "run_meta_{0}.json".format(date)).write_text(json.dumps(meta))
+    fp = {"schema": vf.SCHEMA, "basis_version": facts["basis_version"],
+          "document": {"open_mode": facts["open_mode"]},
+          "views": dict((str(v), {"view_id": v, "view_type": "DraftingView" if v < 100 else
+                                  "FloorPlan", "fingerprint": f, "components": {"members": f},
+                                  "shows_links_or_imports": False})
+                        for v, (f, _r) in views.items())}
+    (run / output_layout.fingerprints_name(date)).write_text(json.dumps(fp))
+    return str(run)
+
+
+def test_validation_counts_true_and_false_unchanged_per_type(tmp_path):
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", {
+        1: ("same", {11: (0, 0, 10, 10)}),         # unchanged, capture same
+        2: ("same", {21: (0, 0, 10, 10)}),         # unchanged by hash, capture differs
+        101: ("old", {31: (0, 0, 10, 10)})})       # hash changed
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {
+        1: ("same", {11: (0, 0, 10, 10)}),
+        2: ("same", {21: (5, 0, 15, 10)}),
+        101: ("new", {31: (0, 0, 10, 10)})})
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--out", str(out), "--min-pairs", "2", "--min-per-type", "1"]) == 0
+    rec = json.loads(out.read_text())
+    (pair,) = rec["pairs"]
+    assert pair["rules"] == {"would_skip": 2, "fingerprint_differs": 1}
+    assert pair["changed_components"] == {"members": 1}
+    assert [f["view_id"] for f in pair["false_unchanged"]] == [2]
+    acc = rec["acceptance"]
+    assert acc["by_type"]["DraftingView"]["true_unchanged"] == 1
+    assert acc["by_type"]["DraftingView"]["false_unchanged"] == 1
+    assert acc["false_unchanged"] == 1 and acc["overall_meets_bar"] is False
+    assert acc["types_meeting_bar"] == []
+    assert pair["over_cautious"] == []         # not measured without --compare-all
+
+
+def test_compare_all_finds_over_caution_and_the_bar_is_met_when_clean(tmp_path):
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", {
+        1: ("same", {11: (0, 0, 10, 10)}), 101: ("old", {31: (0, 0, 10, 10)})})
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {
+        1: ("same", {11: (0, 0, 10, 10)}), 101: ("new", {31: (0, 0, 10, 10)})})
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--compare-all", "--out", str(out), "--min-pairs", "1",
+                     "--min-per-type", "1"]) == 0
+    rec = json.loads(out.read_text())
+    assert rec["pairs"][0]["over_cautious"] == [
+        {"view_id": 101, "view_type": "FloorPlan", "rule": "fingerprint_differs"}]
+    acc = rec["acceptance"]
+    assert acc["overall_meets_bar"] is True and acc["types_meeting_bar"] == ["DraftingView"]
+    assert acc["upper_bound_95"] == pytest.approx(3.0)
+
+
+def test_annotation_fringe_is_tolerated_unless_exact_and_a_move_is_not(tmp_path):
+    # View 1: the text note one pixel wider in B (anti-aliasing fringe).
+    # View 2: the text note moved 6 px (a real change).
+    views = {1: ("same", {11: (0, 10, 10, 20)}), 2: ("same", {21: (0, 10, 10, 20)})}
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", views)
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", views,
+             anno_rects={1: (2, 2, 21, 4), 2: (8, 2, 26, 4)})
+    tolerant, exact = tmp_path / "t.json", tmp_path / "e.json"
+    assert vcs.main([a, b, "--out", str(tolerant)]) == 0
+    assert vcs.main([a, b, "--out", str(exact), "--exact"]) == 0
+    rec = json.loads(tolerant.read_text())
+    row = rec["acceptance"]["by_type"]["DraftingView"]
+    assert (row["true_unchanged"], row["fringe_tolerated"], row["false_unchanged"]) == (1, 1, 1)
+    (fu,) = rec["pairs"][0]["false_unchanged"]
+    assert fu["view_id"] == 2 and fu["anno_fringe_px"] < fu["anno_differing_px"]
+    assert rec["exact"] is False and rec["fringe_radius_px"] == 2
+    rec = json.loads(exact.read_text())
+    row = rec["acceptance"]["by_type"]["DraftingView"]
+    assert (row["true_unchanged"], row["fringe_tolerated"], row["false_unchanged"]) == (0, 0, 2)
+    assert rec["fringe_radius_px"] is None
+
+
+def test_a_run_without_fingerprints_is_named_not_scored(tmp_path):
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", {1: ("same", {11: (0, 0, 10, 10)})})
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {1: ("same", {11: (0, 0, 10, 10)})})
+    import os
+    os.remove(os.path.join(b, output_layout.fingerprints_name("2025-12-20")))
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--out", str(out)]) == 0
+    pair = json.loads(out.read_text())["pairs"][0]
+    assert "fingerprints missing" in pair["skipped"] and pair["by_type"] == {}
+
+
+def test_acceptance_is_per_type_and_uses_the_rule_of_three():
+    pairs = [{"by_type": {"DraftingView": {"views": 40, "would_skip": 40, "true_unchanged": 40,
+                                           "false_unchanged": 0, "not_comparable": 0},
+                          "Section": {"views": 5, "would_skip": 5, "true_unchanged": 5,
+                                      "false_unchanged": 0, "not_comparable": 0}}}]
+    acc = vcs.acceptance(pairs, min_pairs=1000, min_per_type=30)
+    assert acc["types_meeting_bar"] == ["DraftingView"]
+    assert acc["by_type"]["Section"]["meets_bar"] is False
+    assert acc["overall_meets_bar"] is False and acc["compared_would_skip"] == 45
+    assert acc["by_type"]["DraftingView"]["upper_bound_95"] == pytest.approx(3 / 40.0)
+
+
+# --- the capture-run hook -----------------------------------------------------------------
+
+def _fake_capture_run(monkeypatch, tmp_path, fingerprint_views):
+    """run_capture with the capture itself replaced by a run directory holding
+    a finalized run_meta, and the Revit reads by ``fingerprint_views``."""
+    from vop_interwoven import capture_run
+    run = tmp_path / "2025-12-20__20261028T1200"
+    order = []
+
+    def fake_run(doc, view_ids, cfg, output_dir, **kw):
+        order.append("capture")
+        run.mkdir()
+        (run / "run_meta_2025-12-20.json").write_text(json.dumps(
+            {"schema": "vop.run_meta.v1", "run_id": "20261028T1200", "date": "2025-12-20",
+             "finalized": True}))
+        return {}, str(run), "20261028T1200"
+
+    def fake_fp(doc, view_ids, mode, opened=None):
+        order.append("fingerprint")
+        return fingerprint_views(doc, view_ids, mode, opened)
+    monkeypatch.setattr(capture_run, "_run_capture", fake_run)
+    monkeypatch.setattr(vf, "fingerprint_views", fake_fp)
+    return capture_run, run, order
+
+
+def test_run_capture_fingerprints_before_capturing_and_writes_after(monkeypatch, tmp_path):
+    def fp(doc, view_ids, mode, opened):
+        return {"schema": vf.SCHEMA, "basis_version": vf.BASIS_VERSION, "mode": mode,
+                "views": {"1": {"fingerprint": "f"}}, "summary": vf.summarize(
+                    {"1": {"fingerprint": "f"}}), "ms": 5.0}
+    capture_run, run, order = _fake_capture_run(monkeypatch, tmp_path, fp)
+    capture_run.run_capture(object(), [1], object(), str(tmp_path), record_fingerprints=True)
+    assert order == ["fingerprint", "capture"]
+    written = json.loads((run / "view_fingerprints_2025-12-20.json").read_text())
+    assert written["mode"] == "capture" and written["run_id"] == "20261028T1200"
+    stamp = json.loads((run / "run_meta_2025-12-20.json").read_text())["view_fingerprints"]
+    assert stamp["file"] == "view_fingerprints_2025-12-20.json"
+    assert stamp["fingerprinted"] == 1 and stamp["basis_version"] == vf.BASIS_VERSION
+
+
+def test_a_fingerprint_failure_is_stamped_and_never_fails_the_capture(monkeypatch, tmp_path):
+    def fp(doc, view_ids, mode, opened):
+        raise RuntimeError("VersionGuid unreadable")
+    capture_run, run, order = _fake_capture_run(monkeypatch, tmp_path, fp)
+    out = capture_run.run_capture(object(), [1], object(), str(tmp_path),
+                                  record_fingerprints=True)
+    assert out[1] == str(run) and order == ["fingerprint", "capture"]
+    stamp = json.loads((run / "run_meta_2025-12-20.json").read_text())["view_fingerprints"]
+    assert stamp == {"error": "RuntimeError: VersionGuid unreadable"}
+    assert not (run / "view_fingerprints_2025-12-20.json").exists()
+
+
+def test_off_by_default_nothing_is_read_or_written(monkeypatch, tmp_path):
+    def fp(doc, view_ids, mode, opened):
+        raise AssertionError("must not be called")
+    capture_run, run, order = _fake_capture_run(monkeypatch, tmp_path, fp)
+    capture_run.run_capture(object(), [1], object(), str(tmp_path))
+    assert order == ["capture"]
+    assert "view_fingerprints" not in json.loads((run / "run_meta_2025-12-20.json").read_text())
+
+
+# --- the Revit reads, on a fake API ------------------------------------------------------
+
+class _Id(object):
+    def __init__(self, value):
+        self.Value = value
+
+
+class _Cat(object):
+    def __init__(self, cid, name, weight=1, pattern=-1, parent=None, broken=False):
+        self.Id, self.Name, self.Parent = _Id(cid), name, parent
+        self.SubCategories = []
+        self._w, self._p, self._broken = weight, pattern, broken
+        if parent is not None:
+            parent.SubCategories.append(self)
+
+    def GetLineWeight(self, kind):
+        if self._broken:
+            raise RuntimeError("unreadable")
+        return self._w
+
+    def GetLinePatternId(self, kind):
+        return _Id(self._p)
+
+
+class _Elem(object):
+    def __init__(self, category, type_id=-1):
+        self.Category, self._t = category, type_id
+
+    def GetTypeId(self):
+        return _Id(self._t)
+
+
+class _View(object):
+    ViewTemplateId = _Id(-1)
+    Parameters = []
+
+    def AreGraphicsOverridesAllowed(self):
+        return False
+
+
+class _Doc(object):
+    def __init__(self, elems):
+        self._e = elems
+
+    def GetElement(self, eid):
+        return self._e.get(eid.Value)
+
+
+def _read(monkeypatch, elems, cache=None):
+    import sys
+    import types
+    from vop_interwoven import stage_a_registered_capture as rc
+    fake = types.ModuleType("Autodesk.Revit.DB")
+    fake.ElementId = _Id
+    fake.ImportInstance = type("ImportInstance", (), {})
+    fake.RevitLinkInstance = type("RevitLinkInstance", (), {})
+    fake.StorageType = types.SimpleNamespace(ElementId="ElementId")
+    fake.GraphicsStyleType = types.SimpleNamespace(Projection="P", Cut="C")
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake)
+    monkeypatch.setattr(rc, "view_membership_ids", lambda doc, view: sorted(elems))
+    return vf.read_view_inputs(_Doc(elems), _View(), cache)
+
+
+def test_graphics_rows_are_the_member_categories_roots_and_all_their_subcategories(
+        monkeypatch):
+    walls = _Cat(-2000011, "Walls", 3, 90)
+    _Cat(-2000012, "Common Edges", 1, parent=walls)
+    doors = _Cat(-2000023, "Doors")
+    frame = _Cat(-2000024, "Frame/Mullion", 2, parent=doors)
+    _Cat(-2000099, "Furniture")                    # in the document, not in the view
+    cache = {}
+    inputs, links, unread = _read(monkeypatch, {1: _Elem(walls, 70), 2: _Elem(frame)}, cache)
+    assert unread == {} and links is False and inputs["type_ids"] == [70]
+    ids = sorted(r[0] for r in inputs["graphics_rows"])
+    assert ids == [-2000024, -2000023, -2000012, -2000011]   # roots + subs, no furniture
+    assert (-2000011, "Walls", 3, 3, 90, 90) in inputs["graphics_rows"]
+    assert sorted(cache) == [-2000023, -2000011]             # read once per root
+    # A view of the same categories reads the same rows from the cache.
+    again, _l, _u = _read(monkeypatch, {1: _Elem(walls, 70), 2: _Elem(frame)}, cache)
+    assert again["graphics_rows"] == inputs["graphics_rows"]
+
+
+def test_an_unreadable_weight_is_a_stable_marker_and_a_failed_read_is_unknown(monkeypatch):
+    broken = _Cat(-2000011, "Walls", broken=True)
+    inputs, _links, unread = _read(monkeypatch, {1: _Elem(broken)})
+    assert inputs["graphics_rows"] == [(-2000011, "Walls", "?", "?", -1, -1)]
+    assert unread == {}
+
+    class _NoCategory(_Elem):
+        @property
+        def Category(self):
+            raise RuntimeError("category unreadable")
+
+        @Category.setter
+        def Category(self, value):
+            pass
+    inputs, _links, unread = _read(monkeypatch, {1: _NoCategory(None)})
+    assert inputs["graphics_rows"] is None and "graphics_rows" in unread
+    assert vf.view_fingerprint(10, inputs, GUIDS)["fingerprint"] is None
+
+
+# --- the grid basis: real grids from tools/stage_a_grid ---------------------------------
+
+def _grid_run(root, name, link=True, whiten=None, wall_px=None):
+    """A run whose one view (id 1) was captured and gridded by the real tools
+    (tests/test_stage_a_grid_element_cell._rich_view). ``whiten`` / ``wall_px``:
+    model pixels (y, x) set white / to the wall's colour in the TIFF before
+    the grid is made again."""
+    import shutil
+    from tests.test_stage_a_grid_element_cell import _rich_view
+    from PIL import Image
+    import numpy as np
+    from tools import stage_a_grid as grid
+    run = root / name
+    cap_dir = run / "color_id"
+    rec, _arr = _rich_view(cap_dir, link=link)
+    assert rec["status"] == "value", rec.get("reason")
+    shutil.move(str(cap_dir / "out"), str(run / "grid"))
+    if whiten or wall_px:
+        tiff = cap_dir / "V_1.tiff"
+        img = np.asarray(Image.open(str(tiff)).convert("RGB")).copy()
+        for y, x in whiten or []:
+            img[y, x] = (255, 255, 255)
+        wall_rgb = json.loads((cap_dir / "V_1.json").read_text())["color_assignment_map"]["7"]
+        for y, x in wall_px or []:
+            img[y, x] = wall_rgb
+        Image.fromarray(img).save(str(tiff), format="TIFF")
+        from tools import register_stage_a_annotation as reg
+        reg.register(cap_dir / "V_1_anno.json")    # the model TIFF it registered to moved
+        assert grid.grid_view(cap_dir / "V_1.json", run / "grid")["status"] == "value"
+    fp = {"basis_version": vf.BASIS_VERSION, "document": {"open_mode": FACTS["open_mode"]},
+          "views": {"1": {"view_id": 1, "view_type": "FloorPlan", "fingerprint": "f",
+                          "components": {"members": "f"}, "shows_links_or_imports": False}}}
+    meta = {"config_hash": "9400eaef", "config": CONFIG, "exporter_version": "4.0.0",
+            "revit_version": {"value": {"version_build": FACTS["revit_build"]}}}
+    return {"run_dir": str(run), "meta": meta, "fingerprints": fp,
+            "statuses": {"1": "success"}, "reason": None}
+
+
+def _wall_edge_px():
+    """A pixel on the wall's top edge, mid-cell: whitening it moves no cell."""
+    from tests.test_stage_a_grid_element_cell import WALL, _model_px
+    y0, _y1, x0, x1 = _model_px(WALL)
+    return [(y0, (x0 + x1) // 2 + 9)]
+
+
+def _outcome(pair):
+    row = pair["by_type"]["FloorPlan"]
+    return dict((k, row[k]) for k in ("true_unchanged", "false_unchanged",
+                                      "grid_tolerated", "fringe_tolerated"))  # boundary: own test
+
+
+def _above_wall_px(n):
+    """``n`` pixels in the row just above the wall's top edge (v = 9, a cell
+    boundary): each lies in the cell above, which the wall does not reach."""
+    from tests.test_stage_a_grid_element_cell import WALL, _model_px
+    y0, _y1, x0, x1 = _model_px(WALL)
+    xm = (x0 + x1) // 2
+    return [(y0 - 1, xm + k) for k in range(n)]
+
+
+@pytest.fixture(scope="module")
+def grid_runs(tmp_path_factory):
+    root = tmp_path_factory.mktemp("grid_basis")
+    return {"a": _grid_run(root, "a"),
+            "noise": _grid_run(root, "noise", whiten=_wall_edge_px()),
+            "nolink": _grid_run(root, "nolink", link=False),
+            "spill1": _grid_run(root, "spill1", wall_px=_above_wall_px(1)),
+            "spill3": _grid_run(root, "spill3", wall_px=_above_wall_px(3))}
+
+
+def test_a_pixel_spilling_across_a_cell_boundary_is_boundary_noise(grid_runs):
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["spill1"])
+    row = pair["by_type"]["FloorPlan"]
+    assert (row["true_unchanged"], row["boundary_tolerated"], row["false_unchanged"]) == (1, 1, 0)
+    # Three pixels in the new cell is more than boundary noise.
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["spill3"])
+    (fu,) = pair["false_unchanged"]
+    assert fu["basis"] == "grid" and fu["grid"]["one_sided_max_px"] == 3
+    assert fu["grid"]["rows_added"] >= 1 and fu["grid"]["boundary_only"] is False
+
+
+def test_a_pixel_change_that_moves_no_cell_is_the_same_on_the_grid(grid_runs):
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["noise"])
+    assert _outcome(pair) == {"true_unchanged": 1, "false_unchanged": 0,
+                              "grid_tolerated": 1, "fringe_tolerated": 0}
+    # The control: the pixels really differ, so on pixels it is a false unchanged.
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["noise"], basis="pixels")
+    assert _outcome(pair)["false_unchanged"] == 1
+    assert pair["false_unchanged"][0]["basis"] == "pixels"
+
+
+def test_a_change_the_grid_sees_is_a_false_unchanged_on_the_grid_basis(grid_runs):
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["nolink"])
+    assert _outcome(pair)["false_unchanged"] == 1
+    (fu,) = pair["false_unchanged"]
+    assert fu["basis"] == "grid" and fu["grid"]["rows_removed"] > 0
+    assert fu["grid"]["differs"] is True
+
+
+def test_identical_captures_need_no_grid(grid_runs, tmp_path):
+    import shutil
+    copy = tmp_path / "copy"
+    shutil.copytree(grid_runs["a"]["run_dir"], str(copy))
+    shutil.rmtree(str(copy / "grid"))
+    pair = vcs.score_pair(grid_runs["a"], dict(grid_runs["a"], run_dir=str(copy)))
+    assert _outcome(pair) == {"true_unchanged": 1, "false_unchanged": 0,
+                              "grid_tolerated": 0, "fringe_tolerated": 0}
+
+
+def test_without_a_comparable_grid_the_pixels_decide(grid_runs, tmp_path):
+    import shutil
+    for name, damage in (("missing", "remove"), ("version", "version")):
+        copy = tmp_path / name
+        shutil.copytree(grid_runs["noise"]["run_dir"], str(copy))
+        rec_path = copy / "grid" / "V_1.grid.json"
+        if damage == "remove":
+            rec_path.unlink()
+        else:
+            rec = json.loads(rec_path.read_text())
+            rec["tool_version"] = "0.0.1"
+            rec_path.write_text(json.dumps(rec))
+        pair = vcs.score_pair(grid_runs["a"], dict(grid_runs["noise"], run_dir=str(copy)))
+        (fu,) = pair["false_unchanged"]
+        assert fu["basis"] == "pixels", name
+        assert ("no grid record in run B" if damage == "remove"
+                else "grid versions differ") in fu["grid"]["reason"]
+
+
+def _gfacts(present=None, occupied=None, lattice=(1.0, (0, 0))):
+    return {"lattice": lattice,
+            "present": present if present is not None else {("model", 7, None, "ec_px", 1, 1): 40},
+            "occupied": occupied if occupied is not None else {(1, 1): 1},
+            "tool_version": "2.1.0"}
+
+
+def test_grid_diff_compares_presence_not_counts():
+    assert vcs.grid_diff(_gfacts(), _gfacts())["differs"] is False
+    fewer = _gfacts(present={("model", 7, None, "ec_px", 1, 1): 39})
+    assert vcs.grid_diff(_gfacts(), fewer)["differs"] is False      # a count, not presence
+    moved = _gfacts(present={("model", 7, None, "ec_px", 2, 1): 40})
+    d = vcs.grid_diff(_gfacts(), moved)
+    assert (d["rows_added"], d["rows_removed"], d["differs"]) == (1, 1, True)
+    assert vcs.grid_diff(_gfacts(), _gfacts(occupied={(1, 1): 3}))["cells_differ"] == 1
+    assert vcs.grid_diff(_gfacts(), _gfacts(occupied={(1, 1): 3}))["differs"] is True
+    assert vcs.grid_diff(_gfacts(), _gfacts(occupied={}))["differs"] is True
+    assert vcs.grid_diff(_gfacts(), _gfacts(lattice=(1.0, (0.5, 0))))["differs"] is True
+
+
+def test_a_one_sided_row_of_at_most_two_pixels_is_boundary_noise():
+    base = {("annotation", 9, None, "ec_px", 1, 1): 40, ("annotation", 9, None, "ec_ink_px", 1, 1): 9}
+    for n, expect in ((1, False), (2, False), (3, True)):
+        spill = dict(base)
+        spill.update({("annotation", 9, None, "ec_px", 2, 1): n,
+                      ("annotation", 9, None, "ec_ink_px", 2, 1): n})
+        # The spill also turns cell (2, 1) from empty to annotation-only.
+        b = _gfacts(present=spill, occupied={(1, 1): 2, (2, 1): 2})
+        a = _gfacts(present=base, occupied={(1, 1): 2})
+        for x, y in ((a, b), (b, a)):                       # appeared, and vanished
+            d = vcs.grid_diff(x, y)
+            assert d["differs"] is expect, n
+            assert d["boundary_only"] is (not expect)
+            assert d["one_sided_max_px"] == n
+    # An occupancy change in a cell no tolerated row explains still differs.
+    spill = dict(base)
+    spill[("annotation", 9, None, "ec_px", 2, 1)] = 1
+    d = vcs.grid_diff(_gfacts(present=base, occupied={(1, 1): 2}),
+                      _gfacts(present=spill, occupied={(1, 1): 2, (2, 1): 2, (5, 5): 1}))
+    assert d["differs"] is True and d["boundary_only"] is False
+    # And so does a different lattice, however small the rows.
+    d = vcs.grid_diff(_gfacts(present=base), _gfacts(present=spill, lattice=(2.0, (0, 0))))
+    assert d["differs"] is True
+
+
+def test_grid_facts_reads_presence_per_field_and_places_occupancy_by_range():
+    import numpy as np
+    rec = {"grid": {"cell_ft": 1.0, "origin_uv": [0, 0], "i_range": [-2, 1], "j_range": [5, 7]},
+           "ec_keys": [{"layer": "model", "element_id": 7, "link_category": None},
+                       {"layer": "annotation", "element_id": 9, "link_category": None}],
+           "tool_version": "2.1.0"}
+    occ = np.zeros((2, 3), dtype=np.uint8)
+    occ[1, 0] = 2                                   # row 1 = j 6, column 0 = i -2
+    arrays = {"ec_key": np.array([0, 1]), "ec_i": np.array([-2, 0]), "ec_j": np.array([5, 6]),
+              "ec_px": np.array([3, 0]), "ec_ink_px": np.array([1, 0]),
+              "ec_black_px": np.array([0, 4]), "occupancy": occ}
+    f = vcs.grid_facts(rec, arrays)
+    assert f["present"] == {("model", 7, None, "ec_px", -2, 5): 3,
+                            ("model", 7, None, "ec_ink_px", -2, 5): 1,
+                            ("annotation", 9, None, "ec_black_px", 0, 6): 4}
+    assert f["occupied"] == {(-2, 6): 2}
+
+
+# --- grid first, discovery, parallel pairs ------------------------------------------------
+
+def test_the_grid_decides_without_decoding_and_decodes_only_a_difference(grid_runs, monkeypatch):
+    from tools import analyze_change_detection_probe as acd
+    calls = []
+    real = acd.compare_view
+
+    def spy(view_id, fa, fb):
+        calls.append(view_id)
+        return real(view_id, fa, fb)
+    monkeypatch.setattr(acd, "compare_view", spy)
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["noise"])
+    assert _outcome(pair)["grid_tolerated"] == 1 and calls == []      # no decode
+    pair = vcs.score_pair(grid_runs["a"], grid_runs["nolink"])
+    (fu,) = pair["false_unchanged"]
+    assert calls == [1] and fu["basis"] == "grid"
+    assert fu["anno_differing_px"] is not None or fu["model_differing_px"] is not None
+
+
+def test_byte_identical_captures_with_grids_count_no_tolerance(grid_runs, tmp_path):
+    import shutil
+    copy = tmp_path / "same"
+    shutil.copytree(grid_runs["a"]["run_dir"], str(copy))
+    pair = vcs.score_pair(grid_runs["a"], dict(grid_runs["a"], run_dir=str(copy)))
+    assert _outcome(pair) == {"true_unchanged": 1, "false_unchanged": 0,
+                              "grid_tolerated": 0, "fringe_tolerated": 0}
+
+
+def _meta_run(root, model, name, date, finalized=True, run_id=None):
+    run = root / model / name
+    run.mkdir(parents=True)
+    (run / "run_meta_{0}.json".format(date)).write_text(json.dumps(
+        {"run_id": run_id or name.split("__")[-1], "date": date, "finalized": finalized}))
+    return str(run)
+
+
+def test_discover_makes_one_series_per_model_folder_in_date_order(tmp_path):
+    r3 = _meta_run(tmp_path, "M1", "2025-11-22__20261021T1209", "2025-11-22")
+    r1 = _meta_run(tmp_path, "M1", "2025-11-08__20261021T0738", "2025-11-08")
+    old = _meta_run(tmp_path, "M1", "2025-11-15__20261021T0859", "2025-11-15")
+    new = _meta_run(tmp_path, "M1", "2025-11-15__20261025T1000", "2025-11-15")
+    unf = _meta_run(tmp_path, "M1", "2025-11-29__20261021T1345", "2025-11-29", finalized=False)
+    lone = _meta_run(tmp_path, "M2", "2025-11-08__20261022T0800", "2025-11-08")
+    series, dropped = vcs.discover(tmp_path)
+    assert series == [{"model_dir": str(tmp_path / "M1"), "runs": [r1, new, r3]}]
+    reasons = dict((d["run_dir"], d["reason"]) for d in dropped)
+    assert reasons[unf] == "not finalized"
+    assert reasons[old].startswith("same as-of date 2025-11-15")
+    assert reasons[lone] == "only run of its model folder"
+
+
+def test_root_and_parallel_jobs_score_the_same_pairs(tmp_path):
+    model = tmp_path / "KSRF" / "Hosp"
+    model.mkdir(parents=True)
+    views = {1: ("same", {11: (0, 0, 10, 10)}), 101: ("old", {31: (0, 0, 10, 10)})}
+    _run(model, "2025-12-13__r1", "2025-12-13", views)
+    _run(model, "2025-12-20__r2", "2025-12-20", views)
+    _run(model, "2025-12-27__r3", "2025-12-27", {1: ("same", {11: (0, 0, 10, 10)}),
+                                                  101: ("new", {31: (0, 0, 10, 10)})})
+    serial, parallel = tmp_path / "s.json", tmp_path / "p.json"
+    assert vcs.main(["--root", str(tmp_path), "--out", str(serial)]) == 0
+    assert vcs.main(["--root", str(tmp_path), "--jobs", "2", "--out", str(parallel)]) == 0
+    a, b = json.loads(serial.read_text()), json.loads(parallel.read_text())
+    assert [p["b"] for p in a["pairs"]] == [p["b"] for p in b["pairs"]]
+    assert len(a["pairs"]) == 2 and a["acceptance"] == b["acceptance"]
+    assert a["series"][0]["model_dir"] == str(model)
+    for pa, pb in zip(a["pairs"], b["pairs"]):
+        pa.pop("seconds"), pb.pop("seconds")
+        assert pa == pb
+
+
+def test_runs_and_root_are_one_or_the_other(tmp_path):
+    with pytest.raises(SystemExit):
+        vcs.main(["--root", str(tmp_path), "x", "y"])
+    with pytest.raises(SystemExit):
+        vcs.main([])
+    with pytest.raises(SystemExit):
+        vcs.main(["--root", str(tmp_path)])                  # nothing found
+
+
+def _set_meta(run, date, **changes):
+    path = os.path.join(run, "run_meta_{0}.json".format(date))
+    meta = json.load(open(path))
+    for key, fn in changes.items():
+        meta[key] = fn(meta.get(key))
+    with open(path, "w") as fh:
+        json.dump(meta, fh)
+
+
+def test_a_view_the_later_run_carried_is_counted_not_compared(tmp_path):
+    views = {1: ("same", {11: (0, 0, 10, 10)}), 2: ("same", {21: (0, 0, 10, 10)})}
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", views)
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", views)
+    _set_meta(b, "2025-12-20", views=lambda vs: [dict(v, capture_status="unchanged")
+                                                 if v["view_id"] == 1 else v for v in vs])
+    out = tmp_path / "v.json"
+    assert vcs.main([a, b, "--out", str(out), "--min-pairs", "1", "--min-per-type", "1"]) == 0
+    row = json.loads(out.read_text())["acceptance"]["by_type"]["DraftingView"]
+    assert (row["carried"], row["compared"], row["true_unchanged"]) == (1, 1, 1)
+
+
+def test_suspend_writes_only_for_a_run_that_skipped_and_failed(tmp_path):
+    import os as _os
+    views = {1: ("same", {11: (0, 0, 10, 10)})}
+    a = _run(tmp_path, "2025-12-13__r1", "2025-12-13", views)
+    b = _run(tmp_path, "2025-12-20__r2", "2025-12-20", {1: ("same", {11: (5, 0, 15, 10)})})
+    target = tmp_path / "skip_suspended.json"
+    assert vcs.main([a, b, "--out", str(tmp_path / "v1.json"), "--suspend"]) == 0
+    assert not target.exists()                 # B did not skip: nothing to suspend
+    _set_meta(b, "2025-12-20", skip=lambda _old: {"enabled": True, "series_key": "KSRF_M"})
+    assert vcs.main([a, b, "--out", str(tmp_path / "v2.json"), "--suspend"]) == 0
+    record = json.loads(target.read_text())
+    assert record["KSRF_M"]["view_ids"] == [1] and record["KSRF_M"]["run_dir"] == b
+    from vop_interwoven import change_skip
+    assert change_skip.read_suspension(_os.path.dirname(b), "KSRF_M")["view_ids"] == [1]
+    rec = json.loads((tmp_path / "v2.json").read_text())
+    assert rec["suspended"][0]["file"] == str(target)
+
+
+
+# --- the portable config hash the skip rule compares -------------------------------------
+
+def test_the_skip_rule_ignores_where_the_checkout_is_and_nothing_else():
+    moved = dict(CONFIG, metrics_manifest_path="D:/elsewhere/metrics_manifest.v1.json",
+                 view_diagnostics_output_dir="D:/out", perf_csv_output_dir="D:/perf",
+                 view_cache_dir="D:/cache", view_cache_enabled=True,
+                 view_cache_require_doc_unmodified=False)
+    assert vf.portable_config_hash(moved) == vf.portable_config_hash(CONFIG)
+    assert vf.portable_config_hash(dict(CONFIG, tile_size=8)) != vf.portable_config_hash(CONFIG)
+    assert vf.portable_config_hash(None) is None
+    # The recorded hash is untouched: run_facts reads the config, not it.
+    a = vf.run_facts({"config_hash": "aaaa", "config": CONFIG}, {})
+    b = vf.run_facts({"config_hash": "bbbb", "config": moved}, {})
+    assert a["config_hash"] == b["config_hash"]
+    assert vf.run_facts({"config_hash": "aaaa"}, {})["config_hash"] is None   # unknown
+
+
+def test_a_live_config_and_its_run_meta_copy_hash_alike():
+    from vop_interwoven.config import Config
+    from vop_interwoven.streaming import run_config
+    live = run_config(Config())
+    on_disk = json.loads(json.dumps(live, default=str))
+    assert vf.portable_config_hash(live) == vf.portable_config_hash(on_disk)
+
+
+def test_every_config_key_named_like_a_location_is_decided():
+    """A new Config key ending _path/_dir/_folder/_root must be named in
+    CONFIG_LOCATION_KEYS (left out of the skip comparison) or here (a key
+    that changes the capture, so it stays in)."""
+    from vop_interwoven.config import Config
+    captures = set()
+    named = [k for k in Config().to_dict()
+             if k.endswith(("_path", "_dir", "_folder", "_root", "_directory"))]
+    undecided = [k for k in named if k not in vf.CONFIG_LOCATION_KEYS and k not in captures]
+    assert named and not undecided, undecided

@@ -258,6 +258,51 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   and the finder's `scanned_dir` (a renamed export folder leaves every
   run_meta's recorded path stale); a list entry may carry its own `reason`.
 
+**View fingerprints, hash-and-skip phase 1** (2026-10-28,
+`vop_interwoven/view_fingerprint.py`, `docs/DESIGN_CHANGE_SKIP.md`). This is
+SHADOW mode: nothing is skipped.
+- With `run_capture(record_fingerprints=True)` (the batch and the
+  thinrunner), each view gets a SHA-1 over `id:Element.VersionGuid` of the
+  view, its template, its filters, its members, its member types and its
+  ElementId parameters, plus (basis 2, 2026-10-29) a `graphics` component:
+  line weights and line patterns of the root categories of its members and
+  all their subcategories. Only those reach the capture's pixels (it
+  overrides colour, fill patterns, transparency, halftone). Basis 1's
+  document-wide graphics hash blocked 7 of 8 archive pairs and is gone; the
+  line weight table is unread by the API and left to the full refresh.
+- They are read before any view is captured and written to
+  `view_fingerprints_<d>.json` once the run is finalized; run_meta gains
+  `view_fingerprints`. A failure is stamped and never fails the capture.
+- An unread input is a `null` fingerprint: unknown never skips.
+- `skip_verdict` is the ONE function phase 2 and
+  `tools/validate_change_skip.py` share.
+- The batch's `fingerprint` plan mode backfills existing runs and stamps its
+  open as `fingerprint_opened_from`, never over `opened_from`.
+- Evidence and limits: `tests/dynamo/PROBE_CHANGE_DETECTION.md`.
+  `GetChangedElements` cannot compare detached opens. VersionGuid re-mints
+  about 0.4 % of elements on every detached open.
+
+**Hash-and-skip phase 2** (2026-10-29, `vop_interwoven/change_skip.py`, OFF
+by default: `skip_unchanged`). Only **drafting views and legends** skip
+(`skip_view_types`): held-out validation found a floor plan whose stair
+path label changed under an identical fingerprint (issue #251).
+- The baseline is the series' latest earlier finalized run in the same
+  output root (`series_key` of the document title); the verdict is
+  `skip_verdict`; a seeded audit (10 %, >= 3 per type) is captured anyway;
+  every 7th run is a full refresh; `skip_suspended.json` stops a series.
+- Skipped views are left out of the capture and, AFTER the run is
+  finalized, their source capture's files are copied in (sha256-checked,
+  one hop) and DECLARED: run_meta `capture_status: "unchanged"` +
+  `carried_from`, views_core CaptureStatus `unchanged`, run_meta `skip`. A
+  failed copy is declared `failed` (`carry_failed`), never `unchanged`.
+- `change_skip.MEASURED_STATUSES` is the one tuple readers use to tie a
+  sidecar to its run. The validator never compares a carried view.
+- The skip rule compares `portable_config_hash` of each run's recorded
+  `config` (locations such as `metrics_manifest_path` left out), never the
+  recorded `config_hash`, which still includes them. The current run's
+  config is taken as the run will record it (`streaming.run_config`): the
+  run forces `retain_rasters_in_memory` before recording (S-6.3).
+
 **Sidecar shape (PR #221).** Readers must accept the old and new shapes
 alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field
 that exists in more than one shape, and `tools/reencode_stage_a_sidecar.py`

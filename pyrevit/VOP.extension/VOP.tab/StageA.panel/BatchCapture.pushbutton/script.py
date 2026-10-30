@@ -23,6 +23,18 @@ Settings (batch_settings.json beside this script):
     batch_size         views per streaming batch, blank = one batch
     export_view_raster raw Revit view PNGs beside the captures (false)
     worksets           "all" (default) or "last_viewed"
+    record_fingerprints  hash-and-skip phase 1: write each capture run's view
+                       fingerprints (true, default); a plan made with
+                       --mode fingerprint backfills existing runs instead
+    skip_unchanged     hash-and-skip phase 2 (false, default): views whose
+                       fingerprint equals the series' previous run are not
+                       captured; their files are copied in and declared
+                       "unchanged" (vop_interwoven/change_skip.py)
+    skip_view_types    the view types that may skip (default
+                       ["DraftingView", "Legend"]: issue #251)
+    skip_full_refresh_every_n_runs  every Nth run captures all (7; 0 = never)
+    skip_audit_fraction / skip_audit_min_per_type  would-skip views captured
+                       anyway and recorded for the validator (0.10 / 3)
 
 Every file is opened DETACHED (DetachAndPreserveWorksets) with the chosen
 workset configuration, read-only in effect; dialogs during the open are
@@ -47,7 +59,11 @@ except NameError:
     _SCRIPT_DIR = os.getcwd()
 _SETTINGS_PATH = os.path.join(_SCRIPT_DIR, "batch_settings.json")
 _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
-             "export_view_raster": False, "worksets": "all"}
+             "record_fingerprints": True,
+             "export_view_raster": False, "worksets": "all",
+             "skip_unchanged": False}
+_SKIP_KEYS = ("skip_unchanged", "skip_view_types", "skip_full_refresh_every_n_runs",
+              "skip_audit_fraction", "skip_audit_min_per_type")
 
 
 def _load_settings():
@@ -270,12 +286,47 @@ def capture(doc, job):
         doc, view_ids, _config(), job["output_dir"],
         batch_size=_int_or_none(_settings.get("batch_size")),
         date_override=job.get("date_override"),
-        export_view_raster=bool(_settings.get("export_view_raster")))
+        export_view_raster=bool(_settings.get("export_view_raster")),
+        record_fingerprints=_flag(_settings.get("record_fingerprints"), True),
+        skip=_skip_settings())
     err = stamp_run_meta(run_dir, "view_selection", selection)
     return {"run_dirs": [run_dir], "run_id": run_id,
             "views_processed": result.get("views_processed"),
             "views_failed": result.get("views_failed"),
             "view_selection_stamp_failed": err}
+
+
+def _skip_settings():
+    """The hash-and-skip settings present in batch_settings.json, with
+    ``skip_unchanged`` read like every other flag; change_skip.parse_settings
+    fills the rest and refuses a bad value."""
+    out = dict((k, _settings[k]) for k in _SKIP_KEYS if k in _settings
+               and _settings[k] not in (None, ""))
+    out["skip_unchanged"] = _flag(_settings.get("skip_unchanged"), False)
+    return out
+
+
+def _flag(value, default):
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes")
+
+
+def fingerprint(doc, job):
+    """Hash-and-skip backfill (docs/DESIGN_CHANGE_SKIP.md): write the view
+    fingerprints of each existing run captured from this archive."""
+    from vop_interwoven.view_fingerprint import fingerprint_existing_run
+    done, errors = [], {}
+    for run_dir in job["fingerprint_runs"]:
+        try:
+            out = fingerprint_existing_run(doc, run_dir)
+            done.append(run_dir)
+            print("  fingerprinted {0}: {1}".format(run_dir, out["summary"]))
+        except Exception as ex:  # noqa: BLE001 -- recorded in the job's result
+            errors[run_dir] = "{0}: {1}".format(type(ex).__name__, ex)
+    if not done:
+        raise RuntimeError("no run fingerprinted: {0}".format(errors))
+    return {"run_dirs": done, "errors": errors}
 
 
 def recapture(doc, job):
@@ -327,6 +378,13 @@ def main():
         return
     from vop_interwoven.batch_capture import (  # noqa: E402
         DialogLog, active_document_refusal, load_plan, pending_jobs, run_batch)
+    from vop_interwoven.change_skip import parse_settings  # noqa: E402
+    try:
+        parse_settings(_skip_settings())
+    except ValueError as ex:
+        TaskDialog.Show("VOP Batch Capture -- skip settings",
+                        "The batch did not start: {0}\n\nin {1}".format(ex, _SETTINGS_PATH))
+        return
 
     plan = load_plan(_settings["plan_json"])
     pending, done = pending_jobs(plan, limit=_int_or_none(_settings.get("limit")))
@@ -366,7 +424,8 @@ def main():
             record = run_batch(plan, open_doc, close_doc, capture, recapture,
                                limit=_int_or_none(_settings.get("limit")), log=print,
                                dialog_log=_dialog_log[0],
-                               close_after_capture=True, session=session)
+                               close_after_capture=True, session=session,
+                               fingerprint=fingerprint)
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:

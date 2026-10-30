@@ -3,7 +3,7 @@
 capture_plan.json for review BEFORE Revit opens anything.
 
     python tools/plan_capture_batch.py <manifest.csv> --output-root <Exports> \\
-        [--recapture-lists recapture_lists.json] [--mode both|capture|recapture] \\
+        [--recapture-lists recapture_lists.json] [--mode both|capture|recapture|fingerprint] \\
         [--no-skip-captured] [--view-types FloorPlan,Section,...] [--limit N] \\
         [--out capture_plan.json]
 
@@ -77,7 +77,8 @@ def main(argv=None):
     parser.add_argument("manifest")
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--recapture-lists")
-    parser.add_argument("--mode", default="both", choices=("both", "capture", "recapture"))
+    parser.add_argument("--mode", default="both",
+                        choices=("both", "capture", "recapture", "fingerprint"))
     parser.add_argument("--no-skip-captured", action="store_true",
                         help="plan a capture job even for a file a finalized run was captured from")
     parser.add_argument("--view-types", help="comma-separated ViewType names for capture jobs")
