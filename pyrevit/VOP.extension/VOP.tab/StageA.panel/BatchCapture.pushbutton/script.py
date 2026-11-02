@@ -453,7 +453,7 @@ def main():
                                limit=_int_or_none(_settings.get("limit")), log=print,
                                dialog_log=_dialog_log[0],
                                close_after_capture=True, session=session,
-                               fingerprint=fingerprint)
+                               fingerprint=fingerprint, active_document=_active_document)
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:

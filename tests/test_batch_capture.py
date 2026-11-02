@@ -494,6 +494,82 @@ def test_the_log_is_on_disk_after_the_first_job_not_only_at_the_end(tmp_path):
     assert [j["status"] for j in seen["after_first"]["jobs"]] == ["ok"]
 
 
+def _two_capture_plan(root):
+    return {"schema": bc.PLAN_SCHEMA, "mode": "capture", "output_root": str(root), "jobs": [
+        {"kind": "capture", "key": k, "stem": k, "full_path": "C:\\" + k, "display_name": k,
+         "output_dir": str(root / k), "date_override": None} for k in ("A", "B")]}
+
+
+def test_the_active_document_is_read_after_open_and_after_capture_into_the_log_file(tmp_path):
+    """Batch 2026-10-29: the archive was active at close although blank_slate
+    was active at start. Asserted on the FILE (defect class 4): job A's
+    archive becomes active during its capture, job B's never does."""
+    root = tmp_path / "Exports"
+    events, open_doc, close_doc, capture, recapture = _harness(tmp_path)
+    active = {"title": "blank_slate"}
+
+    def capture_switching(doc, job):
+        if job["stem"] == "A":
+            active["title"] = doc.Title
+        out = capture(doc, job)
+        return out
+
+    def close_restoring(doc):
+        close_doc(doc)
+        active["title"] = "blank_slate"
+
+    def active_document():
+        return active["title"], "C:\\Local\\" + active["title"] + ".rvt"
+    record = run_batch(_two_capture_plan(root), open_doc, close_restoring, capture_switching,
+                       recapture, log=lambda s: None, active_document=active_document)
+    on_disk = json.loads(open(record["log_path"]).read())
+    a, b = (j["active_document"] for j in on_disk["jobs"])
+    assert a["after_open"] == {"title": "blank_slate", "path": "C:\\Local\\blank_slate.rvt",
+                               "is_job_document": False}
+    assert a["after_capture"] == {"title": "A_detached", "path": "C:\\Local\\A_detached.rvt",
+                                  "is_job_document": True}
+    assert b["after_open"]["is_job_document"] is False
+    assert b["after_capture"]["title"] == "blank_slate"
+    assert b["after_capture"]["is_job_document"] is False
+
+
+def test_an_active_document_read_that_raises_is_recorded_and_the_job_still_succeeds(tmp_path):
+    root = tmp_path / "Exports"
+    events, open_doc, close_doc, capture, recapture = _harness(tmp_path)
+
+    def broken():
+        raise RuntimeError("no UI")
+    record = run_batch(_two_capture_plan(root), open_doc, close_doc, capture, recapture,
+                       log=lambda s: None, active_document=broken)
+    on_disk = json.loads(open(record["log_path"]).read())
+    assert [j["status"] for j in on_disk["jobs"]] == ["ok", "ok"]
+    assert on_disk["jobs"][0]["active_document"] == {
+        "after_open": {"error": "RuntimeError: no UI"},
+        "after_capture": {"error": "RuntimeError: no UI"}}
+
+
+def test_without_an_active_document_reader_the_entry_has_no_active_document_key(tmp_path):
+    """Control: absent means not read, never "nothing was active"."""
+    root = tmp_path / "Exports"
+    events, open_doc, close_doc, capture, recapture = _harness(tmp_path)
+    record = run_batch(_two_capture_plan(root), open_doc, close_doc, capture, recapture,
+                       log=lambda s: None)
+    on_disk = json.loads(open(record["log_path"]).read())
+    assert all("active_document" not in j for j in on_disk["jobs"])
+
+
+def test_the_button_reads_the_active_document_and_re_activates_its_anchor_at_close():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyrevit",
+                        "VOP.extension", "VOP.tab", "StageA.panel", "BatchCapture.pushbutton",
+                        "script.py")
+    src = open(path, encoding="utf-8").read()
+    assert "active_document=_active_document)" in src
+    assert '_anchor["path"] = active_path' in src
+    closer = src.split("def close_doc(doc):")[1].split("\ndef ")[0]
+    assert "ui_app.OpenAndActivateDocument(_anchor[\"path\"])" in closer
+    assert "doc.Close(False)" in closer and "raise" in closer
+
+
 def test_a_limit_runs_that_many_pending_jobs(tmp_path):
     root = tmp_path / "Exports"
     plan = {"schema": bc.PLAN_SCHEMA, "mode": "capture", "output_root": str(root), "jobs": [
