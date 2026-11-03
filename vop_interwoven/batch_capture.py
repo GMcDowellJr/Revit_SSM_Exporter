@@ -472,6 +472,32 @@ def collect_views(doc):
 
 # --- the loop -------------------------------------------------------------------------------
 
+def setting_flag(value, default):
+    """A batch_settings.json flag: blank or absent is ``default``; true for
+    "1", "true" or "yes" (any case), false otherwise. The ONE parser the
+    pyRevit button's flags use."""
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes")
+
+
+def capture_config(settings):
+    """PURE. The Config every job of a batch captures with: Stage A, the
+    registered capture, and ``stage_a_legacy_prepass`` from the settings
+    (default False: the legacy steps Stage A does not use are skipped; true
+    runs them, for the flag-on/off timing comparison). The flag is outside
+    the config hash (config.CONFIG_HASH_EXEMPT_KEYS), so either value keeps
+    the series comparable; run_meta's config records which ran."""
+    from .config import Config
+    cfg = Config()
+    cfg.debug_json_detail = "summary"
+    cfg.enable_color_id_buffer_stage_a = True
+    cfg.color_id_buffer_registered_capture = True
+    cfg.stage_a_legacy_prepass = setting_flag(
+        (settings or {}).get("stage_a_legacy_prepass"), False)
+    return cfg
+
+
 def stamp_run_meta(run_dir, key, record):
     """``run_meta.json[key] = record``, written atomically; the reason when
     it cannot be."""

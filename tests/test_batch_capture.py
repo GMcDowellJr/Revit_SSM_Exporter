@@ -739,3 +739,42 @@ def test_the_button_passes_validated_skip_settings_off_by_default():
     ns["_settings"] = {"skip_full_refresh_every_n_runs": "seven"}
     with pytest.raises(ValueError):
         change_skip.parse_settings(ns["_skip_settings"]())
+
+
+# ---- stage_a_legacy_prepass from batch_settings.json (2026-11-03) ----------------
+
+@pytest.mark.parametrize("value, expected", [
+    (None, False), ("", False), (False, False), ("false", False), ("no", False),
+    (True, True), ("true", True), ("TRUE", True), ("1", True), ("yes", True)])
+def test_the_batch_config_reads_the_legacy_prepass_flag(value, expected):
+    from vop_interwoven.batch_capture import capture_config
+    settings = {} if value is None else {"stage_a_legacy_prepass": value}
+    cfg = capture_config(settings)
+    assert cfg.stage_a_legacy_prepass is expected
+    assert cfg.enable_color_id_buffer_stage_a is True
+    assert cfg.color_id_buffer_registered_capture is True
+    assert cfg.to_dict()["stage_a_legacy_prepass"] is expected
+
+
+def test_the_flag_keeps_the_batch_config_hash():
+    """Either setting is the same capture (CONFIG_HASH_EXEMPT_KEYS), so a
+    flag-on batch run stays comparable with the series."""
+    from vop_interwoven.batch_capture import capture_config
+    from vop_interwoven.csv_export import compute_config_hash
+    assert compute_config_hash(capture_config({"stage_a_legacy_prepass": True})) == \
+        compute_config_hash(capture_config({}))
+
+
+def test_the_button_builds_its_config_and_flags_with_the_shared_helpers():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyrevit",
+                        "VOP.extension", "VOP.tab", "StageA.panel", "BatchCapture.pushbutton",
+                        "script.py")
+    src = open(path, encoding="utf-8").read()
+    config_fn = src.split("def _config():")[1].split("\ndef ")[0]
+    assert "capture_config(_settings)" in config_fn
+    assert "Config()" not in config_fn
+    capture_fn = src.split("def capture(doc, job):")[1].split("\ndef ")[0]
+    assert "cfg = _config()" in capture_fn and "doc, view_ids, cfg, job[" in capture_fn
+    flag_fn = src.split("def _flag(value, default):")[1].split("\ndef ")[0]
+    assert "setting_flag(value, default)" in flag_fn
+    assert '"stage_a_legacy_prepass": False' in src
