@@ -8,8 +8,9 @@ the geometry model pass). Everything else the loop runs still runs.
 
 GATE 1 -- ``test_output_is_byte_identical_with_the_flag_on_and_off`` runs the
 synthetic run of tests/stage_a_loop_fixture.py twice through the REAL loop
-and compares EVERY file of the two runs byte for byte, after removing only the
-differences ALLOWED below, each named. Its fixture's capture writes bytes that
+and compares EVERY file of the two runs with tools/compare_stage_a_runs.py
+(the comparison run on real runs too): binaries byte for byte, JSON and CSV
+field by field, allowing only the named rules there. Its fixture's capture writes bytes that
 are a pure function of what the pipeline hands it, so a gated step whose
 output reached the capture would change them. It is also what licenses
 CONFIG_HASH_EXEMPT_KEYS: the flag is out of the config hash because this test
@@ -23,133 +24,50 @@ MUTATIONS (gate 3), applied to production and reverted, recorded in the PR:
 """
 import json
 import os
-import re
-
-import pytest
 
 from tests import stage_a_loop_fixture as fx
+from tools import compare_stage_a_runs
 from vop_interwoven import pipeline
 from vop_interwoven.config import CONFIG_HASH_EXEMPT_KEYS, Config
 
-# Every difference the two runs may show, and why. Anything else fails.
-ALLOWED_JSON_PATHS = (
-    (r"^/config/stage_a_legacy_prepass$", "the flag itself"),
-    (r"^/run_dir$", "the two runs are written under two test roots"),
-    (r"^/views\[\]/loop_timing(/|$)", "C2 loop timing: timing fields and gated_steps"),
-    (r"^/views/\d+/elapsed_sec$", "views_diagnostics: timing"),
-    (r"^/generated_utc$", "the element map's write clock"),
-)
-ALLOWED_CSV_COLUMNS = (("ElapsedSec", "views_core: timing"),)
-
-
-def _flat(obj, path=""):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            for item in _flat(v, path + "/" + str(k)):
-                yield item
-    elif isinstance(obj, list):
-        for i, v in enumerate(obj):
-            for item in _flat(v, "{0}[{1}]".format(path, i)):
-                yield item
-    else:
-        yield path, obj
-
-
-def _snapshot(root, run_id):
-    """``{path relative to the run dir: bytes}`` with the run id masked (two
-    runs a minute apart have two ids; it is the clock, not the capture)."""
-    out = {}
-    for dirpath, _dirs, files in os.walk(str(root)):
-        for name in files:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, str(root)).replace(os.sep, "/")
-            rel = rel.split("/", 1)[1] if "/" in rel else rel
-            with open(full, "rb") as handle:
-                data = handle.read()
-            if name.endswith((".json", ".csv")):
-                data = data.replace(run_id.encode("utf-8"), b"<RUN_ID>")
-            out[rel] = data
-    return out
-
-
-def _json_differences(a, b):
-    fa, fb = dict(_flat(json.loads(a))), dict(_flat(json.loads(b)))
-    diffs = set()
-    for path in set(fa) | set(fb):
-        if fa.get(path, KeyError) != fb.get(path, KeyError):
-            general = re.sub(r"\[\d+\]", "[]", path)
-            if not any(re.match(rx, general) for rx, _why in ALLOWED_JSON_PATHS):
-                diffs.add(path)
-    return diffs
-
-
-def _csv_differences(a, b):
-    import csv
-    import io
-    ra = list(csv.DictReader(io.StringIO(a.decode("utf-8"))))
-    rb = list(csv.DictReader(io.StringIO(b.decode("utf-8"))))
-    if len(ra) != len(rb):
-        return {"row count {0} != {1}".format(len(ra), len(rb))}
-    skip = set(c for c, _why in ALLOWED_CSV_COLUMNS)
-    diffs = set()
-    for i, (x, y) in enumerate(zip(ra, rb)):
-        if list(x) != list(y):
-            diffs.add("header")
-        for col in set(x) | set(y):
-            if col not in skip and x.get(col) != y.get(col):
-                diffs.add("row {0} {1}".format(i, col))
-    return diffs
-
-
 def _run_pair(monkeypatch, tmp_path, **cfg_overrides):
+    """``{flag: (run_dir, result)}`` for a flag-off and a flag-on run."""
     runs = {}
     for flag in (False, True):
         root = tmp_path / ("on" if flag else "off")
         result, run_dir = fx.run(monkeypatch, root, cfg=fx.make_cfg(
             stage_a_legacy_prepass=flag, **cfg_overrides))
-        run_id = os.path.basename(run_dir).split("__", 1)[1]
-        runs[flag] = (_snapshot(root, run_id), result)
+        runs[flag] = (run_dir, result)
     return runs
 
 
 def output_differences(monkeypatch, tmp_path, **cfg_overrides):
-    """Every difference between the flag-off and flag-on runs beyond the
-    ALLOWED ones: ``{path: description}``. Empty when gate 1 holds."""
+    """tools/compare_stage_a_runs.compare over the pair -- the comparison
+    Greg runs on two real runs, so the test and the tool cannot disagree."""
     runs = _run_pair(monkeypatch, tmp_path, **cfg_overrides)
-    off, on = runs[False][0], runs[True][0]
-    diffs = {}
-    for path in sorted(set(off) | set(on)):
-        if path not in off or path not in on:
-            diffs[path] = "present in one run only"
-        elif off[path] == on[path]:
-            continue
-        elif path.endswith(".json"):
-            found = _json_differences(off[path], on[path])
-            if found:
-                diffs[path] = sorted(found)
-        elif path.endswith(".csv"):
-            found = _csv_differences(off[path], on[path])
-            if found:
-                diffs[path] = sorted(found)
-        else:
-            diffs[path] = "bytes differ"
-    return diffs, runs
+    return compare_stage_a_runs.compare(runs[False][0], runs[True][0]), runs
 
 
 # ---- gate 1 ------------------------------------------------------------------
 
 def test_output_is_byte_identical_with_the_flag_on_and_off(monkeypatch, tmp_path):
-    diffs, runs = output_differences(monkeypatch, tmp_path)
-    assert diffs == {}, diffs
+    report, runs = output_differences(monkeypatch, tmp_path)
+    assert report["unexpected"] == {}, report["unexpected"]
+    # Every difference there IS, by rule: the flag, the gated-steps list and
+    # timing/clock fields -- nothing else.
+    rules = set(r for by_rule in report["allowed"].values() for r in by_rule)
+    assert rules <= {"flag", "gated_steps", "timing", "clock"}, report["allowed"]
+    assert "flag" in rules  # the comparison saw the two runs differ at all
     # Not vacuous: both runs wrote every kind of file, and the captures are
     # the same files byte for byte (not merely both empty).
-    off = runs[False][0]
-    kinds = set(p.rsplit(".", 1)[-1] for p in off)
-    assert {"tif", "json", "csv"} <= kinds, sorted(off)
-    tiffs = [p for p in off if p.endswith(".tif")]
-    assert len(tiffs) == 2 * len(fx.VIEWS)
+    identical = report["identical"]
+    tiffs = [p for p in identical if p.endswith(".tif")]
+    assert len(tiffs) == 2 * len(fx.VIEWS), identical
+    assert len([p for p in identical if p.startswith("color_id/") and p.endswith(".json")]) \
+        == 2 * len(fx.VIEWS)
+    every = identical + list(report["allowed"])
     for name in ("run_meta_", "views_core_", "views_diagnostics_", "vop_view_element_map_"):
-        assert any(os.path.basename(p).startswith(name) for p in off), name
+        assert any(os.path.basename(p).startswith(name) for p in every), name
 
 
 def test_control_the_identity_test_sees_a_change_in_what_reaches_the_capture(
@@ -162,8 +80,8 @@ def test_control_the_identity_test_sees_a_change_in_what_reaches_the_capture(
         out = real(doc, view, raster, diag=diag, cfg=cfg)
         return out[1:] if getattr(cfg, "stage_a_legacy_prepass", False) else out
     monkeypatch.setattr(fx, "fake_collect_view_elements", _drop_one_when_flag_on)
-    diffs, _runs = output_differences(monkeypatch, tmp_path)
-    assert any(p.endswith(".tif") for p in diffs), diffs
+    report, _runs = output_differences(monkeypatch, tmp_path)
+    assert any(p.endswith(".tif") for p in report["unexpected"]), report["unexpected"]
 
 
 def test_the_config_hash_is_the_same_with_the_flag_on_and_off(monkeypatch, tmp_path):
@@ -272,8 +190,25 @@ def test_the_membership_map_is_unchanged_by_the_gate(monkeypatch, tmp_path):
     same members with the hash skipped."""
     runs = _run_pair(monkeypatch, tmp_path)
     for flag in (False, True):
-        snap = runs[flag][0]
-        (name,) = [p for p in snap if os.path.basename(p).startswith("vop_view_element_map_")]
-        views = json.loads(snap[name])["views"]
+        run_dir = runs[flag][0]
+        (name,) = [p for p in os.listdir(run_dir) if p.startswith("vop_view_element_map_")]
+        with open(os.path.join(run_dir, name)) as handle:
+            views = json.load(handle)["views"]
         assert dict((v["view_id"], v["element_ids"]) for v in views) == {
             13521188: [501, 502, 503], 13521190: [501, 505], 13521300: []}
+
+
+def test_the_comparison_tool_refuses_a_directory_that_is_not_a_run(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    assert compare_stage_a_runs.main([str(tmp_path / "a"), str(tmp_path / "b")]) == 2
+
+
+def test_the_comparison_tool_exits_1_on_an_unexpected_difference(monkeypatch, tmp_path):
+    runs = _run_pair(monkeypatch, tmp_path)
+    assert compare_stage_a_runs.main([runs[False][0], runs[True][0]]) == 0
+    tiff = [p for p in os.listdir(os.path.join(runs[True][0], "color_id"))
+            if p.endswith(".tif")][0]
+    with open(os.path.join(runs[True][0], "color_id", tiff), "ab") as handle:
+        handle.write(b"\x00")
+    assert compare_stage_a_runs.main([runs[False][0], runs[True][0]]) == 1
