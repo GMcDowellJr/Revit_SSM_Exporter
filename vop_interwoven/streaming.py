@@ -273,6 +273,11 @@ class StreamingExporter:
         # scopes those merges to THIS run (a prior run's file in the same
         # folder/date is replaced, not merged).
         cfg._view_element_map_run_id = self.run_id
+        # E2: the run's view-element map, appended per view and written ONCE
+        # by finalize() (core/element_cache.ViewElementMapJournal). A private
+        # attribute, like the run id: outside Config.to_dict and the hash.
+        from vop_interwoven.core.element_cache import ViewElementMapJournal
+        cfg._view_element_map_journal = ViewElementMapJournal(self.run_id)
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
@@ -857,6 +862,26 @@ class StreamingExporter:
                 "failure_reason": "no_outcome_reported: the view never reached the "
                                   "exporter (see the streaming log for its error)"})
 
+    def _finalize_view_element_map(self):
+        """E2: write the run's view-element map once, every view having
+        reported (Recurring Defect Class 4: never before the record is
+        finished), and detach the journal so a later use of this cfg cannot
+        append to one nobody compacts."""
+        journal = getattr(self.cfg, "_view_element_map_journal", None)
+        self.element_map_result = None
+        if journal is None or journal.run_id != self.run_id:
+            return
+        t0 = time.perf_counter()
+        reports = journal.finalize()
+        self.element_map_result = {
+            "maps": reports, "views_appended": journal.views_appended,
+            "finalize_ms": round((time.perf_counter() - t0) * 1000.0, 3)}
+        self.cfg._view_element_map_journal = None
+        for path, report in reports.items():
+            if report.get("ok") is False:
+                print("[Streaming] view-element map NOT written, journal kept: "
+                      "{0} ({1})".format(path, report))
+
     def finalize(self):
         """Finalize export and return results.
         
@@ -868,6 +893,7 @@ class StreamingExporter:
         # outcome at all (its failure never reached this exporter) is recorded
         # as failed FIRST, so a finalized record is never short a view it
         # lists in views_requested (Codex, PR #221).
+        self._finalize_view_element_map()
         if self.run_meta is not None:
             self._backfill_missing_outcomes()
             from vop_interwoven.run_meta import finalize_run_meta, write_run_meta
@@ -936,7 +962,8 @@ class StreamingExporter:
             "config_hash": self.config_hash,
             "csv_rows_written": self.csv_rows_written,
             "json_path": json_path,
-            "view_summaries": self.view_summaries
+            "view_summaries": self.view_summaries,
+            "element_map": self.element_map_result,
         }
 
 
