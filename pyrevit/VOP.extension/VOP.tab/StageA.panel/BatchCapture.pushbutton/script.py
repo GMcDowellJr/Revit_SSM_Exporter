@@ -35,6 +35,9 @@ Settings (batch_settings.json beside this script):
     skip_full_refresh_every_n_runs  every Nth run captures all (7; 0 = never)
     skip_audit_fraction / skip_audit_min_per_type  would-skip views captured
                        anyway and recorded for the validator (0.10 / 3)
+    stage_a_legacy_prepass  run the legacy steps Stage A does not use (false,
+                       default; true for the flag-on/off timing comparison).
+                       Same capture either way; run_meta config records it
 
 Every file is opened DETACHED (DetachAndPreserveWorksets) with the chosen
 workset configuration, read-only in effect; dialogs during the open are
@@ -61,7 +64,7 @@ _SETTINGS_PATH = os.path.join(_SCRIPT_DIR, "batch_settings.json")
 _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
              "record_fingerprints": True,
              "export_view_raster": False, "worksets": "all",
-             "skip_unchanged": False}
+             "skip_unchanged": False, "stage_a_legacy_prepass": False}
 _SKIP_KEYS = ("skip_unchanged", "skip_view_types", "skip_full_refresh_every_n_runs",
               "skip_audit_fraction", "skip_audit_min_per_type")
 
@@ -288,12 +291,8 @@ def _active_document():
 # ---------------------------------------------------------------------------
 
 def _config():
-    from vop_interwoven.config import Config
-    cfg = Config()
-    cfg.debug_json_detail = "summary"
-    cfg.enable_color_id_buffer_stage_a = True
-    cfg.color_id_buffer_registered_capture = True
-    return cfg
+    from vop_interwoven.batch_capture import capture_config
+    return capture_config(_settings)
 
 
 def _int_or_none(text):
@@ -307,10 +306,12 @@ def capture(doc, job):
     views, selection = select_views(collect_views(doc), job.get("view_types") or ())
     view_ids = [v.Id.Value if hasattr(v.Id, "Value") else v.Id.IntegerValue for v in views]
     print("  Views selected: {0} ({1})".format(len(view_ids), selection["kept"]))
+    cfg = _config()
+    print("  stage_a_legacy_prepass: {0}".format(cfg.stage_a_legacy_prepass))
     if not view_ids:
         raise RuntimeError("no view of the selected types in {0}".format(doc.Title))
     result, run_dir, run_id = run_capture(
-        doc, view_ids, _config(), job["output_dir"],
+        doc, view_ids, cfg, job["output_dir"],
         batch_size=_int_or_none(_settings.get("batch_size")),
         date_override=job.get("date_override"),
         export_view_raster=bool(_settings.get("export_view_raster")),
@@ -334,9 +335,8 @@ def _skip_settings():
 
 
 def _flag(value, default):
-    if value is None or value == "":
-        return default
-    return str(value).strip().lower() in ("1", "true", "yes")
+    from vop_interwoven.batch_capture import setting_flag
+    return setting_flag(value, default)
 
 
 def fingerprint(doc, job):
