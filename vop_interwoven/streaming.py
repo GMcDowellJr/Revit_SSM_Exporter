@@ -940,7 +940,8 @@ class StreamingExporter:
         }
 
 
-def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, root_cache=None):
+def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, root_cache=None,
+                                     loop_timing_out=None):
     """Process views with streaming callback support.
     
     Modified version of process_document_views() that calls a callback
@@ -952,10 +953,15 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
         cfg: Config object
         on_view_complete: Callback function(view_result) called for each view
         
+        loop_timing_out: Optional dict, FILLED with one C2 loop-timing record
+            per view, keyed by str(view id) (vop_interwoven/loop_timing.py).
+            Each record is complete when its view's loop iteration ends.
+
     Returns:
         List of lightweight view summaries (no raster data retained)
     """
     from vop_interwoven.pipeline import process_document_views
+    from vop_interwoven import loop_timing
     
     # If no callback, fall back to standard behavior
     if on_view_complete is None:
@@ -1015,16 +1021,26 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     except Exception as e:
         print("[Streaming] memory mark run_start failed: {}".format(e))
 
+    _lt_prev_bottom = None
     for view_id in view_ids:
         # Whether this view's result has been handed to the exporter. A view
         # that raises BEFORE that still owes the exporter an outcome under
         # Stage A (see the outer except below).
         callback_entered = False
+        # C2: this iteration's loop timing, closed in the finally below so
+        # every exit (continue, failure, exception) has a bottom stamp.
+        _lt_top = loop_timing.now()
+        _lt = loop_timing.StepTimer(loop_timing.STREAMING_STEPS)
+        _lt_c = _lt_top
+        _lt_pipeline = None
+        _lt_capture_total = None
+        _lt_gc = None
         try:
             try:
                 mem_tracker.mark("view_start_{}".format(view_id))
             except Exception as e:
                 print("[Streaming] memory mark view_start failed: {}".format(e))
+            _lt_c = _lt.step("view_start_mark", _lt_c)
             # Process single view (cache miss)
             try:
                 results = process_document_views(
@@ -1050,9 +1066,13 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     root_cache=root_cache,
                     reset_family_caches=False,
                 )
+            _lt_c = _lt.step("process_document_views", _lt_c)
 
             if results and len(results) > 0:
                 view_result = results[0]
+                if isinstance(view_result, dict):
+                    _lt_pipeline = view_result.get("loop_timing_pipeline")
+                    _lt_capture_total = loop_timing.capture_total_ms(view_result)
 
                 # If pipeline returned a per-view failure stub, surface it directly.
                 if view_result.get("success") is False:
@@ -1095,6 +1115,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                             view_result["failure_reason"] = err or "pipeline_view_failure"
                         callback_entered = True
                         on_view_complete(view_result)
+                        _lt_c = _lt.step("on_view_complete", _lt_c)
                     summaries.append({
                         "view_id": view_id,
                         "view_name": view_result.get("view_name"),
@@ -1166,10 +1187,12 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     mem_tracker.mark("after_raster_{}".format(view_result.get("view_id")))
                 except Exception as e:
                     print("[Streaming] memory mark after_raster failed: {}".format(e))
+                _lt_c = _lt.step("after_raster_mark", _lt_c)
 
                 # Call user callback
                 callback_entered = True
                 on_view_complete(view_result)
+                _lt_c = _lt.step("on_view_complete", _lt_c)
 
                 # Retain only lightweight summary
                 summary = {
@@ -1190,8 +1213,11 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 # These accumulate on the .NET heap and are not freed by CPython refcounting alone.
                 try:
                     mem_tracker.mark_and_gc("after_clr_gc_{}".format(view_id))
+                    if mem_tracker.gc_events:
+                        _lt_gc = dict(mem_tracker.gc_events[-1])
                 except Exception as e:
                     print("[Streaming] CLR GC mark failed: {}".format(e))
+                _lt_c = _lt.step("gc_after_view", _lt_c)
 
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
@@ -1215,6 +1241,29 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 except Exception as cb_ex:
                     print("[Streaming] could not record the failure of view {0}: "
                           "{1}".format(view_id, cb_ex))
+        finally:
+            _lt_bottom = loop_timing.now()
+            if loop_timing_out is not None:
+                rec = _lt.record(loop_timing.ms_between(_lt_top, _lt_bottom))
+                rec.update({
+                    "schema": loop_timing.SCHEMA,
+                    "loop_top_s": round(_lt_top, 6),
+                    "loop_bottom_s": round(_lt_bottom, 6),
+                    "gap_from_previous_ms": (
+                        None if _lt_prev_bottom is None
+                        else loop_timing.ms_between(_lt_prev_bottom, _lt_top)),
+                    "pipeline": _lt_pipeline,
+                    "capture_total_ms": _lt_capture_total,
+                    "gc": {"after_view": _lt_gc},
+                })
+                if _lt_capture_total is not None and isinstance(_lt_pipeline, dict):
+                    _cap = (_lt_pipeline.get("steps_ms") or {}).get("capture")
+                    if _cap is not None:
+                        rec["capture_call_outside_total_ms"] = round(
+                            float(_cap) - _lt_capture_total, 3)
+                _vid = getattr(view_id, "IntegerValue", view_id)
+                loop_timing_out[str(_vid)] = rec
+            _lt_prev_bottom = _lt_bottom
     
     # Persist geometry cache to disk (only writes if new entries were added)
     try:
@@ -1436,15 +1485,22 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # Process with streaming callback
     t0 = time.perf_counter()
     
+    loop_timings = {}
     process_document_views_streaming(
         doc, 
         view_ids, 
         cfg,
         on_view_complete=exporter.on_view_complete,
-        root_cache=root_cache
+        root_cache=root_cache,
+        loop_timing_out=loop_timings,
     )
     
     t1 = time.perf_counter()
+    # C2: every view's loop has ended, so its record is final; onto the
+    # summaries BEFORE finalize writes run_meta (views[i].loop_timing).
+    if exporter.stage_a:
+        from vop_interwoven.loop_timing import attach_to_summaries
+        attach_to_summaries(exporter.view_summaries, loop_timings)
     
     # Finalize and get results
     result = exporter.finalize()

@@ -657,6 +657,21 @@ def process_document_views(
     #
     # NOTE: Streaming mode processes one view per invocation and intentionally
     # disables this per-call reset so caches can be reused across views.
+    # C2 (loop_timing.py): under Stage A, every step of this call is timed
+    # into one record, attached to each result as "loop_timing_pipeline".
+    # Telemetry only; _perf_now(), because this function's local `import
+    # time` below shadows the module name until it runs.
+    _lt_func_t0 = _perf_now()
+    _lt = None
+    if bool(getattr(cfg, "enable_color_id_buffer_stage_a", False)):
+        from .loop_timing import StepTimer, PIPELINE_STEPS
+        _lt = StepTimer(PIPELINE_STEPS)
+
+    def _lt_step(name, t0):
+        if _lt is None or t0 is None:
+            return _perf_now()
+        return _lt.step(name, t0)
+
     if reset_family_caches:
         try:
             reset_family_region_caches()
@@ -877,10 +892,12 @@ def process_document_views(
                 exc=e,
             )
 
+    _lt_step("preamble", _lt_func_t0)
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
         timings = {}
         t_view0 = _perf_now()
+        _lt_c = t_view0
 
         def _tmark(name, t0, t1):
             if getattr(cfg, "perf_collect_timings", True):
@@ -902,6 +919,7 @@ def process_document_views(
         if getattr(cfg, "enable_color_id_buffer_stage_a", False):
             from .memory_telemetry import process_memory_sample
             view_start_memory = process_memory_sample()
+        _lt_c = _lt_step("view_start_mark", _lt_c)
 
         try:
             # Convert int to ElementId if needed
@@ -952,6 +970,7 @@ def process_document_views(
                             exc=e,
                         )
                     # Never allow diagnostics logging to fail the pipeline
+            _lt_c = _lt_step("mode", _lt_c)
 
             if view_mode == VIEW_MODE_REJECTED:
                 
@@ -1017,9 +1036,11 @@ def process_document_views(
                 elem_cache=elem_cache,
                 track_elements=view_elements
             )
+            _lt_c = _lt_step("signature", _lt_c)
 
             # Compute identity fields once for CSV slicing and cache row_payload completeness
             ident = _extract_view_identity_for_csv(doc, view)
+            _lt_c = _lt_step("view_identity", _lt_c)
 
             # Check root cache first (metrics-only hit; valid in streaming too).
             # Stage A must always reach the color ID-buffer export branch so it
@@ -1105,6 +1126,7 @@ def process_document_views(
             raster = init_view_raster(doc, view, cfg, diag=diag)
             t1 = _perf_now()
             _tmark("raster_init_ms", t0, t1)
+            _lt_c = _lt_step("raster_init", _lt_c)
             
             # Persist view mode for downstream exports/diagnostics
             try:
@@ -1133,6 +1155,7 @@ def process_document_views(
                             exc=e,
                         )
                     # Graceful degradation: continue without diagnostics
+            _lt_c = _lt_step("strategy_diag", _lt_c)
 
             render_result = {}
 
@@ -1176,6 +1199,7 @@ def process_document_views(
                     elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
                     t1 = _perf_now()
                     _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
+                _lt_c = _lt_step("collect_elements", _lt_c)
 
                 # 3) MODEL PASS
                 if getattr(cfg, "enable_color_id_buffer_stage_a", False):
@@ -1313,11 +1337,13 @@ def process_document_views(
                     # C9: what views_core and views_diagnostics need from a
                     # Stage A view, set AFTER both passes so the elapsed time
                     # covers the annotation capture too.
+                    _lt_c = _lt_step("capture", _lt_c)
                     if isinstance(out, dict):
                         out["elapsed_sec"] = round(
                             _perf_ms(t_view0, _perf_now()) / 1000.0, 3)
                         out["diagnostics"] = _stage_a_view_diagnostics(
                             view_id_int, out, diag)
+                    _lt_c = _lt_step("diagnostics_entry", _lt_c)
                     continue
 
                 t0 = _perf_now()
@@ -1609,6 +1635,7 @@ def process_document_views(
             )
             continue
 
+    _lt_c = _perf_now()
     # Log element cache statistics
     if elem_cache is not None and diag is not None:
         try:
@@ -1632,6 +1659,7 @@ def process_document_views(
     # per view, so each call merges into the file -- but only a file stamped
     # with the same run id (StreamingExporter sets it); a prior run's map in
     # the same folder and date is replaced, never merged.
+    _lt_c = _lt_step("element_cache_stats", _lt_c)
     # Export view-element map JSON (view -> element ids)
     if (elem_cache is not None and getattr(cfg, "element_cache_export_csv", True)
             and output_dir is not None):
@@ -1659,6 +1687,7 @@ def process_document_views(
                     exc=e,
                 )
 
+    _lt_c = _lt_step("element_map_write", _lt_c)
     # Export per-view diagnostics JSON
     if getattr(cfg, "export_view_diagnostics", True):
         try:
@@ -1726,6 +1755,7 @@ def process_document_views(
                     exc=e,
                 )
 
+    _lt_c = _lt_step("views_diagnostics_write", _lt_c)
     try:
         mem_tracker.mark("run_end")
         mem_tracker.mark_and_gc("after_run_gc")
@@ -1736,6 +1766,7 @@ def process_document_views(
                 gc_freed_total_mb += float(_f)
     except Exception as e:
         print("[pipeline] final memory marks failed: {}".format(e))
+    _lt_c = _lt_step("gc_after_run", _lt_c)
 
     run_elapsed_s = float(_perf_now() - run_t0)
     try:
@@ -1780,6 +1811,20 @@ def process_document_views(
                 r["memory_tracker"] = marks
     except Exception as e:
         print("[pipeline] run summary failed: {}".format(e))
+    _lt_step("run_summary", _lt_c)
+
+    if _lt is not None:
+        # C2: attached LAST, after every step it times has run.
+        _lt_record = _lt.record(round(_perf_ms(_lt_func_t0, _perf_now()), 3))
+        _lt_record["views_in_call"] = len(results)
+        try:
+            _lt_record["gc_after_run"] = dict(mem_tracker.gc_events[-1]) \
+                if mem_tracker.gc_events else None
+        except Exception as e:  # noqa: BLE001 -- telemetry; the reason is the value
+            _lt_record["gc_after_run"] = {"error": "{0}: {1}".format(type(e).__name__, e)}
+        for r in results:
+            if isinstance(r, dict):
+                r["loop_timing_pipeline"] = _lt_record
 
     return results
 
