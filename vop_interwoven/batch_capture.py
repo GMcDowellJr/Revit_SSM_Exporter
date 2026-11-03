@@ -562,7 +562,8 @@ class DialogLog(object):
 
 def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
               now=None, write_log=True, clock=None, wall=None, memory_sample=None,
-              dialog_log=None, close_after_capture=False, session=None, fingerprint=None):
+              dialog_log=None, close_after_capture=False, session=None, fingerprint=None,
+              active_document=None):
     """Run the plan's pending jobs in order. Injected:
 
     * ``open_doc(job) -> (doc, how)``: opens the file; ``how`` is the
@@ -599,23 +600,44 @@ def run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pri
     before pressing the button (active_document_refusal). A close that still fails falls back to the old order: the
     document is tried again once the next one is open. ``session``: the
     caller's record of how the session was set up, stored as ``session``.
+
+    ``active_document() -> (title, path)``: the document Revit reports
+    active, ``(None, None)`` for none. When given, each job entry gains
+    ``active_document`` with ``after_open`` and ``after_capture``, each
+    ``{"title", "path", "is_job_document"}`` (the title compared with the
+    opened archive's) or ``{"error": ...}`` when the read raised. A read
+    failure is recorded and never fails the job. Batch 2026-10-29: the
+    archive was active by close time although blank_slate was active at
+    start, and nothing recorded when the switch happened.
     """
     with provenance_session("batch_capture", now=now) as pin:
         return _run_batch(plan, open_doc, close_doc, capture, recapture, limit=limit,
                           log=log, now=now, write_log=write_log, pin=pin, clock=clock,
                           wall=wall, memory_sample=memory_sample, dialog_log=dialog_log,
                           close_after_capture=close_after_capture, session=session,
-                          fingerprint=fingerprint)
+                          fingerprint=fingerprint, active_document=active_document)
 
 
 def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=print,
                now=None, write_log=True, pin=None, clock=None, wall=None,
                memory_sample=None, dialog_log=None, close_after_capture=False,
-               session=None, fingerprint=None):
+               session=None, fingerprint=None, active_document=None):
     clock = clock or _perf
     wall = wall or datetime.now
     if memory_sample is None:
         from .memory_telemetry import process_memory_sample as memory_sample
+
+    def _active(entry, at, doc):
+        if active_document is None:
+            return
+        try:
+            title, path = active_document()
+            read = {"title": title, "path": path,
+                    "is_job_document": (title is not None and doc is not None
+                                        and title == getattr(doc, "Title", None))}
+        except Exception as ex:  # noqa: BLE001 -- recorded; a diagnostic never fails the job
+            read = {"error": "{0}: {1}".format(type(ex).__name__, ex)}
+        entry.setdefault("active_document", {})[at] = read
 
     def _ms(since):
         return round((clock() - since) * 1000.0, 3)
@@ -671,6 +693,7 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
             finally:
                 entry["timings_ms"]["open_ms"] = _ms(t_step)
                 entry["memory"]["after_open"] = memory_sample()
+                _active(entry, "after_open", doc)
             if doc is None:
                 raise RuntimeError("open_doc returned no document for {0}".format(job["full_path"]))
             entry["opened"] = opened_record(job, how, getattr(doc, "Title", None),
@@ -697,6 +720,7 @@ def _run_batch(plan, open_doc, close_doc, capture, recapture, limit=None, log=pr
             finally:
                 entry["timings_ms"]["capture_ms"] = _ms(t_step)
                 entry["memory"]["after_capture"] = memory_sample()
+                _active(entry, "after_capture", doc)
             entry["result"] = dict((k, v) for k, v in (result or {}).items()
                                    if k not in ("view_summaries",))
             entry["run_dirs"] = list((result or {}).get("run_dirs") or [])

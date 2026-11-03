@@ -235,8 +235,35 @@ def open_doc(job):
     return doc, how
 
 
+_anchor = {"path": None}   # the session's active document at batch start (main)
+
+
 def close_doc(doc):
-    doc.Close(False)
+    """Close an archive. Revit refuses to close the ACTIVE document from the
+    API (batch 2026-10-29: the archive was active by close time although
+    blank_slate was active at start). So: record which document Revit reports
+    active at this moment; if it is the archive, re-activate the anchor
+    document first (re-opening it if it was closed), then close. A failed
+    re-activation is recorded and the close is still attempted, so its
+    refusal is recorded exactly as before."""
+    title = doc.Title
+    active_title, _ = _active_document()
+    _note("close: {0!r}; active={1!r}".format(title, active_title))
+    if active_title is not None and active_title == title and _anchor["path"]:
+        try:
+            ui_app.OpenAndActivateDocument(_anchor["path"])
+            _note("close: re-activated anchor {0!r}; active now={1!r}".format(
+                _anchor["path"], _active_document()[0]))
+        except Exception as ex:  # noqa: BLE001 -- recorded; the close is still attempted
+            _note("close: re-activating anchor {0!r} failed: {1}: {2}".format(
+                _anchor["path"], type(ex).__name__, ex))
+    try:
+        doc.Close(False)
+    except Exception as ex:  # noqa: BLE001 -- recorded here, re-raised to run_batch
+        _note("close: refused {0!r}: {1}: {2}".format(
+            title, type(ex).__name__, str(ex).splitlines()[0] if str(ex) else ""))
+        raise
+    _note("close: closed {0!r}".format(title))
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +445,7 @@ def main():
     ui_app.DialogBoxShowing += _on_dialog_showing
     try:
         session = {"active_document": active_title, "active_document_path": active_path}
+        _anchor["path"] = active_path
         import ctypes
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         try:
@@ -425,7 +453,7 @@ def main():
                                limit=_int_or_none(_settings.get("limit")), log=print,
                                dialog_log=_dialog_log[0],
                                close_after_capture=True, session=session,
-                               fingerprint=fingerprint)
+                               fingerprint=fingerprint, active_document=_active_document)
         finally:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     finally:
