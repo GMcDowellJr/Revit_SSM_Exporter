@@ -281,16 +281,28 @@ def _cfg_hash(cfg_obj, exclude_cache_wiring=False):
             d.pop("view_cache_enabled", None)
             d.pop("view_cache_dir", None)
             d.pop("view_cache_require_doc_unmodified", None)
+        from .config import CONFIG_HASH_EXEMPT_KEYS
+        for key in CONFIG_HASH_EXEMPT_KEYS:
+            d.pop(key, None)
 
         blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha1(blob).hexdigest()
     except Exception as e:
         return None
 
-def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None):
+def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None,
+                    compute_signature=True):
     """Enhanced signature with element fingerprints for position/size tracking.
 
     Must be module-level: imported by vop_interwoven.streaming.
+
+    ``compute_signature=False`` (Stage A without the legacy pre-pass, C3):
+    the membership ids are still tracked into ``track_elements`` -- they are
+    the run's vop_view_element_map -- and each element's fingerprint is still
+    created in ``elem_cache``, which the capture's model_expand reads; only
+    the signature string, its hash and the config hash it embeds are skipped,
+    and ``(None, None)`` is returned. Their one reader is the root cache,
+    which Stage A never consults.
 
     KNOWN GAP, DOCUMENTED NOT PATCHED: THE SIGNATURE DOES NOT COVER THE
     ANNOTATION FRAME.
@@ -374,12 +386,14 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
                         view=None,  # Use model bbox for cross-view reuse
                         extract_params=None,
                     )
-                    if fp is not None:
+                    if not compute_signature:
+                        pass  # the cache entry is the point; no signature string
+                    elif fp is not None:
                         precision = int(getattr(cfg_obj, "signature_bbox_precision", 2)) if cfg_obj is not None else 2
                         elem_fps.append(fp.to_signature_string(precision=precision))
                     else:
                         elem_fps.append(str(elem_id))
-                else:
+                elif compute_signature:
                     elem_fps.append(str(elem_id))
             except Exception as e:
                 continue
@@ -396,6 +410,8 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
         except Exception as e:
             # Exception in _view_signature - no diag in scope
             pass  # TODO: Add diagnostics when diag becomes available
+    if not compute_signature:
+        return None, None
     # Sort for deterministic signature
     elem_fps_str = "|".join(sorted(elem_fps))
 
@@ -718,6 +734,17 @@ def process_document_views(
     # Output directory (used for element cache persistence/export). Must be defined here.
     output_dir = getattr(cfg, "output_dir", None)
     stage_a_color_id_mode = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
+    # C3: under Stage A, the legacy steps whose output the capture never
+    # reads are skipped unless cfg.stage_a_legacy_prepass asks for them:
+    # the view signature's hash (root cache only, which Stage A bypasses),
+    # the CSV identity read (root cache and the geometry export only) and
+    # the strategy-diagnostics tracker (geometry model pass only). Every
+    # step whose output reaches the capture, views_core, the element map or
+    # views_diagnostics still runs. Outside Stage A all of them run.
+    legacy_prepass = (not stage_a_color_id_mode) or bool(
+        getattr(cfg, "stage_a_legacy_prepass", False))
+    gated_steps = [] if legacy_prepass else ["signature_hash", "view_identity",
+                                             "strategy_diag"]
 
     view_cache_enabled = bool(getattr(cfg, "view_cache_enabled", False))
     view_cache_dir = getattr(cfg, "view_cache_dir", None)
@@ -1034,12 +1061,13 @@ def process_document_views(
                 doc, view, view_mode,
                 cfg_obj=cfg,
                 elem_cache=elem_cache,
-                track_elements=view_elements
+                track_elements=view_elements,
+                compute_signature=legacy_prepass,
             )
             _lt_c = _lt_step("signature", _lt_c)
 
             # Compute identity fields once for CSV slicing and cache row_payload completeness
-            ident = _extract_view_identity_for_csv(doc, view)
+            ident = _extract_view_identity_for_csv(doc, view) if legacy_prepass else {}
             _lt_c = _lt_step("view_identity", _lt_c)
 
             # Check root cache first (metrics-only hit; valid in streaming too).
@@ -1142,7 +1170,7 @@ def process_document_views(
                     )
             # Create strategy diagnostics tracker if enabled (used by render and CSV export)
             strategy_diag = None
-            if getattr(cfg, "export_strategy_diagnostics", False):
+            if getattr(cfg, "export_strategy_diagnostics", False) and legacy_prepass:
                 try:
                     from .diagnostics import StrategyDiagnostics
                     strategy_diag = StrategyDiagnostics()
@@ -1817,6 +1845,7 @@ def process_document_views(
         # C2: attached LAST, after every step it times has run.
         _lt_record = _lt.record(round(_perf_ms(_lt_func_t0, _perf_now()), 3))
         _lt_record["views_in_call"] = len(results)
+        _lt_record["gated_steps"] = list(gated_steps)
         try:
             _lt_record["gc_after_run"] = dict(mem_tracker.gc_events[-1]) \
                 if mem_tracker.gc_events else None
