@@ -487,14 +487,18 @@ def capture_config(settings):
     (default False: the legacy steps Stage A does not use are skipped; true
     runs them, for the flag-on/off timing comparison). The flag is outside
     the config hash (config.CONFIG_HASH_EXEMPT_KEYS), so either value keeps
-    the series comparable; run_meta's config records which ran."""
-    from .config import Config
+    the series comparable; run_meta's config records which ran.
+    ``stage_a_gc_policy`` likewise (config.stage_a_gc_policy_from: blank is
+    "per_view_once", an unknown value raises), also hash-exempt."""
+    from .config import Config, stage_a_gc_policy_from
     cfg = Config()
     cfg.debug_json_detail = "summary"
     cfg.enable_color_id_buffer_stage_a = True
     cfg.color_id_buffer_registered_capture = True
     cfg.stage_a_legacy_prepass = setting_flag(
         (settings or {}).get("stage_a_legacy_prepass"), False)
+    cfg.stage_a_gc_policy = stage_a_gc_policy_from(
+        (settings or {}).get("stage_a_gc_policy"))
     return cfg
 
 

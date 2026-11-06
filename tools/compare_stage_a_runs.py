@@ -6,8 +6,9 @@ are compared field by field, after masking each run's own run id and run
 directory, and every differing field is reported as one of:
 
   * ALLOWED -- matches a rule in ALLOWED_JSON_RULES / ALLOWED_CSV_COLUMNS,
-    each named: timing fields, wall clocks, the flag being compared, the
-    loop-timing record's ``gated_steps``;
+    each named: timing fields, wall clocks, the flag being compared
+    (``stage_a_legacy_prepass`` or ``stage_a_gc_policy``), the loop-timing
+    record's ``gated_steps``, ``gc_policy`` and ``gc_after_run.skipped``;
   * UNEXPECTED -- anything else, including a file present in one run only.
 
 Two kinds of file are NOT capture output and are kept out of the verdict,
@@ -49,7 +50,10 @@ from vop_interwoven import output_layout  # noqa: E402
 
 # (rule name, regex over the generalised JSON path: list indices as "[]").
 ALLOWED_JSON_RULES = (
-    ("flag", r"^/config/stage_a_legacy_prepass$"),
+    ("flag", r"^/config/(stage_a_legacy_prepass|stage_a_gc_policy)$"),
+    # Which GC policy the pipeline ran (config.STAGE_A_GC_POLICIES); the
+    # skipped collection's record says why it did not run.
+    ("gc_policy", r"/loop_timing/pipeline/(gc_policy|gc_after_run/skipped)$"),
     ("gated_steps", r"/loop_timing/pipeline/gated_steps(\[\])?$"),
     ("timing", r"(^|/)(timings_ms|loop_timing|process_memory|steps_ms|substeps_ms"
                r"|phases_ms|memory_tracker|run_summary)(/|\[|$)"),

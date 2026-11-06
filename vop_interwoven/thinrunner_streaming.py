@@ -34,6 +34,14 @@ Usage:
             the strategy-diagnostics tracker); on runs them. The capture is
             the same either way (tests/test_stage_a_legacy_prepass.py), so
             the flag is outside the config hash. For timing comparisons.
+    IN[10] = Stage A GC policy (string, default "per_view_once"):
+            Config.stage_a_gc_policy. "per_view_once" forces one CLR
+            collection per view (the streaming loop's, after the view's
+            result is released); "per_view_twice" also runs the pipeline's
+            after_run_gc, as before 2026-11-06. Blank is the default; any
+            other value is refused. Same capture either way
+            (tests/test_stage_a_gc_policy.py), so outside the config hash.
+            For A/B timing and memory comparisons.
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -430,6 +438,8 @@ try:
     cfg.stage_a_legacy_prepass = (
         bool(IN[9]) if len(IN) > 9 and IN[9] is not None else False
     )
+    from vop_interwoven.config import stage_a_gc_policy_from
+    cfg.stage_a_gc_policy = stage_a_gc_policy_from(IN[10] if len(IN) > 10 else None)
 
     print("="*60)
     print("DEBUG: About to call streaming")
@@ -442,6 +452,7 @@ try:
         cfg.color_id_buffer_registered_capture
     ))
     print("  cfg.stage_a_legacy_prepass = {}".format(cfg.stage_a_legacy_prepass))
+    print("  cfg.stage_a_gc_policy = {}".format(cfg.stage_a_gc_policy))
     print("="*60)
 
     # Optional batch size override
