@@ -23,17 +23,23 @@ def _force_clr_gc():
     try:
         import System
         _ws0, priv0 = _get_memory_mb()
+        # C2 (loop_timing.py): the collection alone, apart from the two
+        # memory reads around it. Telemetry; additive key.
+        t0 = time.perf_counter()
         System.GC.Collect()
         System.GC.WaitForPendingFinalizers()
         System.GC.Collect()
+        gc_ms = round((time.perf_counter() - t0) * 1000.0, 3)
         _ws1, priv1 = _get_memory_mb()
         freed = None
         if priv0 is not None and priv1 is not None:
             freed = float(priv0) - float(priv1)
-        return {"pre_priv_mb": priv0, "post_priv_mb": priv1, "freed_mb": freed}
+        return {"pre_priv_mb": priv0, "post_priv_mb": priv1, "freed_mb": freed,
+                "gc_ms": gc_ms}
     except Exception as e:
         print("[memory_telemetry] _force_clr_gc failed: {}".format(e))
-        return {"pre_priv_mb": None, "post_priv_mb": None, "freed_mb": None}
+        return {"pre_priv_mb": None, "post_priv_mb": None, "freed_mb": None,
+                "gc_ms": None}
 
 
 class MemoryTracker(object):

@@ -314,6 +314,10 @@ def compute_config_hash(cfg):
         config_dict.pop("view_cache_enabled", None)
         config_dict.pop("view_cache_dir", None)
         config_dict.pop("view_cache_require_doc_unmodified", None)
+        # Keys proven not to change the capture (config.CONFIG_HASH_EXEMPT_KEYS).
+        from .config import CONFIG_HASH_EXEMPT_KEYS
+        for key in CONFIG_HASH_EXEMPT_KEYS:
+            config_dict.pop(key, None)
         
         payload = json.dumps(config_dict, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:8]

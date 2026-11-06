@@ -16,6 +16,13 @@ reports, per view:
     cumulative page faults and CLR collection counts; ``mem_read_ms`` is what
     the samples cost. Blank when the sidecar predates C2 or a value was
     unreadable (the JSON keeps the samples whole, ``errors`` included).
+  * ``loop_*`` / ``pipeline_*`` / ``gc_*`` -- loop timing (2026-11-02, from
+    ``run_meta.views[i].loop_timing``, vop_interwoven/loop_timing.py): the
+    run loop's own steps around the capture, each with its explicit
+    ``unaccounted_ms``; ``loop_gap_from_previous_ms`` is the time between
+    the previous view's loop bottom and this one's top. Taken from the run's
+    OWN run_meta, so it is reported for every view of the run whatever its
+    capture status. Blank for a run before loop timing.
 
 ONE RUN ONLY (Codex, PR #222). A sidecar carries no run id, so a join on
 ViewId alone would hand a historical views_core row -- or a view whose capture
@@ -64,6 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from vop_interwoven import output_layout  # noqa: E402
 from vop_interwoven.capture_passes import PASS_ANNOTATION, is_single_pass  # noqa: E402
 from vop_interwoven.change_skip import UNCHANGED  # noqa: E402
+from vop_interwoven.loop_timing import PIPELINE_STEPS, STREAMING_STEPS  # noqa: E402
 
 
 # The production MODEL sidecar's own name: "<view name>_<view id>.json".
@@ -128,6 +136,40 @@ MEMORY_COLUMNS = tuple(
     ["mem_{0}_{1}".format(p, f[0]) for p in MEMORY_POINTS for f in _MEMORY_FIELDS]
     + ["mem_{0}_gc{1}".format(p, g) for p in MEMORY_POINTS for g in (0, 1, 2)]
     + ["mem_read_ms"])
+
+
+# Loop timing columns, after the memory columns and before the phases.
+LOOP_COLUMNS = tuple(
+    ["loop_total_ms", "loop_gap_from_previous_ms", "loop_unaccounted_ms"]
+    + ["loop_{0}_ms".format(k) for k in STREAMING_STEPS]
+    + ["pipeline_total_ms", "pipeline_unaccounted_ms"]
+    + ["pipeline_{0}_ms".format(k) for k in PIPELINE_STEPS]
+    + ["capture_call_outside_total_ms", "gc_after_view_gc_ms", "gc_after_run_gc_ms"])
+
+
+def loop_cells(record):
+    """PURE. ``{column: value}`` for LOOP_COLUMNS from one view's
+    ``run_meta.views[i].loop_timing`` (None for anything absent)."""
+    cells = dict((c, None) for c in LOOP_COLUMNS)
+    if not isinstance(record, dict):
+        return cells
+    steps = record.get("steps_ms") or {}
+    cells["loop_total_ms"] = record.get("total_ms")
+    cells["loop_gap_from_previous_ms"] = record.get("gap_from_previous_ms")
+    cells["loop_unaccounted_ms"] = record.get("unaccounted_ms")
+    for k in STREAMING_STEPS:
+        cells["loop_{0}_ms".format(k)] = steps.get(k)
+    pipe = record.get("pipeline") if isinstance(record.get("pipeline"), dict) else {}
+    pipe_steps = pipe.get("steps_ms") or {}
+    cells["pipeline_total_ms"] = pipe.get("total_ms")
+    cells["pipeline_unaccounted_ms"] = pipe.get("unaccounted_ms")
+    for k in PIPELINE_STEPS:
+        cells["pipeline_{0}_ms".format(k)] = pipe_steps.get(k)
+    cells["capture_call_outside_total_ms"] = record.get("capture_call_outside_total_ms")
+    after_view = (record.get("gc") or {}).get("after_view") or {}
+    cells["gc_after_view_gc_ms"] = after_view.get("gc_ms")
+    cells["gc_after_run_gc_ms"] = (pipe.get("gc_after_run") or {}).get("gc_ms")
+    return cells
 
 
 def memory_cells(process_memory):
@@ -221,13 +263,15 @@ def write_report(run_dir, rows):
     phases = _phase_keys(rows)
     with open(csv_path, "w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(list(CSV_COLUMNS) + list(MEMORY_COLUMNS)
+        writer.writerow(list(CSV_COLUMNS) + list(MEMORY_COLUMNS) + list(LOOP_COLUMNS)
                         + ["phase_{0}_ms".format(k) for k in phases])
         for row in rows:
             timed = row.get("phases_ms") or {}
             memory = memory_cells(row.get("process_memory"))
+            loop = loop_cells(row.get("loop_timing"))
             writer.writerow([("" if row.get(c) is None else row.get(c)) for c in CSV_COLUMNS]
                             + [("" if memory[c] is None else memory[c]) for c in MEMORY_COLUMNS]
+                            + [("" if loop[c] is None else loop[c]) for c in LOOP_COLUMNS]
                             + [("" if timed.get(k) is None else timed.get(k)) for k in phases])
     with open(json_path, "w") as handle:
         json.dump({"run_id": _run_identity(run_dir)[0],
@@ -252,6 +296,9 @@ def _run_identity(run_dir):
 def timing_rows(run_dir):
     """PURE over the files: one row per views_core view OF THIS RUN."""
     run_id, capture_status = _run_identity(run_dir)
+    loop_timings = dict((str(v.get("view_id")), v.get("loop_timing"))
+                        for v in _run_meta(run_dir).get("views") or []
+                        if isinstance(v, dict) and v.get("loop_timing") is not None)
     cores = sorted(glob.glob(os.path.join(run_dir, "views_core*.csv")))
     if not cores:
         raise FileNotFoundError("no views_core*.csv under {0}".format(run_dir))
@@ -267,6 +314,8 @@ def timing_rows(run_dir):
                        "elapsed_ms": None, "capture_total_ms": None,
                        "outside_capture_ms": None, "unaccounted_ms": None,
                        "reason": None}
+                if view_id in loop_timings:
+                    row["loop_timing"] = loop_timings[view_id]
                 try:
                     row["elapsed_ms"] = round(float(rec.get("ElapsedSec")) * 1000.0, 3)
                 except (TypeError, ValueError):

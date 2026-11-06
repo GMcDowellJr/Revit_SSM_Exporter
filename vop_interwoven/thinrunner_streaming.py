@@ -28,6 +28,12 @@ Usage:
             legends). Needs IN[5] True. Only a document titled
             ``<model>_V<n>..._<YYYY-MM-DD>`` has a series, so an interactive
             capture of an ordinary model skips nothing (recorded).
+    IN[9] = Run the legacy pre-pass under Stage A (bool, default False):
+            Config.stage_a_legacy_prepass. Off skips the legacy steps Stage A
+            does not use (the view signature's hash, the CSV identity read,
+            the strategy-diagnostics tracker); on runs them. The capture is
+            the same either way (tests/test_stage_a_legacy_prepass.py), so
+            the flag is outside the config hash. For timing comparisons.
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -421,6 +427,9 @@ try:
     cfg.color_id_buffer_registered_capture = (
         bool(IN[6]) if len(IN) > 6 and IN[6] is not None else True
     )
+    cfg.stage_a_legacy_prepass = (
+        bool(IN[9]) if len(IN) > 9 and IN[9] is not None else False
+    )
 
     print("="*60)
     print("DEBUG: About to call streaming")
@@ -432,6 +441,7 @@ try:
     print("  cfg.color_id_buffer_registered_capture = {}".format(
         cfg.color_id_buffer_registered_capture
     ))
+    print("  cfg.stage_a_legacy_prepass = {}".format(cfg.stage_a_legacy_prepass))
     print("="*60)
 
     # Optional batch size override

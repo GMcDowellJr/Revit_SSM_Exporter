@@ -17,6 +17,19 @@ ANNO_CROP_MODES = ("frame_b", "untouched", "authored_else_crop_a")
 ANNO_MODEL_SUPPRESSION_MODES = ("hide_categories", "external")
 MODEL_FRAME_MODES = ("frame_b", "crop_a")
 
+# Config keys recorded in to_dict() (so run_meta.config states them) but left
+# OUT of every config hash: root_cache.compute_config_hash (views_core
+# ConfigHash, run_meta config_hash), view_fingerprint.portable_config_hash
+# (the hash-and-skip rule) and pipeline._cfg_hash (the legacy view
+# signature). A key belongs here ONLY when a test proves the captured output
+# is byte-identical with it on and off -- then two runs that differ only in
+# it are comparable, and hashing it would refuse every skip against the
+# series' earlier runs (one full refresh, as 2026-01-17's 589
+# config_hash_differs refusals were) for no change in what was captured.
+#   stage_a_legacy_prepass -- tests/test_stage_a_legacy_prepass.py,
+#   test_output_is_byte_identical_with_the_flag_on_and_off.
+CONFIG_HASH_EXEMPT_KEYS = ("stage_a_legacy_prepass",)
+
 
 class Config:
     """Configuration for VOP interwoven pipeline.
@@ -239,6 +252,14 @@ class Config:
         # collection (sidecar key "phase_swap_element_set_audit"). Costs one
         # extra collection per view when the swap is off, so default OFF.
         color_id_phase_swap_audit=False,
+        # Stage A (2026-11-02, C3): run the legacy pipeline steps whose output
+        # the Stage A capture does not use -- the view signature's hash, the
+        # CSV identity read, the strategy-diagnostics tracker. Default OFF:
+        # under Stage A they are skipped. Ignored outside Stage A, where those
+        # steps always run. Byte-identical output either way, so it is
+        # recorded in to_dict() but exempt from the config hash
+        # (CONFIG_HASH_EXEMPT_KEYS).
+        stage_a_legacy_prepass=False,
 
     ):
         """Initialize VOP configuration.
@@ -472,6 +493,7 @@ class Config:
             raise ValueError("color_id_buffer_cap_axis_px must be positive or None")
         self.color_id_neutral_phase_swap = bool(color_id_neutral_phase_swap)
         self.color_id_phase_swap_audit = bool(color_id_phase_swap_audit)
+        self.stage_a_legacy_prepass = bool(stage_a_legacy_prepass)
         self.color_id_buffer_fit_direction = str(color_id_buffer_fit_direction).strip().lower()
         if self.color_id_buffer_fit_direction not in ("horizontal", "vertical"):
             raise ValueError(
@@ -719,6 +741,7 @@ class Config:
             ),
             "color_id_neutral_phase_swap": self.color_id_neutral_phase_swap,
             "color_id_phase_swap_audit": self.color_id_phase_swap_audit,
+            "stage_a_legacy_prepass": self.stage_a_legacy_prepass,
         }
 
     @classmethod
@@ -807,6 +830,7 @@ class Config:
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),
             color_id_phase_swap_audit=d.get("color_id_phase_swap_audit", False),
+            stage_a_legacy_prepass=d.get("stage_a_legacy_prepass", False),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767
             ),

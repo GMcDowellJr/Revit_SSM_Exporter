@@ -161,6 +161,11 @@ def portable_config_hash(config):
     plain = json.loads(json.dumps(config, sort_keys=True, default=str))
     for key in CONFIG_LOCATION_KEYS:
         plain.pop(key, None)
+    # Keys proven not to change the capture (config.CONFIG_HASH_EXEMPT_KEYS):
+    # a run that records one is comparable with a run before it existed.
+    from .config import CONFIG_HASH_EXEMPT_KEYS
+    for key in CONFIG_HASH_EXEMPT_KEYS:
+        plain.pop(key, None)
     return hashlib.sha256(json.dumps(plain, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 

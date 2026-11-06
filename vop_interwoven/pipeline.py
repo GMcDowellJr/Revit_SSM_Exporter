@@ -281,16 +281,28 @@ def _cfg_hash(cfg_obj, exclude_cache_wiring=False):
             d.pop("view_cache_enabled", None)
             d.pop("view_cache_dir", None)
             d.pop("view_cache_require_doc_unmodified", None)
+        from .config import CONFIG_HASH_EXEMPT_KEYS
+        for key in CONFIG_HASH_EXEMPT_KEYS:
+            d.pop(key, None)
 
         blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha1(blob).hexdigest()
     except Exception as e:
         return None
 
-def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None):
+def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None,
+                    compute_signature=True):
     """Enhanced signature with element fingerprints for position/size tracking.
 
     Must be module-level: imported by vop_interwoven.streaming.
+
+    ``compute_signature=False`` (Stage A without the legacy pre-pass, C3):
+    the membership ids are still tracked into ``track_elements`` -- they are
+    the run's vop_view_element_map -- and each element's fingerprint is still
+    created in ``elem_cache``, which the capture's model_expand reads; only
+    the signature string, its hash and the config hash it embeds are skipped,
+    and ``(None, None)`` is returned. Their one reader is the root cache,
+    which Stage A never consults.
 
     KNOWN GAP, DOCUMENTED NOT PATCHED: THE SIGNATURE DOES NOT COVER THE
     ANNOTATION FRAME.
@@ -374,12 +386,14 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
                         view=None,  # Use model bbox for cross-view reuse
                         extract_params=None,
                     )
-                    if fp is not None:
+                    if not compute_signature:
+                        pass  # the cache entry is the point; no signature string
+                    elif fp is not None:
                         precision = int(getattr(cfg_obj, "signature_bbox_precision", 2)) if cfg_obj is not None else 2
                         elem_fps.append(fp.to_signature_string(precision=precision))
                     else:
                         elem_fps.append(str(elem_id))
-                else:
+                elif compute_signature:
                     elem_fps.append(str(elem_id))
             except Exception as e:
                 continue
@@ -396,6 +410,8 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
         except Exception as e:
             # Exception in _view_signature - no diag in scope
             pass  # TODO: Add diagnostics when diag becomes available
+    if not compute_signature:
+        return None, None
     # Sort for deterministic signature
     elem_fps_str = "|".join(sorted(elem_fps))
 
@@ -657,6 +673,21 @@ def process_document_views(
     #
     # NOTE: Streaming mode processes one view per invocation and intentionally
     # disables this per-call reset so caches can be reused across views.
+    # C2 (loop_timing.py): under Stage A, every step of this call is timed
+    # into one record, attached to each result as "loop_timing_pipeline".
+    # Telemetry only; _perf_now(), because this function's local `import
+    # time` below shadows the module name until it runs.
+    _lt_func_t0 = _perf_now()
+    _lt = None
+    if bool(getattr(cfg, "enable_color_id_buffer_stage_a", False)):
+        from .loop_timing import StepTimer, PIPELINE_STEPS
+        _lt = StepTimer(PIPELINE_STEPS)
+
+    def _lt_step(name, t0):
+        if _lt is None or t0 is None:
+            return _perf_now()
+        return _lt.step(name, t0)
+
     if reset_family_caches:
         try:
             reset_family_region_caches()
@@ -703,6 +734,17 @@ def process_document_views(
     # Output directory (used for element cache persistence/export). Must be defined here.
     output_dir = getattr(cfg, "output_dir", None)
     stage_a_color_id_mode = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
+    # C3: under Stage A, the legacy steps whose output the capture never
+    # reads are skipped unless cfg.stage_a_legacy_prepass asks for them:
+    # the view signature's hash (root cache only, which Stage A bypasses),
+    # the CSV identity read (root cache and the geometry export only) and
+    # the strategy-diagnostics tracker (geometry model pass only). Every
+    # step whose output reaches the capture, views_core, the element map or
+    # views_diagnostics still runs. Outside Stage A all of them run.
+    legacy_prepass = (not stage_a_color_id_mode) or bool(
+        getattr(cfg, "stage_a_legacy_prepass", False))
+    gated_steps = [] if legacy_prepass else ["signature_hash", "view_identity",
+                                             "strategy_diag"]
 
     view_cache_enabled = bool(getattr(cfg, "view_cache_enabled", False))
     view_cache_dir = getattr(cfg, "view_cache_dir", None)
@@ -877,10 +919,12 @@ def process_document_views(
                 exc=e,
             )
 
+    _lt_step("preamble", _lt_func_t0)
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
         timings = {}
         t_view0 = _perf_now()
+        _lt_c = t_view0
 
         def _tmark(name, t0, t1):
             if getattr(cfg, "perf_collect_timings", True):
@@ -902,6 +946,7 @@ def process_document_views(
         if getattr(cfg, "enable_color_id_buffer_stage_a", False):
             from .memory_telemetry import process_memory_sample
             view_start_memory = process_memory_sample()
+        _lt_c = _lt_step("view_start_mark", _lt_c)
 
         try:
             # Convert int to ElementId if needed
@@ -952,6 +997,7 @@ def process_document_views(
                             exc=e,
                         )
                     # Never allow diagnostics logging to fail the pipeline
+            _lt_c = _lt_step("mode", _lt_c)
 
             if view_mode == VIEW_MODE_REJECTED:
                 
@@ -1015,11 +1061,14 @@ def process_document_views(
                 doc, view, view_mode,
                 cfg_obj=cfg,
                 elem_cache=elem_cache,
-                track_elements=view_elements
+                track_elements=view_elements,
+                compute_signature=legacy_prepass,
             )
+            _lt_c = _lt_step("signature", _lt_c)
 
             # Compute identity fields once for CSV slicing and cache row_payload completeness
-            ident = _extract_view_identity_for_csv(doc, view)
+            ident = _extract_view_identity_for_csv(doc, view) if legacy_prepass else {}
+            _lt_c = _lt_step("view_identity", _lt_c)
 
             # Check root cache first (metrics-only hit; valid in streaming too).
             # Stage A must always reach the color ID-buffer export branch so it
@@ -1105,6 +1154,7 @@ def process_document_views(
             raster = init_view_raster(doc, view, cfg, diag=diag)
             t1 = _perf_now()
             _tmark("raster_init_ms", t0, t1)
+            _lt_c = _lt_step("raster_init", _lt_c)
             
             # Persist view mode for downstream exports/diagnostics
             try:
@@ -1120,7 +1170,7 @@ def process_document_views(
                     )
             # Create strategy diagnostics tracker if enabled (used by render and CSV export)
             strategy_diag = None
-            if getattr(cfg, "export_strategy_diagnostics", False):
+            if getattr(cfg, "export_strategy_diagnostics", False) and legacy_prepass:
                 try:
                     from .diagnostics import StrategyDiagnostics
                     strategy_diag = StrategyDiagnostics()
@@ -1133,6 +1183,7 @@ def process_document_views(
                             exc=e,
                         )
                     # Graceful degradation: continue without diagnostics
+            _lt_c = _lt_step("strategy_diag", _lt_c)
 
             render_result = {}
 
@@ -1176,6 +1227,7 @@ def process_document_views(
                     elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
                     t1 = _perf_now()
                     _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
+                _lt_c = _lt_step("collect_elements", _lt_c)
 
                 # 3) MODEL PASS
                 if getattr(cfg, "enable_color_id_buffer_stage_a", False):
@@ -1313,11 +1365,13 @@ def process_document_views(
                     # C9: what views_core and views_diagnostics need from a
                     # Stage A view, set AFTER both passes so the elapsed time
                     # covers the annotation capture too.
+                    _lt_c = _lt_step("capture", _lt_c)
                     if isinstance(out, dict):
                         out["elapsed_sec"] = round(
                             _perf_ms(t_view0, _perf_now()) / 1000.0, 3)
                         out["diagnostics"] = _stage_a_view_diagnostics(
                             view_id_int, out, diag)
+                    _lt_c = _lt_step("diagnostics_entry", _lt_c)
                     continue
 
                 t0 = _perf_now()
@@ -1609,6 +1663,7 @@ def process_document_views(
             )
             continue
 
+    _lt_c = _perf_now()
     # Log element cache statistics
     if elem_cache is not None and diag is not None:
         try:
@@ -1632,6 +1687,7 @@ def process_document_views(
     # per view, so each call merges into the file -- but only a file stamped
     # with the same run id (StreamingExporter sets it); a prior run's map in
     # the same folder and date is replaced, never merged.
+    _lt_c = _lt_step("element_cache_stats", _lt_c)
     # Export view-element map JSON (view -> element ids)
     if (elem_cache is not None and getattr(cfg, "element_cache_export_csv", True)
             and output_dir is not None):
@@ -1659,6 +1715,7 @@ def process_document_views(
                     exc=e,
                 )
 
+    _lt_c = _lt_step("element_map_write", _lt_c)
     # Export per-view diagnostics JSON
     if getattr(cfg, "export_view_diagnostics", True):
         try:
@@ -1726,6 +1783,7 @@ def process_document_views(
                     exc=e,
                 )
 
+    _lt_c = _lt_step("views_diagnostics_write", _lt_c)
     try:
         mem_tracker.mark("run_end")
         mem_tracker.mark_and_gc("after_run_gc")
@@ -1736,6 +1794,7 @@ def process_document_views(
                 gc_freed_total_mb += float(_f)
     except Exception as e:
         print("[pipeline] final memory marks failed: {}".format(e))
+    _lt_c = _lt_step("gc_after_run", _lt_c)
 
     run_elapsed_s = float(_perf_now() - run_t0)
     try:
@@ -1780,6 +1839,21 @@ def process_document_views(
                 r["memory_tracker"] = marks
     except Exception as e:
         print("[pipeline] run summary failed: {}".format(e))
+    _lt_step("run_summary", _lt_c)
+
+    if _lt is not None:
+        # C2: attached LAST, after every step it times has run.
+        _lt_record = _lt.record(round(_perf_ms(_lt_func_t0, _perf_now()), 3))
+        _lt_record["views_in_call"] = len(results)
+        _lt_record["gated_steps"] = list(gated_steps)
+        try:
+            _lt_record["gc_after_run"] = dict(mem_tracker.gc_events[-1]) \
+                if mem_tracker.gc_events else None
+        except Exception as e:  # noqa: BLE001 -- telemetry; the reason is the value
+            _lt_record["gc_after_run"] = {"error": "{0}: {1}".format(type(e).__name__, e)}
+        for r in results:
+            if isinstance(r, dict):
+                r["loop_timing_pipeline"] = _lt_record
 
     return results
 

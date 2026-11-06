@@ -184,7 +184,10 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
     # Expansion cap should be PRINTED INCHES, not cells.
     # Prefer cfg.anno_expand_cap_in if present.
     cap_in_printed = None
-    if cfg and hasattr(cfg, 'anno_expand_cap_in'):
+    # None is the default ("not set"): it falls through to the back-compat
+    # cells value below, as it always did -- but without the float(None)
+    # TypeError that used to be raised, and diag.error'd, on every view.
+    if cfg and getattr(cfg, 'anno_expand_cap_in', None) is not None:
         try:
             cap_in_printed = float(cfg.anno_expand_cap_in)
         except Exception as e:
@@ -262,6 +265,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
 
     sample_limit = 5
     sample_count = 0
+    # Dimension.Curve, summarised once per view instead of one line (with
+    # the .NET stack trace pythonnet folds into str(e)) per dimension.
+    # Unbound curves are skipped by IsBound: GetEndPoint raises on them, so
+    # they never contributed a point either way.
+    dim_curve_unbound = 0
+    dim_curve_failed = 0
+    dim_curve_first_id = None
+    dim_curve_first_error = None
 
     for elem, anno_type in driver_annotations:
         # Optional sample log (pre-bbox) for first few drivers
@@ -314,11 +325,21 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
             if isinstance(elem, Dimension):
                 try:
                     curve = elem.Curve
-                    if curve is not None:
+                    if curve is not None and not bool(getattr(curve, "IsBound", True)):
+                        dim_curve_unbound += 1
+                        if dim_curve_first_id is None:
+                            dim_curve_first_id = getattr(getattr(elem, "Id", None),
+                                                         "IntegerValue", None)
+                    elif curve is not None:
                         pts_to_check.append(curve.GetEndPoint(0))
                         pts_to_check.append(curve.GetEndPoint(1))
                 except Exception as e:
-                    print(f"[WARN] revit.annotation:Dimension.Curve read failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
+                    dim_curve_failed += 1
+                    if dim_curve_first_error is None:
+                        dim_curve_first_id = dim_curve_first_id or getattr(
+                            getattr(elem, "Id", None), "IntegerValue", None)
+                        dim_curve_first_error = "{0}: {1}".format(
+                            type(e).__name__, str(e).splitlines()[0] if str(e) else "")
 
                 try:
                     text_pos = elem.TextPosition
@@ -430,6 +451,13 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                         )
             continue
 
+    if dim_curve_unbound or dim_curve_failed:
+        print("[WARN] revit.annotation:Dimension.Curve view={0}: {1} unbound (skipped), "
+              "{2} read failed; first elem_id={3}{4}".format(
+                  getattr(getattr(view, "Id", None), "IntegerValue", None),
+                  dim_curve_unbound, dim_curve_failed, dim_curve_first_id,
+                  "" if dim_curve_first_error is None
+                  else " (first failure {0})".format(dim_curve_first_error)))
 
     if anno_min_x is None:
         # No valid annotation extents found
