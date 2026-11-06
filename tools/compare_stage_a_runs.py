@@ -10,7 +10,19 @@ directory, and every differing field is reported as one of:
     loop-timing record's ``gated_steps``;
   * UNEXPECTED -- anything else, including a file present in one run only.
 
-Nothing is dropped silently: ``--verbose`` prints the allowed fields too.
+Two kinds of file are NOT capture output and are kept out of the verdict,
+each listed in its own section, never dropped silently:
+
+  * SKIPPED (DERIVED_FILES) -- written by the analysis tools AFTER the run
+    (views_timing_<d>.*, the registration, grid, roll-up and kinds outputs),
+    so whether they exist depends on what was run since, not on the capture;
+  * DOCUMENT OPEN (view_fingerprints_<d>.json) -- read from the document
+    BEFORE any view is captured. Two opens of one detached archive re-mint
+    about 0.4 % of elements' VersionGuid (CLAUDE.md), so fingerprints may
+    differ between runs that captured identically. Reported field by field;
+    the exit code does not count them.
+
+``--verbose`` prints the allowed fields too.
 
     python tools/compare_stage_a_runs.py <run_dir_a> <run_dir_b> [--verbose] [--json]
 
@@ -40,14 +52,31 @@ ALLOWED_JSON_RULES = (
     ("flag", r"^/config/stage_a_legacy_prepass$"),
     ("gated_steps", r"/loop_timing/pipeline/gated_steps(\[\])?$"),
     ("timing", r"(^|/)(timings_ms|loop_timing|process_memory|steps_ms|substeps_ms"
-               r"|memory_tracker|run_summary)(/|\[|$)"),
+               r"|phases_ms|memory_tracker|run_summary)(/|\[|$)"),
+    # The N slowest elements of tick placement (stage_a_registered_capture,
+    # AVOID_SLOWEST_N): ranked BY TIME, so which ids are listed is timing too.
+    ("timing", r"/mark_avoidance/slowest(\[\]|/|$)"),
     ("timing", r"(^|/)[A-Za-z0-9_]*(_ms|_sec|_s)$"),
+    ("timing", r"(^|/)ms$"),
     ("timing", r"(^|/)(elapsed_sec|elapsed_ms|ElapsedSec)$"),
     ("clock", r"(^|/)(generated_utc|captured_at|pinned_at|read_at_write|started_at"
               r"|finished_at|written_at|wall_time|saved_utc)$"),
     ("run_location", r"^/run_dir$"),
 )
 ALLOWED_CSV_COLUMNS = (("timing", "ElapsedSec"),)
+
+# Files the analysis tools write into a run AFTER it (not capture output):
+# skipped, and listed as skipped. (rule name, regex over the relative path.)
+DERIVED_FILES = (
+    ("timing_report", r"^views_timing_[^/]*\.(csv|json)$"),
+    ("registration", r"^(color_id|color_id_buffer)/[^/]*_anno\.(reg|registered)\.[^/]*$"),
+    ("grid", r"^(grid|analysis_grid)/"),
+    ("rollup", r"^grid_rollup[^/]*$"),
+    ("kinds", r"^kinds_inventory[^/]*$"),
+    ("decoded", r"\.decoded\.json$"),
+)
+# Read from the document before any capture: compared, reported apart.
+DOCUMENT_OPEN_FILES = r"^view_fingerprints[^/]*\.json$"
 
 
 def _flat(obj, path=""):
@@ -143,12 +172,43 @@ def _csv_fields(a, b):
     return allowed, unexpected
 
 
+def derived_rule(path):
+    """The DERIVED_FILES rule ``path`` matches, or None."""
+    for name, rx in DERIVED_FILES:
+        if re.search(rx, path):
+            return name
+    return None
+
+
 def compare(run_a, run_b):
     """PURE over the files. ``{"identical": [...], "allowed": {path: {rule:
-    [fields]}}, "unexpected": {path: [fields or reason]}}``."""
+    [fields]}}, "unexpected": {path: [fields or reason]}, "skipped": {path:
+    rule}, "document_open": {path: [fields]}}``. Only ``unexpected`` is a
+    difference in what was captured."""
     sa, sb = snapshot(run_a), snapshot(run_b)
-    report = {"identical": [], "allowed": {}, "unexpected": {}}
+    report = {"identical": [], "allowed": {}, "unexpected": {}, "skipped": {},
+              "document_open": {}}
     for path in sorted(set(sa) | set(sb)):
+        rule = derived_rule(path)
+        if rule is not None:
+            report["skipped"][path] = rule
+            continue
+        if re.search(DOCUMENT_OPEN_FILES, path):
+            if path not in sa or path not in sb:
+                report["document_open"][path] = ["present in run {0} only".format(
+                    "A" if path in sa else "B")]
+            elif sa[path] != sb[path]:
+                try:
+                    allowed, fields = _json_fields(sa[path], sb[path])
+                except ValueError as ex:
+                    allowed, fields = {}, ["unparseable JSON: {0}".format(ex)]
+                if fields:
+                    report["document_open"][path] = fields
+                if allowed:
+                    report["allowed"][path] = allowed
+            else:
+                report["identical"].append(path)
+            continue
         if path not in sa or path not in sb:
             report["unexpected"][path] = ["present in run {0} only".format(
                 "A" if path in sa else "B")]
@@ -197,6 +257,22 @@ def main(argv=None):
             for rule, fields in sorted(by_rule.items()):
                 for field in fields:
                     print("      [{0}] {1}".format(rule, field))
+    print("derived files skipped (written after the run, not capture output): {0}".format(
+        len(report["skipped"])))
+    for path, rule in sorted(report["skipped"].items()):
+        print("  SKIPPED  {0} ({1})".format(path, rule))
+    for path, fields in sorted(report["document_open"].items()):
+        views = sorted(set(f.split("/")[2] for f in fields
+                           if f.startswith("/views/") and f.endswith("/fingerprint")))
+        print("  DOCUMENT OPEN  {0}: {1} field(s) differ; fingerprint changed for {2} "
+              "view(s) -- not capture output (detached opens re-mint VersionGuids)".format(
+                  path, len(fields),
+                  sum(1 for f in fields if f.endswith("/fingerprint"))))
+        if args.verbose:
+            for field in fields:
+                print("      {0}".format(field))
+        elif views:
+            print("      views: {0}".format(", ".join(views)))
     print("files with UNEXPECTED differences: {0}".format(len(report["unexpected"])))
     for path, fields in sorted(report["unexpected"].items()):
         print("  UNEXPECTED  {0}".format(path))
