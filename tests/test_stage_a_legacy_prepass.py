@@ -212,3 +212,67 @@ def test_the_comparison_tool_exits_1_on_an_unexpected_difference(monkeypatch, tm
     with open(os.path.join(runs[True][0], "color_id", tiff), "ab") as handle:
         handle.write(b"\x00")
     assert compare_stage_a_runs.main([runs[False][0], runs[True][0]]) == 1
+
+
+# ---- the comparison's rules against the shapes a real pair showed (2026-11-06) ---
+
+def _write_json(path, payload):
+    with open(path, "w") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+def _real_shapes(run_dir, which):
+    """What two real runs of one archive differed in, flag on vs off
+    (compare_on_vs_off.txt, 2026-11-06): the tick-placement slowest list,
+    view_fingerprints.ms in run_meta, the timing report written into the run
+    folder, and the document-open fingerprints."""
+    k = 1 if which == "on" else 2
+    cap = os.path.join(run_dir, "color_id")
+    sidecar = os.path.join(cap, sorted(n for n in os.listdir(cap) if n.endswith(".json"))[0])
+    with open(sidecar) as handle:
+        data = json.load(handle)
+    data["registration_marks"]["mark_avoidance"] = {"slowest": [
+        {"id": 100 + k, "category_id": -2000000 - k, "ms": 3.0 * k}]}
+    _write_json(sidecar, data)
+    (name,) = [n for n in os.listdir(run_dir) if n.startswith("run_meta_")]
+    with open(os.path.join(run_dir, name)) as handle:
+        meta = json.load(handle)
+    meta["view_fingerprints"] = {"ms": 1000.0 * k, "views": 3}
+    _write_json(os.path.join(run_dir, name), meta)
+    with open(os.path.join(run_dir, "views_timing_2026-11-02.csv"), "w") as handle:
+        handle.write("view_id,elapsed_ms,mem_view_start_gc2\n1,{0},{0}\n".format(k))
+    _write_json(os.path.join(run_dir, "views_timing_2026-11-02.json"),
+                {"views": [{"phases_ms": {"total": k}}]})
+    _write_json(os.path.join(run_dir, "view_fingerprints_2026-11-02.json"),
+                {"computed_at": "t{0}".format(k), "ms": k,
+                 "views": {"13521188": {"fingerprint": "f{0}".format(k), "ms": k,
+                                        "components": {"members": "m{0}".format(k)}},
+                           "13521190": {"fingerprint": "same", "ms": k}}})
+
+
+def test_the_shapes_of_a_real_pair_are_not_unexpected(monkeypatch, tmp_path):
+    runs = _run_pair(monkeypatch, tmp_path)
+    _real_shapes(runs[False][0], "off")
+    _real_shapes(runs[True][0], "on")
+    report = compare_stage_a_runs.compare(runs[False][0], runs[True][0])
+    assert report["unexpected"] == {}, report["unexpected"]
+    assert sorted(report["skipped"]) == ["views_timing_2026-11-02.csv",
+                                         "views_timing_2026-11-02.json"]
+    (fp,) = report["document_open"]
+    assert fp == "view_fingerprints_2026-11-02.json"
+    assert "/views/13521188/fingerprint" in report["document_open"][fp]
+    assert "/views/13521190/fingerprint" not in report["document_open"][fp]
+    assert compare_stage_a_runs.main([runs[False][0], runs[True][0]]) == 0
+
+
+def test_control_a_non_timing_sidecar_field_is_still_unexpected(monkeypatch, tmp_path):
+    runs = _run_pair(monkeypatch, tmp_path)
+    for flag, value in ((False, 1), (True, 2)):
+        cap = os.path.join(runs[flag][0], "color_id")
+        sidecar = os.path.join(cap, sorted(n for n in os.listdir(cap) if n.endswith(".json"))[0])
+        with open(sidecar) as handle:
+            data = json.load(handle)
+        data["registration_marks"]["mark_avoidance"] = {"placed": value}
+        _write_json(sidecar, data)
+    report = compare_stage_a_runs.compare(runs[False][0], runs[True][0])
+    assert any("/mark_avoidance/placed" in f for fs in report["unexpected"].values() for f in fs)
