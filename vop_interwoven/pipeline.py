@@ -1693,12 +1693,21 @@ def process_document_views(
             and output_dir is not None):
         try:
             analysis_path = os.path.join(output_dir, f"vop_view_element_map_{file_date_str}.json")
-            exported = elem_cache.export_view_element_map_json(
-                analysis_path,
-                view_elements=view_elements,
-                merge_existing=True,
-                run_id=getattr(cfg, "_view_element_map_run_id", None),
-            )
+            # E2: a run owned by a StreamingExporter appends this call's
+            # views to the run's journal (constant cost) and the exporter
+            # writes the map once at finalize. Only the journal of THIS run
+            # id: anything else takes the per-call merge, unchanged.
+            journal = getattr(cfg, "_view_element_map_journal", None)
+            if journal is not None and journal.run_id == getattr(
+                    cfg, "_view_element_map_run_id", None):
+                exported = journal.append(analysis_path, view_elements)
+            else:
+                exported = elem_cache.export_view_element_map_json(
+                    analysis_path,
+                    view_elements=view_elements,
+                    merge_existing=True,
+                    run_id=getattr(cfg, "_view_element_map_run_id", None),
+                )
             if exported and diag is not None:
                 diag.info(
                     phase="pipeline",

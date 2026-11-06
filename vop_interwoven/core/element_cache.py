@@ -578,8 +578,12 @@ class ElementCache:
                 "views": views,
             }
 
-            with open(file_path, "w") as f:
+            # Written beside and moved over (E2, 2026-11-03): a crash in the
+            # dump leaves the previous file whole, never a half-written one.
+            tmp_path = file_path + ".tmp"
+            with open(tmp_path, "w") as f:
                 json.dump(payload, f, indent=2)
+            os.replace(tmp_path, file_path)
 
             return True
         except Exception as e:
@@ -674,3 +678,139 @@ class ElementCache:
                 "total_current": 0,
                 "total_previous": 0,
             }
+
+
+# ---- E2 (2026-11-03): the run's view-element map, written ONCE -------------------
+#
+# The pipeline runs once per view under streaming, and used to call
+# export_view_element_map_json(merge_existing=True) on every one: a full read,
+# rebuild and indent=2 rewrite of the whole file, so view k cost O(k) and the
+# run O(n^2) (run 2026-03-30: 1,760 views, a 14.6 MB map). The run's owner (the
+# StreamingExporter) now hands the pipeline a journal instead:
+#
+# * per view, ONE JSON line per view is APPENDED to <map>.journal.jsonl --
+#   constant cost, whatever was written before;
+# * at finalisation the journal is compacted into the map by
+#   export_view_element_map_json ITSELF, called once with every view (so the
+#   merge, the run_id rule, dedupe, sort, schema and indent=2 are that one
+#   function's, not a second copy), written atomically, then the journal is
+#   removed.
+#
+# Merging all views in one call gives the same map as merging them one call at
+# a time: each call unions a view's ids into what is there, and union does not
+# depend on grouping (tests/test_view_element_map_journal.py composes both).
+#
+# A crash before finalisation leaves the journal: every view whose append
+# returned is in it; a torn LAST line (the view being appended) is dropped;
+# compact_view_element_map() turns it into the map.
+
+JOURNAL_SUFFIX = ".journal.jsonl"
+JOURNAL_SCHEMA = "vop.view_element_map_journal.v1"
+
+
+def journal_path(map_path):
+    """The journal beside ``map_path``: ``vop_view_element_map_<d>.journal.jsonl``.
+    Not ``*.json``, so tools/stage_a_runs_index.py never takes it for the map."""
+    base = map_path[:-len(".json")] if map_path.endswith(".json") else map_path
+    return base + JOURNAL_SUFFIX
+
+
+def read_journal(path, run_id):
+    """``(view_elements, report)`` from one journal: ``{view_id: [(elem_id,
+    "HOST"), ...]}`` in append order, ids extended per view (a view appended
+    twice unions, as two calls did). Lines of another run id are skipped and
+    counted. An unparseable LAST line is a torn append and is dropped, and
+    counted; an unparseable line before it raises ValueError (never guessed
+    past)."""
+    import json
+    with open(path, "r") as handle:
+        lines = handle.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    view_elements, report = OrderedDict(), {"lines": len(lines), "torn_tail": 0,
+                                            "other_run": 0}
+    for index, line in enumerate(lines):
+        try:
+            rec = json.loads(line)
+            vid = int(rec["view_id"])
+            ids = [int(e) for e in rec["element_ids"]]
+        except (ValueError, KeyError, TypeError) as ex:
+            if index == len(lines) - 1:
+                report["torn_tail"] += 1
+                continue
+            raise ValueError("{0} line {1} is unreadable ({2}); not compacted".format(
+                path, index + 1, ex))
+        if rec.get("run_id") != run_id:
+            report["other_run"] += 1
+            continue
+        view_elements.setdefault(vid, []).extend((e, "HOST") for e in ids)
+    return view_elements, report
+
+
+def compact_view_element_map(map_path, run_id, elem_cache=None):
+    """Compact ``map_path``'s journal into the map; remove the journal only
+    once the map is written. ``(ok, report)``; ``ok`` None when there is no
+    journal. Usable on a crashed run's directory too."""
+    import os
+    jpath = journal_path(map_path)
+    if not os.path.exists(jpath):
+        return None, {"journal": None}
+    view_elements, report = read_journal(jpath, run_id)
+    cache = elem_cache if elem_cache is not None else ElementCache(max_elements=1)
+    ok = cache.export_view_element_map_json(map_path, view_elements=view_elements,
+                                            merge_existing=True, run_id=run_id)
+    report["views"] = len(view_elements)
+    if ok:
+        os.remove(jpath)
+    return ok, report
+
+
+class ViewElementMapJournal(object):
+    """One run's view-element map, accumulated per view and written once.
+
+    Owned by the StreamingExporter (it sets ``cfg._view_element_map_journal``
+    beside ``cfg._view_element_map_run_id``); the pipeline appends to it in
+    place of the per-view full rewrite, and the exporter's finalize calls
+    ``finalize()``. A caller with no exporter has no journal and keeps the
+    per-view export_view_element_map_json call unchanged."""
+
+    def __init__(self, run_id):
+        self.run_id = run_id
+        self.map_paths = []      # each map this run appended to, in order
+        self.views_appended = 0
+
+    def append(self, map_path, view_elements):
+        """Append each view's ids as one line. Constant cost per view: the
+        file is opened for append and nothing already in it is read."""
+        import json
+        import os
+        if map_path not in self.map_paths:
+            self.map_paths.append(map_path)
+        lines = []
+        for view_id, elem_list in sorted((view_elements or {}).items(), key=lambda kv: int(kv[0])):
+            lines.append(json.dumps({"schema": JOURNAL_SCHEMA, "run_id": self.run_id,
+                                     "view_id": int(view_id),
+                                     "element_ids": [int(e) for e, _s in elem_list]},
+                                    separators=(",", ":")))
+        if not lines:
+            return True
+        parent = os.path.dirname(map_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(journal_path(map_path), "a") as handle:
+            handle.write("\n".join(lines) + "\n")
+        self.views_appended += len(lines)
+        return True
+
+    def finalize(self, elem_cache=None):
+        """Compact every journal this run wrote into its map. ``{map_path:
+        report}``; a map that could not be written keeps its journal."""
+        out = {}
+        for map_path in self.map_paths:
+            try:
+                ok, report = compact_view_element_map(map_path, self.run_id, elem_cache)
+            except (OSError, ValueError) as ex:
+                ok, report = False, {"error": "{0}: {1}".format(type(ex).__name__, ex)}
+            report["ok"] = ok
+            out[map_path] = report
+        return out
