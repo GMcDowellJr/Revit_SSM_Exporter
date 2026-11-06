@@ -73,14 +73,16 @@ PIPELINE_STEPS = (
     "element_cache_stats",      # diag.info of the element cache's stats
     "element_map_write",        # vop_view_element_map_<d>.json read+merge+write
     "views_diagnostics_write",  # views_diagnostics_<d>.json read+merge+write
-    "gc_after_run",             # MemoryTracker.mark + mark_and_gc(after_run_gc)
+    "gc_after_run",             # MemoryTracker.mark + mark_and_gc(after_run_gc);
+                                # the mark alone under stage_a_gc_policy
+                                # "per_view_once" (record: gc_after_run.skipped)
     "run_summary",              # run summary assembled and printed
 )
 
 # Every key this module writes into a record, for the partition guard.
 RECORD_KEYS = (("schema", "loop_top_s", "loop_bottom_s", "total_ms",
                 "gap_from_previous_ms", "steps_ms", "unaccounted_ms", "pipeline",
-                "gc", "gated_steps", "capture_total_ms",
+                "gc", "gated_steps", "gc_policy", "capture_total_ms",
                 "capture_call_outside_total_ms")
                + STREAMING_STEPS + PIPELINE_STEPS)
 

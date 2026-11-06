@@ -38,6 +38,10 @@ Settings (batch_settings.json beside this script):
     stage_a_legacy_prepass  run the legacy steps Stage A does not use (false,
                        default; true for the flag-on/off timing comparison).
                        Same capture either way; run_meta config records it
+    stage_a_gc_policy  forced CLR collections per view: "per_view_once"
+                       (blank, default) or "per_view_twice" (as before
+                       2026-11-06, for A/B runs). Same capture either way;
+                       run_meta config records it
 
 Every file is opened DETACHED (DetachAndPreserveWorksets) with the chosen
 workset configuration, read-only in effect; dialogs during the open are
@@ -64,7 +68,8 @@ _SETTINGS_PATH = os.path.join(_SCRIPT_DIR, "batch_settings.json")
 _DEFAULTS = {"plan_json": "", "repo_root": "", "limit": "", "batch_size": "",
              "record_fingerprints": True,
              "export_view_raster": False, "worksets": "all",
-             "skip_unchanged": False, "stage_a_legacy_prepass": False}
+             "skip_unchanged": False, "stage_a_legacy_prepass": False,
+             "stage_a_gc_policy": ""}
 _SKIP_KEYS = ("skip_unchanged", "skip_view_types", "skip_full_refresh_every_n_runs",
               "skip_audit_fraction", "skip_audit_min_per_type")
 
@@ -308,6 +313,7 @@ def capture(doc, job):
     print("  Views selected: {0} ({1})".format(len(view_ids), selection["kept"]))
     cfg = _config()
     print("  stage_a_legacy_prepass: {0}".format(cfg.stage_a_legacy_prepass))
+    print("  stage_a_gc_policy: {0}".format(cfg.stage_a_gc_policy))
     if not view_ids:
         raise RuntimeError("no view of the selected types in {0}".format(doc.Title))
     result, run_dir, run_id = run_capture(
