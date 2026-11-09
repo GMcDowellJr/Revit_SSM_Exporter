@@ -109,6 +109,9 @@ from .revit.safe_api import safe_call
 from .diagnostics import OcclusionTracker
 from .perf_constants import TIMING_KEYS, METRIC_KEYS
 from .memory_telemetry import MemoryTracker
+# The per-call merge rule lives with the run's journal and its compaction, so
+# both paths use the one function (tests import it under this name).
+from .views_diagnostics import merge_prior_view_diagnostics as _merge_prior_view_diagnostics
 
 
 def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
@@ -606,33 +609,6 @@ def _compute_manifest_metrics_payload(raster, cfg):
     }
 
 
-def _merge_prior_view_diagnostics(existing_payload, views, exporter_run_id):
-    """``views`` with the prior entries of an existing views_diagnostics file
-    merged in, when that file belongs to THIS run.
-
-    Streaming calls process_document_views once per view, so each call must
-    add to the file rather than replace it. But the file is named by date
-    only, and merging ANY file already there pulled an earlier run's views
-    into this one (the same leak the view-element map had; PR #221). Given
-    an exporter run id, only a file stamped with the same id is merged; any
-    other is replaced. With none (a caller without a StreamingExporter), the
-    file is merged as before, since replacing it would keep only the last
-    per-view call.
-    """
-    if not isinstance(existing_payload, dict):
-        return views
-    if exporter_run_id is not None and (
-            (existing_payload.get("metadata") or {}).get("exporter_run_id")
-            != exporter_run_id):
-        return views
-    existing_views = existing_payload.get("views", {})
-    if not isinstance(existing_views, dict):
-        return views
-    merged = dict(existing_views)
-    merged.update(views)
-    return merged
-
-
 def process_document_views(
     doc,
     view_ids,
@@ -678,6 +654,10 @@ def process_document_views(
     # Telemetry only; _perf_now(), because this function's local `import
     # time` below shadows the module name until it runs.
     _lt_func_t0 = _perf_now()
+    # The caller's Diagnostics: inside the view loop ``diag`` is rebound to
+    # each view's own, so a record made after the loop reaches the caller
+    # only through this name.
+    _caller_diag = diag
     _lt = None
     if bool(getattr(cfg, "enable_color_id_buffer_stage_a", False)):
         from .loop_timing import StepTimer, PIPELINE_STEPS
@@ -1769,21 +1749,45 @@ def process_document_views(
                 "views": all_view_diags,
             }
 
-            # Append behavior across multiple process_document_views() calls in the same run:
-            # streaming makes one call per view, so prior views are merged -- but only from a
-            # file this run wrote (see _merge_prior_view_diagnostics).
-            if os.path.exists(diag_path):
-                try:
-                    with open(diag_path, "r") as f:
-                        existing_payload = json.load(f)
+            # Streaming makes one call per view. Its exporter owns a journal
+            # (views_diagnostics.ViewsDiagnosticsJournal): each call APPENDS
+            # its entries, and the exporter's finalize compacts the journal
+            # into the file once -- the per-call read-merge-rewrite made view
+            # k cost O(k). A caller with no exporter keeps the per-call merge
+            # below, scoped to this run (see _merge_prior_view_diagnostics).
+            from .views_diagnostics import read_payload, unmerged_path
+            diag_journal = getattr(cfg, "_views_diagnostics_journal", None)
+            if diag_journal is not None and diag_journal.run_id == exporter_run_id:
+                diag_journal.append(diag_path, payload["metadata"], payload["views"])
+            else:
+                write_path = diag_path
+                if os.path.exists(diag_path):
+                    try:
+                        existing_payload = read_payload(diag_path)
+                    except (OSError, ValueError) as read_ex:
+                        # Never replace a file that cannot be read: it may hold
+                        # every earlier view of the run (a torn rewrite). It is
+                        # left in place; this call's entries go to the sibling.
+                        write_path = unmerged_path(diag_path)
+                        existing_payload = (read_payload(write_path)
+                                            if os.path.exists(write_path) else None)
+                        for _d in dict((id(d), d) for d in (diag, _caller_diag)
+                                       if d is not None).values():
+                            _d.error(
+                                phase="export",
+                                callsite="process_document_views.export_diagnostics.unreadable",
+                                message=("views_diagnostics file unreadable; left in place, "
+                                         "entries written to {0}".format(write_path)),
+                                exc=read_ex,
+                                extra={"path": diag_path, "written_to": write_path},
+                            )
                     payload["views"] = _merge_prior_view_diagnostics(
                         existing_payload, payload["views"], exporter_run_id)
-                except Exception:
-                    # Best-effort merge only; fall back to writing current payload.
-                    pass
 
-            with open(diag_path, "w") as f:
-                json.dump(payload, f, indent=2)
+                tmp_path = write_path + ".tmp"
+                with open(tmp_path, "w") as f:
+                    json.dump(payload, f, indent=2)
+                os.replace(tmp_path, write_path)
 
             if diag is not None:
                 diag.info(
