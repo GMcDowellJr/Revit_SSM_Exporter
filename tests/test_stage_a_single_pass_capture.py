@@ -4,7 +4,8 @@ Held to the S0 baseline (tests/stage_a_single_pass_fixtures.py): the
 normalised sidecars each fixture wrote at 8e1c1fb, before this change.
 
   * GATE 1 -- a view with both memberships (``model``) writes sidecars equal
-    to S0's in every value but the added ``capture_passes``.
+    to S0's in every value but the added ``capture_passes`` and, since P2
+    (2026-11-10), ``capture_pass_decision``.
   * GATE 2 -- the drafting view (``drafting``, model membership 0) writes NO
     model TIFF or sidecar, and its annotation sidecar equals S0's annotation
     sidecar once S0's tick records are taken out (``_without_ticks``) and the
@@ -25,7 +26,10 @@ from vop_interwoven import stage_a_registration as registration
 from tests import stage_a_single_pass_fixtures as fx
 from tests import test_probe_anno_pass_run_variant as world
 
-DECLARED = ("capture_passes", "skipped_pass", "single_pass_frame")
+# The declared keys. capture_pass_decision joined them in P2 (2026-11-10), the
+# one key a two-pass sidecar now adds besides capture_passes
+# (tests/test_capture_pass_decision_sidecar.py asserts its value).
+DECLARED = ("capture_passes", "capture_pass_decision", "skipped_pass", "single_pass_frame")
 
 
 def _drop(d, *keys):
@@ -122,7 +126,8 @@ def test_gate1_a_two_pass_view_is_S0_plus_capture_passes(tmp_path):
         side = fx.normalise(now[which])
         assert side["capture_passes"] == ["model", "annotation"]
         assert "skipped_pass" not in side and "single_pass_frame" not in side
-        assert _drop(side, "capture_passes") == base[which], which
+        assert side["capture_pass_decision"] == "both_have_members"
+        assert _drop(side, "capture_passes", "capture_pass_decision") == base[which], which
 
 
 def test_gate1_control_the_baseline_is_not_trivially_equal(tmp_path):

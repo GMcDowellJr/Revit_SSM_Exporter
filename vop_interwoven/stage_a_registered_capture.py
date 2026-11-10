@@ -836,11 +836,15 @@ def single_pass_frame(reference, source, geom, cfg):
 
 
 def _declare_passes(sidecar_path, passes, plan, frame=None):
-    """Write ``capture_passes`` -- and on a single pass ``skipped_pass`` and,
-    for an annotation-only capture, ``single_pass_frame`` -- into one
-    sidecar. Returns None, else the first write's reason."""
+    """Write ``capture_passes`` and ``capture_pass_decision`` (P2,
+    2026-11-10: the plan's decision, read back by
+    ``capture_passes.declared_pass_decision``) -- and on a single pass
+    ``skipped_pass`` and, for an annotation-only capture,
+    ``single_pass_frame`` -- into one sidecar. Returns None, else the first
+    write's reason."""
     from . import stage_a_registration as registration
-    keys = [("capture_passes", list(passes))]
+    keys = [("capture_passes", list(passes)),
+            ("capture_pass_decision", plan["decision"])]
     if plan.get("skipped_pass") is not None:
         keys.append(("skipped_pass", plan["skipped_pass"]))
     if frame is not None:
