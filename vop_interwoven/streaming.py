@@ -1238,6 +1238,10 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
                 # Force CLR GC to release Revit geometry objects from get_Geometry(opts.View=view).
                 # These accumulate on the .NET heap and are not freed by CPython refcounting alone.
+                # Stage A calls no geometry API (tools/check_stage_a_no_geometry.py);
+                # there this is the ONE per-view collection under stage_a_gc_policy
+                # "per_view_once" (the pipeline's after_run_gc is skipped), kept
+                # because private memory still grows over a run.
                 try:
                     mem_tracker.mark_and_gc("after_clr_gc_{}".format(view_id))
                     if mem_tracker.gc_events:

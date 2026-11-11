@@ -745,6 +745,15 @@ def process_document_views(
         getattr(cfg, "stage_a_legacy_prepass", False))
     gated_steps = [] if legacy_prepass else ["signature_hash", "view_identity",
                                              "strategy_diag"]
+    # Stage A GC policy (config.STAGE_A_GC_POLICIES, 2026-11-06): under
+    # "per_view_once" the collection after this call's loop is a plain memory
+    # mark -- the streaming loop's collection after each view (result
+    # released) is the one kept. Outside Stage A the flag is ignored and the
+    # collection always runs.
+    from .config import STAGE_A_GC_POLICY_DEFAULT
+    stage_a_gc_policy = (str(getattr(cfg, "stage_a_gc_policy", STAGE_A_GC_POLICY_DEFAULT))
+                         if stage_a_color_id_mode else None)
+    skip_gc_after_run = stage_a_gc_policy == "per_view_once"
 
     view_cache_enabled = bool(getattr(cfg, "view_cache_enabled", False))
     view_cache_dir = getattr(cfg, "view_cache_dir", None)
@@ -1795,12 +1804,13 @@ def process_document_views(
     _lt_c = _lt_step("views_diagnostics_write", _lt_c)
     try:
         mem_tracker.mark("run_end")
-        mem_tracker.mark_and_gc("after_run_gc")
-        clr_gc_call_count += 1
-        if mem_tracker.gc_events:
-            _f = mem_tracker.gc_events[-1].get("freed_mb")
-            if _f is not None:
-                gc_freed_total_mb += float(_f)
+        if not skip_gc_after_run:
+            mem_tracker.mark_and_gc("after_run_gc")
+            clr_gc_call_count += 1
+            if mem_tracker.gc_events:
+                _f = mem_tracker.gc_events[-1].get("freed_mb")
+                if _f is not None:
+                    gc_freed_total_mb += float(_f)
     except Exception as e:
         print("[pipeline] final memory marks failed: {}".format(e))
     _lt_c = _lt_step("gc_after_run", _lt_c)
@@ -1855,9 +1865,15 @@ def process_document_views(
         _lt_record = _lt.record(round(_perf_ms(_lt_func_t0, _perf_now()), 3))
         _lt_record["views_in_call"] = len(results)
         _lt_record["gated_steps"] = list(gated_steps)
+        _lt_record["gc_policy"] = stage_a_gc_policy
         try:
-            _lt_record["gc_after_run"] = dict(mem_tracker.gc_events[-1]) \
-                if mem_tracker.gc_events else None
+            if skip_gc_after_run:
+                # Not run, and why: never an absent or None record.
+                _lt_record["gc_after_run"] = {"skipped": stage_a_gc_policy,
+                                              "gc_ms": None, "freed_mb": None}
+            else:
+                _lt_record["gc_after_run"] = dict(mem_tracker.gc_events[-1]) \
+                    if mem_tracker.gc_events else None
         except Exception as e:  # noqa: BLE001 -- telemetry; the reason is the value
             _lt_record["gc_after_run"] = {"error": "{0}: {1}".format(type(e).__name__, e)}
         for r in results:

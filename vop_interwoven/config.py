@@ -28,7 +28,37 @@ MODEL_FRAME_MODES = ("frame_b", "crop_a")
 # config_hash_differs refusals were) for no change in what was captured.
 #   stage_a_legacy_prepass -- tests/test_stage_a_legacy_prepass.py,
 #   test_output_is_byte_identical_with_the_flag_on_and_off.
-CONFIG_HASH_EXEMPT_KEYS = ("stage_a_legacy_prepass",)
+#   stage_a_gc_policy -- tests/test_stage_a_gc_policy.py,
+#   test_output_is_byte_identical_under_every_policy.
+CONFIG_HASH_EXEMPT_KEYS = ("stage_a_legacy_prepass", "stage_a_gc_policy")
+
+# Stage A forced CLR collections per view (2026-11-06). Today's loop forced
+# two full blocking collections per view: the pipeline's after its one-view
+# loop (mark_and_gc("after_run_gc"), with the view's result still referenced)
+# and the streaming loop's after the exporter callback (after_clr_gc_<id>,
+# with it released). Each costs about 1 s on a ~1 GB managed heap.
+#   "per_view_twice" -- both, as before; kept for A/B runs.
+#   "per_view_once"  -- the default: the streaming collection only; the
+#                       pipeline's becomes a plain memory mark.
+# Ignored outside Stage A. The run-end collection, the between-batch
+# collection (capture_run.run_gc_between_chunks) and the geometry path's
+# per-view collection are not governed by it.
+STAGE_A_GC_POLICIES = ("per_view_twice", "per_view_once")
+STAGE_A_GC_POLICY_DEFAULT = "per_view_once"
+
+
+def stage_a_gc_policy_from(value):
+    """A stage_a_gc_policy setting (thinrunner IN[10], batch_settings.json):
+    blank or None is the default; anything else must name a policy, any case
+    and surrounding space. An unknown value raises ValueError -- never
+    silently the default, so a typo cannot run the wrong A/B arm."""
+    if value is None or str(value).strip() == "":
+        return STAGE_A_GC_POLICY_DEFAULT
+    policy = str(value).strip().lower()
+    if policy not in STAGE_A_GC_POLICIES:
+        raise ValueError("stage_a_gc_policy must be one of {0}, got {1!r}".format(
+            ", ".join(STAGE_A_GC_POLICIES), value))
+    return policy
 
 
 class Config:
@@ -260,6 +290,12 @@ class Config:
         # recorded in to_dict() but exempt from the config hash
         # (CONFIG_HASH_EXEMPT_KEYS).
         stage_a_legacy_prepass=False,
+        # Stage A (2026-11-06): how many forced CLR collections each view
+        # pays (STAGE_A_GC_POLICIES). Default "per_view_once". Ignored
+        # outside Stage A. Byte-identical output under every value, so
+        # recorded in to_dict() but exempt from the config hash
+        # (CONFIG_HASH_EXEMPT_KEYS).
+        stage_a_gc_policy=STAGE_A_GC_POLICY_DEFAULT,
 
     ):
         """Initialize VOP configuration.
@@ -494,6 +530,7 @@ class Config:
         self.color_id_neutral_phase_swap = bool(color_id_neutral_phase_swap)
         self.color_id_phase_swap_audit = bool(color_id_phase_swap_audit)
         self.stage_a_legacy_prepass = bool(stage_a_legacy_prepass)
+        self.stage_a_gc_policy = stage_a_gc_policy_from(stage_a_gc_policy)
         self.color_id_buffer_fit_direction = str(color_id_buffer_fit_direction).strip().lower()
         if self.color_id_buffer_fit_direction not in ("horizontal", "vertical"):
             raise ValueError(
@@ -742,6 +779,7 @@ class Config:
             "color_id_neutral_phase_swap": self.color_id_neutral_phase_swap,
             "color_id_phase_swap_audit": self.color_id_phase_swap_audit,
             "stage_a_legacy_prepass": self.stage_a_legacy_prepass,
+            "stage_a_gc_policy": self.stage_a_gc_policy,
         }
 
     @classmethod
@@ -831,6 +869,7 @@ class Config:
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),
             color_id_phase_swap_audit=d.get("color_id_phase_swap_audit", False),
             stage_a_legacy_prepass=d.get("stage_a_legacy_prepass", False),
+            stage_a_gc_policy=d.get("stage_a_gc_policy", STAGE_A_GC_POLICY_DEFAULT),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767
             ),
