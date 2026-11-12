@@ -1394,10 +1394,25 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                     # C7: sized from crop A alone; frame B is not computed or recorded.
                     model_cfg.color_id_buffer_model_frame = "crop_a"
                     geom = {}
+                    # R1 (2026-11-11): the model members' override restore is
+                    # left to THIS attempt's rollback. Between the model pass
+                    # and that rollback nothing reads a model member's override
+                    # except to overwrite it: the white suppression below
+                    # writes every model member (a two-pass capture), and a
+                    # model-only capture renders nothing more. The view-level
+                    # restores still run in the pass: the annotation pass reads
+                    # them (R0). The probe-only switch (getattr, absent from
+                    # Config, True in every production run) restores in the
+                    # pass as before, so a test can compare the two.
+                    restore_under_rollback = (
+                        list(model_member_ids)
+                        if getattr(cfg, "color_id_buffer_model_restore_deferral", True)
+                        else None)
                     _t = time.time()
                     model_out = export_color_id_buffer_view(
                         doc, view, elements, model_cfg, diag=diag, raster=raster,
-                        elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True)
+                        elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True,
+                        restore_under_rollback=restore_under_rollback)
                     record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
                     _pass_timings("model", model_out)
                     if detail_lines["hidden"]:

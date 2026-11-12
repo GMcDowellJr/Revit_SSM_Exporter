@@ -25,7 +25,22 @@ each listed in its own section, never dropped silently:
 
 ``--verbose`` prints the allowed fields too.
 
+Two opt-ins for comparing runs made by DIFFERENT builds (2026-11-11, R1),
+neither on by default:
+
+  * ``--pixels`` -- a TIFF whose bytes differ is decoded (Pillow) and passes
+    when its size, mode and every pixel are equal, reported ALLOWED as
+    ``tiff_pixels_equal``. Without Pillow the comparison is REFUSED (exit 2),
+    never silently byte-compared or skipped.
+  * ``--allow RULE`` (repeatable), a name from OPT_IN_RULES:
+    ``build`` -- the exporter version two builds stamp differently;
+    ``restore_bookkeeping`` -- the model sidecar's ``model_restore`` record
+    (R1: whether the model members' override restore ran in the pass or was
+    left to the registered capture's rollback);
+    ``co_size_seed`` -- ``co_sizing.seed`` (S1).
+
     python tools/compare_stage_a_runs.py <run_dir_a> <run_dir_b> [--verbose] [--json]
+        [--pixels] [--allow build --allow restore_bookkeeping ...]
 
 Exit: 0 no unexpected difference; 1 at least one; 2 a run directory could
 not be read (no run_meta, or no run id). Standard library only.
@@ -68,6 +83,16 @@ ALLOWED_JSON_RULES = (
     ("run_location", r"^/run_dir$"),
 )
 ALLOWED_CSV_COLUMNS = (("timing", "ElapsedSec"),)
+
+# Named allowances a caller must ASK for (--allow): each is a difference that
+# is expected only when the two runs were made by different builds.
+# name -> (JSON path regexes, CSV columns).
+OPT_IN_RULES = {
+    "build": ((r"(^|/)exporter_version$",), ("ExporterVersion",)),
+    "restore_bookkeeping": ((r"(^|/)model_restore(/|\[|$)",), ()),
+    "co_size_seed": ((r"/co_sizing/seed(/|\[|$)",), ()),
+}
+TIFF_SUFFIXES = (".tif", ".tiff")
 
 # Files the analysis tools write into a run AFTER it (not capture output):
 # skipped, and listed as skipped. (rule name, regex over the relative path.)
@@ -134,21 +159,40 @@ def snapshot(run_dir):
     return out
 
 
-def _rule_for(general_path):
+def _rule_for(general_path, allow=()):
     for name, rx in ALLOWED_JSON_RULES:
         if re.search(rx, general_path):
             return name
+    for name in allow:
+        for rx in OPT_IN_RULES[name][0]:
+            if re.search(rx, general_path):
+                return name
     return None
 
 
-def _json_fields(a, b):
+def tiff_pixels_equal(a, b):
+    """``(equal, reason)`` for two TIFFs' BYTES, decoded with Pillow: equal
+    when size, mode and every pixel are. Raises ImportError without Pillow --
+    the caller refuses rather than guessing."""
+    from PIL import Image
+    with Image.open(io.BytesIO(a)) as ia, Image.open(io.BytesIO(b)) as ib:
+        if ia.size != ib.size:
+            return False, "decoded size {0} != {1}".format(ia.size, ib.size)
+        if ia.mode != ib.mode:
+            return False, "decoded mode {0} != {1}".format(ia.mode, ib.mode)
+        if ia.tobytes() != ib.tobytes():
+            return False, "decoded pixels differ"
+    return True, None
+
+
+def _json_fields(a, b, allow=()):
     fa, fb = dict(_flat(json.loads(a.decode("utf-8")))), dict(_flat(json.loads(b.decode("utf-8"))))
     allowed, unexpected = {}, []
     missing = object()
     for path in sorted(set(fa) | set(fb)):
         if fa.get(path, missing) == fb.get(path, missing):
             continue
-        rule = _rule_for(re.sub(r"\[\d+\]", "[]", path))
+        rule = _rule_for(re.sub(r"\[\d+\]", "[]", path), allow)
         if rule is None:
             unexpected.append(path)
         else:
@@ -156,13 +200,16 @@ def _json_fields(a, b):
     return allowed, unexpected
 
 
-def _csv_fields(a, b):
+def _csv_fields(a, b, allow=()):
     ra = list(csv.DictReader(io.StringIO(a.decode("utf-8"))))
     rb = list(csv.DictReader(io.StringIO(b.decode("utf-8"))))
     allowed, unexpected = {}, []
     if len(ra) != len(rb):
         return allowed, ["row count {0} != {1}".format(len(ra), len(rb))]
     rules = dict((col, name) for name, col in ALLOWED_CSV_COLUMNS)
+    for name in allow:
+        for col in OPT_IN_RULES[name][1]:
+            rules[col] = name
     for i, (x, y) in enumerate(zip(ra, rb)):
         if list(x) != list(y):
             unexpected.append("header")
@@ -184,11 +231,18 @@ def derived_rule(path):
     return None
 
 
-def compare(run_a, run_b):
+def compare(run_a, run_b, pixels=False, allow=()):
     """PURE over the files. ``{"identical": [...], "allowed": {path: {rule:
     [fields]}}, "unexpected": {path: [fields or reason]}, "skipped": {path:
     rule}, "document_open": {path: [fields]}}``. Only ``unexpected`` is a
-    difference in what was captured."""
+    difference in what was captured. ``pixels`` and ``allow``: the module
+    docstring's opt-ins; an unknown ``allow`` name raises ValueError."""
+    unknown = sorted(set(allow) - set(OPT_IN_RULES))
+    if unknown:
+        raise ValueError("unknown --allow rule(s) {0}; known: {1}".format(
+            unknown, sorted(OPT_IN_RULES)))
+    if pixels:
+        import PIL  # noqa: F401 -- ImportError is the caller's refusal
     sa, sb = snapshot(run_a), snapshot(run_b)
     report = {"identical": [], "allowed": {}, "unexpected": {}, "skipped": {},
               "document_open": {}}
@@ -222,11 +276,22 @@ def compare(run_a, run_b):
             continue
         if path.endswith(".json"):
             try:
-                allowed, unexpected = _json_fields(sa[path], sb[path])
+                allowed, unexpected = _json_fields(sa[path], sb[path], allow)
             except ValueError as ex:
                 allowed, unexpected = {}, ["unparseable JSON: {0}".format(ex)]
         elif path.endswith(".csv"):
-            allowed, unexpected = _csv_fields(sa[path], sb[path])
+            allowed, unexpected = _csv_fields(sa[path], sb[path], allow)
+        elif pixels and path.lower().endswith(TIFF_SUFFIXES):
+            try:
+                equal, why = tiff_pixels_equal(sa[path], sb[path])
+            except (OSError, ValueError) as ex:
+                equal, why = False, "undecodable TIFF: {0}: {1}".format(
+                    type(ex).__name__, ex)
+            if equal:
+                allowed, unexpected = {"tiff_pixels_equal": [
+                    "bytes differ; size, mode and every pixel equal"]}, []
+            else:
+                allowed, unexpected = {}, [why]
         else:
             allowed, unexpected = {}, ["bytes differ"]
         if allowed:
@@ -242,9 +307,17 @@ def main(argv=None):
     parser.add_argument("run_b")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--pixels", action="store_true",
+                        help="compare TIFFs whose bytes differ by decoded pixels")
+    parser.add_argument("--allow", action="append", default=[],
+                        choices=sorted(OPT_IN_RULES),
+                        help="an opt-in allowance (repeatable)")
     args = parser.parse_args(argv)
     try:
-        report = compare(args.run_a, args.run_b)
+        report = compare(args.run_a, args.run_b, pixels=args.pixels, allow=args.allow)
+    except ImportError as ex:
+        print("comparison refused: --pixels needs Pillow ({0})".format(ex), file=sys.stderr)
+        return 2
     except (OSError, ValueError) as ex:
         print("comparison refused: {0}: {1}".format(type(ex).__name__, ex), file=sys.stderr)
         return 2
