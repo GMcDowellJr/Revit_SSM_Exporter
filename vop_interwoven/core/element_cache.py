@@ -715,6 +715,68 @@ def journal_path(map_path):
     return base + JOURNAL_SUFFIX
 
 
+REPAIR_KEY = "journal_repair"
+_TAIL_CHUNK = 4096
+
+
+def _repair_torn_tail(path):
+    """Before an append: make sure ``path`` ends at a line boundary. Returns the
+    number of bytes of a torn fragment dropped (0 on the ordinary path, where
+    one byte is read). A last line that is a whole JSON value missing only its
+    newline is TERMINATED, not dropped; one that does not parse is TRUNCATED."""
+    import json
+    import os
+    if not os.path.exists(path):
+        return 0
+    with open(path, "rb+") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        if size == 0:
+            return 0
+        handle.seek(size - 1)
+        if handle.read(1) == b"\n":
+            return 0
+        # Find the start of the last line, reading backwards in chunks.
+        start, pos = 0, size
+        while pos > 0:
+            step = min(_TAIL_CHUNK, pos)
+            pos -= step
+            handle.seek(pos)
+            cut = handle.read(step).rfind(b"\n")
+            if cut != -1:
+                start = pos + cut + 1
+                break
+        handle.seek(start)
+        fragment = handle.read(size - start)
+        try:
+            json.loads(fragment.decode("utf-8"))
+        except ValueError:
+            handle.truncate(start)
+            return size - start
+        handle.seek(size)
+        handle.write(b"\n")
+        return 0
+
+
+def append_journal_lines(path, lines):
+    """Append ``lines`` (JSON strings, no newlines) to the journal at ``path``,
+    one per line, the ONE append both run journals use. A torn fragment left
+    by an interrupted append is first repaired (``_repair_torn_tail``): when
+    bytes are dropped, a ``{"journal_repair": {"torn_tail_bytes": n}}`` line
+    records it, which read_journal_lines counts and never parses as a record.
+    Without this, the next run's first line was written onto the fragment and
+    the journal became unreadable in the middle (Codex, PR #256). Returns the
+    bytes dropped."""
+    import json
+    dropped = _repair_torn_tail(path)
+    if dropped:
+        lines = [json.dumps({REPAIR_KEY: {"torn_tail_bytes": dropped}},
+                            separators=(",", ":"))] + list(lines)
+    with open(path, "a") as handle:
+        handle.write("\n".join(lines) + "\n")
+    return dropped
+
+
 def read_journal_lines(path, parse):
     """``(records, report)`` from one append-only journal, under the TORN-TAIL
     RULE every run journal shares (the view-element map's here, and
@@ -728,10 +790,14 @@ def read_journal_lines(path, parse):
         lines = handle.read().split("\n")
     if lines and lines[-1] == "":
         lines.pop()
-    records, report = [], {"lines": len(lines), "torn_tail": 0}
+    records, report = [], {"lines": len(lines), "torn_tail": 0, "torn_repaired": 0}
     for index, line in enumerate(lines):
         try:
-            records.append(parse(json.loads(line)))
+            rec = json.loads(line)
+            if isinstance(rec, dict) and REPAIR_KEY in rec:
+                report["torn_repaired"] += 1   # see append_journal_lines
+                continue
+            records.append(parse(rec))
         except (ValueError, KeyError, TypeError) as ex:
             if index == len(lines) - 1:
                 report["torn_tail"] += 1
@@ -811,8 +877,7 @@ class ViewElementMapJournal(object):
         parent = os.path.dirname(map_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(journal_path(map_path), "a") as handle:
-            handle.write("\n".join(lines) + "\n")
+        append_journal_lines(journal_path(map_path), lines)
         self.views_appended += len(lines)
         return True
 

@@ -45,7 +45,7 @@ is recorded in Diagnostics, naming both files.
 import json
 import os
 
-from .core.element_cache import journal_path, read_journal_lines
+from .core.element_cache import append_journal_lines, journal_path, read_journal_lines
 
 JOURNAL_SCHEMA = "vop.views_diagnostics_journal.v1"
 FILE_PREFIX = "views_diagnostics_"
@@ -225,8 +225,7 @@ class ViewsDiagnosticsJournal(object):
         parent = os.path.dirname(diag_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(journal_path(diag_path), "a") as handle:
-            handle.write("\n".join(lines) + "\n")
+        append_journal_lines(journal_path(diag_path), lines)
         self.views_appended += len(views or {})
         return True
 
