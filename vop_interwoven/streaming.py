@@ -901,10 +901,27 @@ class StreamingExporter:
             "files": reports, "views_appended": journal.views_appended,
             "finalize_ms": round((time.perf_counter() - t0) * 1000.0, 3)}
         self.cfg._views_diagnostics_journal = None
+        # The run's durable record of the compaction (Codex, PR #256): the
+        # exporter has no Diagnostics object, and run_meta is written after
+        # this, so a run whose views_diagnostics was not written says why in
+        # the file a reader opens -- on success too, so absence is never
+        # mistaken for a clean compaction. Paths relative to the run.
+        if self.run_meta is not None:
+            files = {}
+            for path, report in reports.items():
+                entry = dict(report)
+                if entry.get("journal"):
+                    entry["journal"] = os.path.basename(entry["journal"])
+                files[os.path.relpath(path, self.output_dir)] = entry
+            self.run_meta["views_diagnostics_compaction"] = {
+                "files": files, "views_appended": journal.views_appended}
         for path, report in reports.items():
             if report.get("ok") is False:
                 print("[Streaming] views_diagnostics NOT written, journal kept: "
                       "{0} ({1})".format(path, report))
+            elif report.get("journal_not_removed"):
+                print("[Streaming] views_diagnostics written, journal NOT removed: "
+                      "{0} ({1})".format(path, report["journal_not_removed"]))
 
     def finalize(self):
         """Finalize export and return results.

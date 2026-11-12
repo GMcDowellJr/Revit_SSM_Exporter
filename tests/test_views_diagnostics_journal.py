@@ -309,3 +309,84 @@ def test_a_repeated_view_takes_its_last_entry_in_its_first_place(tmp_path):
     assert payload == {"metadata": {"call": 3},
                        "views": {"5": {"view_id": 5, "b": 2}, "6": {"view_id": 6}}}
     assert list(payload["views"]) == ["5", "6"]
+
+
+# ---- Codex, PR #256: cleanup failure, and the durable record ----------------------
+
+def _refuse_journal_removal(monkeypatch):
+    """os.remove refuses the views_diagnostics journal only (Windows: another
+    process holds it), and removes everything else as usual."""
+    real = os.remove
+
+    def _remove(path, *a, **k):
+        if os.path.basename(str(path)).startswith("views_diagnostics_") and \
+                str(path).endswith(".journal.jsonl"):
+            raise PermissionError(13, "the process cannot access the file", path)
+        return real(path, *a, **k)
+    monkeypatch.setattr(os, "remove", _remove)
+
+
+def test_a_journal_that_cannot_be_removed_keeps_the_written_file(monkeypatch, tmp_path):
+    p = str(tmp_path / "views_diagnostics_d.json")
+    journal = ViewsDiagnosticsJournal("R")
+    journal.append(p, {"exporter_run_id": "R"}, {"1": {"view_id": 1}})
+    journal.append(p, {"exporter_run_id": "R"}, {"2": {"view_id": 2}})
+    with monkeypatch.context() as m:
+        _refuse_journal_removal(m)
+        report = journal.finalize()[p]               # does not raise
+    assert report["ok"] is True and "PermissionError" in report["journal_not_removed"]
+    assert os.path.exists(journal_path(p))
+    first = open(p, "rb").read()
+    assert sorted(json.loads(first)["views"]) == ["1", "2"]
+    # Compacting the kept journal again gives the same file, and removes it.
+    ok, again = compact_views_diagnostics_file(p, "R")
+    assert ok is True and "journal_not_removed" not in again
+    assert open(p, "rb").read() == first and not os.path.exists(journal_path(p))
+
+
+def _compaction_record(run_dir):
+    from tests.layout_helpers import run_meta_file
+    meta = json.loads(run_meta_file(run_dir).read_text())     # the FILE
+    assert meta["finalized"] is True
+    return meta["views_diagnostics_compaction"]
+
+
+def test_the_run_finalizes_when_the_journal_cannot_be_removed(monkeypatch, tmp_path):
+    monkeypatch.setattr(fx, "VIEWS", _views(5, shared=False))
+    _refuse_journal_removal(monkeypatch)
+    _r, run_dir = fx.run(monkeypatch, tmp_path)
+    record = _compaction_record(run_dir)
+    (name,) = record["files"]
+    assert record["files"][name]["ok"] is True and record["files"][name]["views"] == 5
+    assert "PermissionError" in record["files"][name]["journal_not_removed"]
+    assert len(json.load(open(_diag_file(run_dir)))["views"]) == 5
+
+
+def test_a_failed_compaction_is_recorded_in_run_meta(monkeypatch, tmp_path):
+    monkeypatch.setattr(fx, "VIEWS", _views(5, shared=False))
+
+    def _dies(path, payload):
+        raise OSError("disk full")
+    monkeypatch.setattr(vd, "write_payload_atomic", _dies)
+    _r, run_dir = fx.run(monkeypatch, tmp_path)
+    record = _compaction_record(run_dir)
+    (name,) = record["files"]
+    entry = record["files"][name]
+    assert entry["ok"] is False and "disk full" in entry["error"]
+    assert entry["journal"] == os.path.basename(name)[:-len(".json")] + ".journal.jsonl"
+    assert record["views_appended"] == 5
+    assert os.path.exists(os.path.join(run_dir, entry["journal"]))
+    assert not os.path.exists(os.path.join(run_dir, name))
+
+
+def test_control_a_clean_compaction_is_recorded_too(monkeypatch, tmp_path):
+    """The record is there on success, so a reader never takes its absence
+    for a clean compaction."""
+    monkeypatch.setattr(fx, "VIEWS", _views(5, shared=False))
+    _r, run_dir = fx.run(monkeypatch, tmp_path)
+    record = _compaction_record(run_dir)
+    (name,) = record["files"]
+    assert name == os.path.basename(_diag_file(run_dir))
+    entry = record["files"][name]
+    assert entry["ok"] is True and entry["views"] == 5 and entry["torn_tail"] == 0
+    assert "error" not in entry and "journal_not_removed" not in entry

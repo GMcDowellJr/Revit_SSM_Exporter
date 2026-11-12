@@ -22,7 +22,10 @@ journal instead, as E2 did for the view-element map (core/element_cache.py):
   taking its LAST entry ("this call wins"; the element map unions, this
   file must not). The metadata is the last line's, as the last call's was.
   Written to ``<file>.tmp`` and ``os.replace``d; the journal is removed only
-  after the replace. A compaction that fails keeps the journal and says so.
+  after the replace. A compaction that fails keeps the journal and says so;
+  a journal that cannot be removed after a good write is kept and recorded
+  (``journal_not_removed``). The exporter writes every report into run_meta
+  as ``views_diagnostics_compaction``.
 
 A run that stops short leaves the journal: every view whose append returned
 is in it; a torn LAST line is dropped and counted, an unreadable earlier
@@ -166,8 +169,15 @@ def compact_views_diagnostics_file(diag_path, run_id):
     except (OSError, ValueError, TypeError) as ex:
         report["error"] = "{0}: {1}; journal kept".format(type(ex).__name__, ex)
         return False, report
-    os.remove(jpath)
     report["views"] = len(payload["views"])
+    try:
+        os.remove(jpath)
+    except OSError as ex:
+        # The file is written and complete; only the cleanup failed (Windows:
+        # another process holds the journal). Kept and recorded, never raised
+        # out of the exporter's finalize: compacting it again gives the same
+        # file (every line is already in it, and the last entry still wins).
+        report["journal_not_removed"] = "{0}: {1}".format(type(ex).__name__, ex)
     return True, report
 
 
