@@ -35,9 +35,10 @@ What a recapture is, and is not:
   view's files, its views_core row and its run_meta entry are left as they
   were; the refusal is recorded under ``recaptures[].refused_view_ids``;
 * the per-view ``views_diagnostics_<date>.json`` and
-  ``vop_view_element_map_<date>.json`` entries are merged by the pipeline
-  as for any view of the run (both files are keyed by the run's id, and a
-  recaptured view's entry replaces its own);
+  ``vop_view_element_map_<date>.json`` entries are merged as for any view
+  of the run: appended to each file's journal and compacted into the
+  existing file once, at finalize (both files are keyed by the run's id,
+  and a recaptured view's diagnostics entry replaces its own);
 * run_meta.json is written back ONCE, merged, when the recapture's chunk
   finalizes (it is a finished run throughout; no ``finalized: false`` is
   written). A recapture interrupted before that leaves the run's record as

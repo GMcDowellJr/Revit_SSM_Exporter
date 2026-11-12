@@ -278,6 +278,10 @@ class StreamingExporter:
         # attribute, like the run id: outside Config.to_dict and the hash.
         from vop_interwoven.core.element_cache import ViewElementMapJournal
         cfg._view_element_map_journal = ViewElementMapJournal(self.run_id)
+        # The same for views_diagnostics_<d>.json (views_diagnostics.py):
+        # appended per view, compacted ONCE by finalize().
+        from vop_interwoven.views_diagnostics import ViewsDiagnosticsJournal
+        cfg._views_diagnostics_journal = ViewsDiagnosticsJournal(self.run_id)
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
@@ -882,6 +886,43 @@ class StreamingExporter:
                 print("[Streaming] view-element map NOT written, journal kept: "
                       "{0} ({1})".format(path, report))
 
+    def _finalize_views_diagnostics(self):
+        """Compact the run's views_diagnostics journal into the file, once,
+        every view having reported, and detach the journal (as
+        _finalize_view_element_map). A file that could not be written keeps
+        its journal, which compact_views_diagnostics() can finish later."""
+        journal = getattr(self.cfg, "_views_diagnostics_journal", None)
+        self.views_diagnostics_result = None
+        if journal is None or journal.run_id != self.run_id:
+            return
+        t0 = time.perf_counter()
+        reports = journal.finalize()
+        self.views_diagnostics_result = {
+            "files": reports, "views_appended": journal.views_appended,
+            "finalize_ms": round((time.perf_counter() - t0) * 1000.0, 3)}
+        self.cfg._views_diagnostics_journal = None
+        # The run's durable record of the compaction (Codex, PR #256): the
+        # exporter has no Diagnostics object, and run_meta is written after
+        # this, so a run whose views_diagnostics was not written says why in
+        # the file a reader opens -- on success too, so absence is never
+        # mistaken for a clean compaction. Paths relative to the run.
+        if self.run_meta is not None:
+            files = {}
+            for path, report in reports.items():
+                entry = dict(report)
+                if entry.get("journal"):
+                    entry["journal"] = os.path.basename(entry["journal"])
+                files[os.path.relpath(path, self.output_dir)] = entry
+            self.run_meta["views_diagnostics_compaction"] = {
+                "files": files, "views_appended": journal.views_appended}
+        for path, report in reports.items():
+            if report.get("ok") is False:
+                print("[Streaming] views_diagnostics NOT written, journal kept: "
+                      "{0} ({1})".format(path, report))
+            elif report.get("journal_not_removed"):
+                print("[Streaming] views_diagnostics written, journal NOT removed: "
+                      "{0} ({1})".format(path, report["journal_not_removed"]))
+
     def finalize(self):
         """Finalize export and return results.
         
@@ -894,6 +935,7 @@ class StreamingExporter:
         # as failed FIRST, so a finalized record is never short a view it
         # lists in views_requested (Codex, PR #221).
         self._finalize_view_element_map()
+        self._finalize_views_diagnostics()
         if self.run_meta is not None:
             self._backfill_missing_outcomes()
             from vop_interwoven.run_meta import finalize_run_meta, write_run_meta
@@ -964,6 +1006,7 @@ class StreamingExporter:
             "json_path": json_path,
             "view_summaries": self.view_summaries,
             "element_map": self.element_map_result,
+            "views_diagnostics": self.views_diagnostics_result,
         }
 
 

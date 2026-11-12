@@ -715,32 +715,46 @@ def journal_path(map_path):
     return base + JOURNAL_SUFFIX
 
 
-def read_journal(path, run_id):
-    """``(view_elements, report)`` from one journal: ``{view_id: [(elem_id,
-    "HOST"), ...]}`` in append order, ids extended per view (a view appended
-    twice unions, as two calls did). Lines of another run id are skipped and
-    counted. An unparseable LAST line is a torn append and is dropped, and
-    counted; an unparseable line before it raises ValueError (never guessed
-    past)."""
+def read_journal_lines(path, parse):
+    """``(records, report)`` from one append-only journal, under the TORN-TAIL
+    RULE every run journal shares (the view-element map's here, and
+    views_diagnostics.py's): each line is ``parse(json.loads(line))``; an
+    unreadable LAST line is a torn append and is dropped, and counted
+    (``report["torn_tail"]``); an unreadable line before it raises ValueError
+    (never guessed past). ``parse`` signals an unreadable line by raising
+    ValueError, KeyError or TypeError."""
     import json
     with open(path, "r") as handle:
         lines = handle.read().split("\n")
     if lines and lines[-1] == "":
         lines.pop()
-    view_elements, report = OrderedDict(), {"lines": len(lines), "torn_tail": 0,
-                                            "other_run": 0}
+    records, report = [], {"lines": len(lines), "torn_tail": 0}
     for index, line in enumerate(lines):
         try:
-            rec = json.loads(line)
-            vid = int(rec["view_id"])
-            ids = [int(e) for e in rec["element_ids"]]
+            records.append(parse(json.loads(line)))
         except (ValueError, KeyError, TypeError) as ex:
             if index == len(lines) - 1:
                 report["torn_tail"] += 1
                 continue
             raise ValueError("{0} line {1} is unreadable ({2}); not compacted".format(
                 path, index + 1, ex))
-        if rec.get("run_id") != run_id:
+    return records, report
+
+
+def _parse_map_line(rec):
+    return rec.get("run_id"), int(rec["view_id"]), [int(e) for e in rec["element_ids"]]
+
+
+def read_journal(path, run_id):
+    """``(view_elements, report)`` from one journal: ``{view_id: [(elem_id,
+    "HOST"), ...]}`` in append order, ids extended per view (a view appended
+    twice unions, as two calls did). Lines of another run id are skipped and
+    counted. Torn lines: read_journal_lines."""
+    records, report = read_journal_lines(path, _parse_map_line)
+    view_elements = OrderedDict()
+    report["other_run"] = 0
+    for line_run_id, vid, ids in records:
+        if line_run_id != run_id:
             report["other_run"] += 1
             continue
         view_elements.setdefault(vid, []).extend((e, "HOST") for e in ids)

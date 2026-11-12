@@ -72,7 +72,8 @@ PIPELINE_STEPS = (
     "diagnostics_entry",        # _stage_a_view_diagnostics (diag.to_dict)
     "element_cache_stats",      # diag.info of the element cache's stats
     "element_map_write",        # vop_view_element_map_<d>.json read+merge+write
-    "views_diagnostics_write",  # views_diagnostics_<d>.json read+merge+write
+    "views_diagnostics_write",  # views_diagnostics journal append (streaming),
+                                # else views_diagnostics_<d>.json read+merge+write
     "gc_after_run",             # MemoryTracker.mark + mark_and_gc(after_run_gc);
                                 # the mark alone under stage_a_gc_policy
                                 # "per_view_once" (record: gc_after_run.skipped)

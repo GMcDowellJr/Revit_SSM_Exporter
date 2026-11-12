@@ -51,8 +51,13 @@ BOTH_PASSES = (PASS_MODEL, PASS_ANNOTATION)
 SKIP_REASON = "membership_empty"
 MEMBERSHIP_RULE = "OwnerViewId+datum_category+view_reference_category"
 
-# Why a view ran both passes. Recorded in run_meta (never in the sidecars of a
-# two-pass view, which change only by ``capture_passes``).
+# Why a view ran both passes. Recorded in run_meta and, since P2
+# (2026-11-10), as ``capture_pass_decision`` in every sidecar that declares
+# its passes, two-pass views included, so a continue of an interrupted run
+# can rebuild run_meta ``views[]`` from the files (Greg). Until then a two-pass
+# sidecar changed only by ``capture_passes``, which kept it equal to the
+# pre-single-pass baseline (gate 1 of the single-pass change, 2026-10-22).
+# Read it back with ``declared_pass_decision``.
 BOTH_REASONS = (
     "both_have_members",              # the ordinary view
     "membership_unreadable",          # a count is missing or not a count
@@ -151,6 +156,33 @@ def declared_passes(sidecar):
         return None, None, ("capture_passes is {0!r} but skipped_pass does not declare "
                             "the {1} pass skipped ({2!r})".format(passes, other, skipped))
     return list(passes), skipped, None
+
+
+def declared_pass_decision(sidecar):
+    """``(decision, error)`` a sidecar DECLARES as its ``capture_pass_decision``.
+    ``(None, None)`` for one that declares nothing (every capture before P2,
+    2026-11-10). ``(None, reason)`` when the value is not a known reason
+    (``SKIP_REASON`` or one of ``BOTH_REASONS``), or when it disagrees with
+    the sidecar's own ``capture_passes`` (``declared_passes``): the skip
+    reason needs a single pass, every both-passes reason needs both. A reader
+    must not take a malformed declaration as a value."""
+    if not isinstance(sidecar, dict) or "capture_pass_decision" not in sidecar:
+        return None, None
+    decision = sidecar.get("capture_pass_decision")
+    if not isinstance(decision, str) or (
+            decision != SKIP_REASON and decision not in BOTH_REASONS):
+        return None, "capture_pass_decision is {0!r}, not a known reason".format(decision)
+    passes, _skipped, error = declared_passes(sidecar)
+    if error is not None:
+        return None, "capture_pass_decision {0!r} with {1}".format(decision, error)
+    if passes is None:
+        return None, ("capture_pass_decision {0!r} but no capture_passes "
+                      "declared".format(decision))
+    single = len(passes) == 1
+    if single != (decision == SKIP_REASON):
+        return None, ("capture_pass_decision {0!r} disagrees with capture_passes "
+                      "{1!r}".format(decision, passes))
+    return decision, None
 
 
 def is_single_pass(sidecar, kept):
