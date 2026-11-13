@@ -38,7 +38,8 @@ neither on by default:
     ``restore_bookkeeping`` -- the model sidecar's ``model_restore`` record
     (R1: whether the model members' override restore ran in the pass or was
     left to the registered capture's rollback);
-    ``co_size_seed`` -- ``co_sizing.seed`` (S1).
+    ``co_size_seed`` -- the ``co_sizing`` record and run_meta ``co_size_seed``
+    (S1: a seeded view captures in one attempt where the run before took two).
 
     python tools/compare_stage_a_runs.py <run_dir_a> <run_dir_b> [--verbose] [--json]
         [--pixels] [--allow build --allow restore_bookkeeping ...]
@@ -95,7 +96,10 @@ OPT_IN_RULES = {
     "build": ((r"(^|/)exporter_version$", r"^/git_commit(/|$)",
                r"^/exporter_source(/|$)"), ("ExporterVersion",)),
     "restore_bookkeeping": ((r"(^|/)model_restore(/|\[|$)",), ()),
-    "co_size_seed": ((r"/co_sizing/seed(/|\[|$)",), ()),
+    # A seeded view captures in ONE attempt where the run before took two:
+    # its co_sizing record (attempts, first/seeded attempt, seed) and the
+    # first attempt's own timing differ by design; its images must not.
+    "co_size_seed": ((r"(^|/)co_sizing(/|\[|$)", r"^/co_size_seed(/|$)"), ()),
 }
 TIFF_SUFFIXES = (".tif", ".tiff")
 

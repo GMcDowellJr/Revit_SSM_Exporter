@@ -162,6 +162,9 @@ def _stage_a_registration_summary(view_result):
     for key in ("capture_passes", "skipped_pass", "capture_pass_decision"):
         if key in view_result:
             summary[key] = view_result[key]
+    # S1 (co_size_seed.py): what the next run seeds this view's co-sizing from.
+    if "co_sizing" in view_result:
+        summary["co_sizing"] = view_result["co_sizing"]
     return summary
 
 

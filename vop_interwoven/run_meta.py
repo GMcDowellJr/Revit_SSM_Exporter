@@ -501,6 +501,10 @@ def view_outcomes(view_summaries):
         for key in ("capture_passes", "skipped_pass", "capture_pass_decision"):
             if key in s:
                 entry[key] = s[key]
+        # S1 (co_size_seed.py): the view's co-sizing, its size key and what
+        # its final attempt measured -- what the NEXT run seeds from.
+        if "co_sizing" in s:
+            entry["co_sizing"] = s["co_sizing"]
         # C2 (loop_timing.py): the view's loop timing, telemetry only.
         if "loop_timing" in s:
             entry["loop_timing"] = s["loop_timing"]

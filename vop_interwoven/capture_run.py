@@ -140,14 +140,44 @@ def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=N
             plan["audit_view_ids"] = sorted(plan["audit_view_ids"] + [forced])
             plan["audit_forced"] = forced
             capture_ids = [v for v in view_ids if int(v) == forced]
+        seeds = _co_size_seeds(doc, cfg, output_dir, identity)
         out = _run_capture(doc, capture_ids, cfg, output_dir, batch_size=batch_size,
                            date_override=date_override,
                            export_view_raster=export_view_raster, identity=identity)
+        if seeds is not None:
+            from vop_interwoven.batch_capture import stamp_run_meta
+            from vop_interwoven.co_size_seed import run_summary
+            stamp_run_meta(out[1], "co_size_seed", run_summary(seeds))
         if settings is not None:
             _record_skip(doc, cfg, out[1], plan, base, fingerprints)
     if record_fingerprints or skipping:
         _write_fingerprints_after_capture(out[1], fingerprints)
     return out
+
+
+def _co_size_seeds(doc, cfg, output_dir, identity):
+    """S1 (co_size_seed.py): the previous run's per-view co-sizing, read once
+    and set on ``cfg`` as ``_stage_a_co_size_seeds`` (private: outside
+    Config.to_dict() and the config hash) for the registered capture to seed
+    from. None, and the attribute cleared, when Stage A or the seed is off.
+    Never raises: a lookup that fails seeds nothing, with the reason."""
+    from vop_interwoven import co_size_seed
+    if not getattr(cfg, "enable_color_id_buffer_stage_a", False):
+        return None
+    if not getattr(cfg, "color_id_buffer_co_size_seed", True):
+        cfg._stage_a_co_size_seeds = None
+        return None
+    try:
+        from vop_interwoven.streaming import run_config
+        from vop_interwoven.view_fingerprint import portable_config_hash
+        seeds = co_size_seed.load_seeds(output_dir, getattr(doc, "Title", None), identity,
+                                        portable_config_hash(run_config(cfg)))
+    except Exception as ex:  # noqa: BLE001 -- recorded in run_meta co_size_seed
+        seeds = {"schema": co_size_seed.SCHEMA, "from_run_id": None, "from_run_dir": None,
+                 "config_hash": None, "views": {},
+                 "reason": "seed lookup raised: {0}: {1}".format(type(ex).__name__, ex)}
+    cfg._stage_a_co_size_seeds = seeds
+    return seeds
 
 
 def _plan_skip(doc, cfg, output_dir, identity, fingerprints, settings):
