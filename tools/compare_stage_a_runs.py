@@ -33,7 +33,8 @@ neither on by default:
     ``tiff_pixels_equal``. Without Pillow the comparison is REFUSED (exit 2),
     never silently byte-compared or skipped.
   * ``--allow RULE`` (repeatable), a name from OPT_IN_RULES:
-    ``build`` -- the exporter version two builds stamp differently;
+    ``build`` -- what two builds stamp differently: the exporter version,
+    run_meta's ``git_commit`` and ``exporter_source``;
     ``restore_bookkeeping`` -- the model sidecar's ``model_restore`` record
     (R1: whether the model members' override restore ran in the pass or was
     left to the registered capture's rollback);
@@ -81,6 +82,9 @@ ALLOWED_JSON_RULES = (
     ("clock", r"(^|/)(generated_utc|captured_at|pinned_at|read_at_write|started_at"
               r"|finished_at|written_at|wall_time|saved_utc)$"),
     ("run_location", r"^/run_dir$"),
+    # The operator's label for the run, as the run id is the clock's: the
+    # dated file names carrying it are masked (_mask_file_date).
+    ("run_label", r"^/run_tag$"),
 )
 ALLOWED_CSV_COLUMNS = (("timing", "ElapsedSec"),)
 
@@ -88,7 +92,8 @@ ALLOWED_CSV_COLUMNS = (("timing", "ElapsedSec"),)
 # is expected only when the two runs were made by different builds.
 # name -> (JSON path regexes, CSV columns).
 OPT_IN_RULES = {
-    "build": ((r"(^|/)exporter_version$",), ("ExporterVersion",)),
+    "build": ((r"(^|/)exporter_version$", r"^/git_commit(/|$)",
+               r"^/exporter_source(/|$)"), ("ExporterVersion",)),
     "restore_bookkeeping": ((r"(^|/)model_restore(/|\[|$)",), ()),
     "co_size_seed": ((r"/co_sizing/seed(/|\[|$)",), ()),
 }
@@ -136,15 +141,50 @@ def run_identity(run_dir):
     return str(run_id), os.path.basename(os.path.normpath(str(run_dir)))
 
 
-def snapshot(run_dir):
+def run_file_date(run_dir):
+    """The ``<d>`` the run's dated files are named by (its tag, else its
+    as-of date: output_layout.file_date), or None when it names none."""
+    path, _why = output_layout.find_run_meta(run_dir)
+    if path is None:
+        return None
+    with open(path) as handle:
+        return output_layout.file_date(json.load(handle))
+
+
+def _mask_file_date(rel, file_date):
+    """A top-level dated file's name with the run's ``<d>`` masked, so two
+    runs tagged differently (``run_meta_baseline_R.json`` /
+    ``run_meta_R1.json``) are compared file to file rather than reported as
+    present in one run only. Only ``_<d>.`` before the extension of a file in
+    the run's root is replaced -- never a view's file under the capture
+    folder, whose name is the view's."""
+    if not file_date or "/" in rel:
+        return rel
+    stem, dot, ext = rel.rpartition(".")
+    suffix = "_" + str(file_date)
+    if dot and stem.endswith(suffix):
+        return stem[:-len(suffix)] + "_<D>." + ext
+    return rel
+
+
+def snapshot(run_dir, mask_file_date=False):
     """``{relative path: bytes}`` for every file under ``run_dir``, the run's
-    id, directory name and absolute path masked in JSON and CSV text."""
+    id, directory name and absolute path masked in JSON and CSV text. With
+    ``mask_file_date`` (compare() sets it only when the two runs' file dates
+    DIFFER, so a same-date pair keeps its real names in the report) the run's
+    file date is masked too, in its dated top-level file names and where its
+    records cite them."""
     run_id, dir_name = run_identity(run_dir)
+    file_date = run_file_date(run_dir) if mask_file_date else None
     root = os.path.abspath(str(run_dir))
     masks = [(root.encode("utf-8"), b"<RUN_DIR>"),
              (json.dumps(root)[1:-1].encode("utf-8"), b"<RUN_DIR>"),
              (dir_name.encode("utf-8"), b"<RUN_DIR_NAME>"),
              (run_id.encode("utf-8"), b"<RUN_ID>")]
+    if file_date:
+        # The run's dated file names where its records cite them
+        # (run_meta's view_fingerprints.file, views_diagnostics_compaction).
+        masks.append((("_" + str(file_date) + ".").encode("utf-8"), b"_<D>."))
     out = {}
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
@@ -155,7 +195,7 @@ def snapshot(run_dir):
             if name.endswith((".json", ".csv")):
                 for old, new in masks:
                     data = data.replace(old, new)
-            out[rel] = data
+            out[_mask_file_date(rel, file_date)] = data
     return out
 
 
@@ -243,7 +283,8 @@ def compare(run_a, run_b, pixels=False, allow=()):
             unknown, sorted(OPT_IN_RULES)))
     if pixels:
         import PIL  # noqa: F401 -- ImportError is the caller's refusal
-    sa, sb = snapshot(run_a), snapshot(run_b)
+    mask = run_file_date(run_a) != run_file_date(run_b)
+    sa, sb = snapshot(run_a, mask), snapshot(run_b, mask)
     report = {"identical": [], "allowed": {}, "unexpected": {}, "skipped": {},
               "document_open": {}}
     for path in sorted(set(sa) | set(sb)):
