@@ -856,6 +856,54 @@ def _declare_passes(sidecar_path, passes, plan, frame=None):
     return None
 
 
+def seed_for_capture(view, raster, cfg, view_id, single_pass, diag=None):
+    """``(seed, key)`` for one registered capture (co_size_seed, S1): the
+    view's size key read BEFORE attempt 1, and what the previous run offers
+    for it (``cfg._stage_a_co_size_seeds``, set once per run by
+    capture_run.run_capture; absent in a recapture or a capture outside it).
+    ``key`` is a dict, or a string saying why it could not be read."""
+    from . import co_size_seed as cs
+    from .color_id_buffer import crop_a_export_geometry
+    from .resolution_contract import MAX_STAGE_A_AXIS_PX
+    seeds = getattr(cfg, "_stage_a_co_size_seeds", None)
+    from_run_id = (seeds or {}).get("from_run_id")
+    if single_pass:
+        return dict(cs.seed_for_view(None, None, from_run_id), state=cs.NOT_APPLICABLE,
+                    reason="single pass: no second image to co-size against"), None
+    if not getattr(cfg, "color_id_buffer_co_size", True):
+        return dict(cs.seed_for_view(None, None, from_run_id), state=cs.NOT_APPLICABLE,
+                    reason="co-sizing is off (probe-only color_id_buffer_co_size)"), None
+    enabled = bool(getattr(cfg, "color_id_buffer_co_size_seed", True))
+    if not enabled:
+        return cs.seed_for_view(None, None, from_run_id, enabled=False), None
+    try:
+        from .streaming import run_config
+        from .view_fingerprint import portable_config_hash
+        # The caller's config carries no co-sized bound, so this is the
+        # request an UNSEEDED first attempt makes.
+        geom = crop_a_export_geometry(view, raster, cfg, diag=diag, view_id=view_id)
+        key = cs.size_key(
+            view_id, geom, float(getattr(view, "Scale", 1) or 1),
+            float(getattr(cfg, "color_id_buffer_export_dpi")),
+            getattr(cfg, "color_id_buffer_fit_direction", "horizontal"),
+            getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX,
+            geom.get("min_axis_px") or 64,
+            portable_config_hash(run_config(cfg)))
+    except Exception as ex:   # noqa: BLE001 -- recorded as the seed's state
+        key = "the size key could not be read: {0}: {1}".format(type(ex).__name__, ex)
+    if seeds is None:
+        seed = cs.seed_for_view(None, key, None)
+        if seed["state"] == cs.NO_PREVIOUS:
+            seed["reason"] = ("no seed record for this capture (a recapture, or a "
+                              "capture outside capture_run.run_capture)")
+        return seed, (key if isinstance(key, dict) else None)
+    previous = (seeds.get("views") or {}).get(str(view_id))
+    seed = cs.seed_for_view(previous, key, from_run_id)
+    if seed["state"] == cs.NO_PREVIOUS and seeds.get("reason"):
+        seed["reason"] = seeds["reason"]
+    return seed, (key if isinstance(key, dict) else None)
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -1136,10 +1184,24 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # fits (resolution_contract.co_sized_request), so they share one
         # lattice again. A view whose annotation export fits runs once, at
         # the size it always had.
+        #
+        # A SEEDED FIRST ATTEMPT (S1, co_size_seed.py): when the previous run
+        # co-sized this view and its size key is unchanged, attempt 1 is made
+        # at last run's fit_px -- the export the second attempt would make.
+        # It is kept only when both exports measure what last run's did;
+        # otherwise ONE more attempt runs (refuted_request). Never a third.
+        from . import co_size_seed as cs
         attempt_cfg = cfg
         attempt_mark_ids = record.setdefault("_attempt_mark_ids", [])
         record["timings_ms"]["co_sizing_first_attempt"] = 0.0
         record["timings_ms"]["attempt_rollback"] = 0.0
+        seed, size_key = seed_for_capture(view, raster, cfg, view_id, single_pass, diag=diag)
+        record["_size_key"] = size_key
+        record["_seed"] = seed
+        if seed["state"] == cs.SEEDED:
+            attempt_cfg = copy.copy(cfg)
+            attempt_cfg._stage_a_co_sized_fit_px = seed["fit_px"]
+        last_co_state = None
         for attempt in (1, 2):
             faults_before = len(record["faults"])
             _t_attempt = time.time()
@@ -1394,10 +1456,25 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                     # C7: sized from crop A alone; frame B is not computed or recorded.
                     model_cfg.color_id_buffer_model_frame = "crop_a"
                     geom = {}
+                    # R1 (2026-11-11): the model members' override restore is
+                    # left to THIS attempt's rollback. Between the model pass
+                    # and that rollback nothing reads a model member's override
+                    # except to overwrite it: the white suppression below
+                    # writes every model member (a two-pass capture), and a
+                    # model-only capture renders nothing more. The view-level
+                    # restores still run in the pass: the annotation pass reads
+                    # them (R0). The probe-only switch (getattr, absent from
+                    # Config, True in every production run) restores in the
+                    # pass as before, so a test can compare the two.
+                    restore_under_rollback = (
+                        list(model_member_ids)
+                        if getattr(cfg, "color_id_buffer_model_restore_deferral", True)
+                        else None)
                     _t = time.time()
                     model_out = export_color_id_buffer_view(
                         doc, view, elements, model_cfg, diag=diag, raster=raster,
-                        elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True)
+                        elem_cache=elem_cache, geometry_out=geom, reserve_tick_colour=True,
+                        restore_under_rollback=restore_under_rollback)
                     record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
                     _pass_timings("model", model_out)
                     if detail_lines["hidden"]:
@@ -1529,6 +1606,64 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 # from Config, True in every production run. A single pass
                 # has no second image to co-size against.
                 break
+            if attempt == 1 and seed["state"] == cs.SEEDED:
+                seeded_measure = cs.measure((model_out or {}).get("frame"),
+                                            (anno_out or {}).get("frame"))
+                confirmed, why = cs.verify_seed(seed, seeded_measure)
+                if confirmed:
+                    seed["outcome"] = cs.CONFIRMED
+                    record["co_sizing"] = {
+                        "state": "applies", "fit_px": seed["fit_px"], "attempts": 1,
+                        "seeded_attempt": {
+                            "model_frame": _frame_summary((model_out or {}).get("frame")),
+                            "annotation_frame": _frame_summary((anno_out or {}).get("frame")),
+                            "annotation_failure_reason": (anno_out or {}).get("failure_reason"),
+                        }}
+                    break
+                # REFUTED: one more attempt, at what the seeded attempt measured.
+                vertical = str(getattr(cfg, "color_id_buffer_fit_direction", "horizontal")
+                               or "horizontal").strip().lower() == "vertical"
+                derived = None if seeded_measure is None else (
+                    seeded_measure["annotation"][0] if vertical
+                    else seeded_measure["annotation"][1])
+                overran = derived is not None and int(derived) > MAX_STAGE_A_AXIS_PX
+                seed["outcome"] = cs.REFUTED_OVERRUN if overran else cs.REFUTED_CHANGED
+                seed["refuted"] = why
+                retry = None if derived is None else cs.refuted_request(
+                    size_key["requested_px"], seed["fit_px"], derived,
+                    MAX_STAGE_A_AXIS_PX, size_key["min_axis_px"])
+                seed["retry"] = retry
+                if retry is None:
+                    # Nothing measured to retry from (the annotation pass
+                    # raised or was not read): the attempt stands, with its
+                    # faults, as an unseeded first attempt's would.
+                    record["co_sizing"] = {"state": "not_applicable", "attempts": 1,
+                                           "reason": "seed refuted and no retry: {0}".format(why)}
+                    break
+                first_faults = record["faults"][faults_before:]
+                del record["faults"][faults_before:]
+                record["co_sizing"] = {
+                    "state": ("applies" if retry["basis"] == "co_sized_from_seed"
+                              else "not_needed"),
+                    "fit_px": (retry["request_px"] if retry["basis"] == "co_sized_from_seed"
+                               else None),
+                    "attempts": 2,
+                    "first_attempt": {
+                        "seeded": True,
+                        "model_frame": _frame_summary((model_out or {}).get("frame")),
+                        "annotation_frame": _frame_summary((anno_out or {}).get("frame")),
+                        "annotation_failure_reason": (anno_out or {}).get("failure_reason"),
+                        "capture_faults": first_faults,
+                        "mark_ids": list(attempt_mark_ids)}}
+                record["timings_ms"]["co_sizing_first_attempt"] = round(
+                    (time.time() - _t_attempt) * 1000.0, 3)
+                attempt_cfg = copy.copy(cfg)
+                if retry["basis"] == "co_sized_from_seed":
+                    attempt_cfg._stage_a_co_sized_fit_px = retry["request_px"]
+                del bound_ids[:]
+                detail_lines["hidden"] = []
+                model_out = anno_out = None
+                continue
             co = co_sized_request(
                 geom.get("requested_px"), geom.get("model_accepted_px"),
                 ((anno_out or {}).get("frame") or {}).get("dim_check_attempts"),
@@ -1536,6 +1671,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                   or "horizontal"),
                 max_axis_px=MAX_STAGE_A_AXIS_PX,
                 min_axis_px=geom.get("min_axis_px") or 64)
+            last_co_state = co
             if co["state"] != "applies":
                 if co["state"] == "not_applicable" and anno_out and not anno_out.get("success"):
                     record["co_sizing"] = dict(co, attempts=1)
@@ -1564,6 +1700,17 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 "annotation_frame": _frame_summary((anno_out or {}).get("frame")),
                 "annotation_failure_reason": (anno_out or {}).get("failure_reason"),
             }
+        if "co_sizing" not in record:
+            # S1: written on every capture, so its absence is never read.
+            co_state = last_co_state or {
+                "state": "not_evaluated",
+                "reason": ("single pass" if single_pass else
+                           "co-sizing is off" if not getattr(cfg, "color_id_buffer_co_size", True)
+                           else "no co-sizing decision was reached")}
+            record["co_sizing"] = dict(co_state, attempts=1)
+        record["co_sizing"]["final_request"] = (
+            "co_sized" if getattr(attempt_cfg, "_stage_a_co_sized_fit_px", None) is not None
+            else "model_request")
     except RecaptureRefused as ex:
         recapture_refused = str(ex)
         _fault("recapture_refused", "the recapture would reproduce the failure; "
@@ -1686,6 +1833,16 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             all(ran[name] and ran[name].get("success") for name in passes)
             and not record["faults"])
 
+        # ---- 6c: co-sizing and its seed (S1), on every capture ------------
+        co_record = record.get("co_sizing")
+        if not isinstance(co_record, dict):
+            co_record = record["co_sizing"] = {
+                "state": "not_evaluated", "attempts": None,
+                "reason": "the capture stopped before a co-sizing decision"}
+        co_record.setdefault("final_request", "model_request")
+        co_record["seed"] = record.pop("_seed", None)
+        co_record["size_key"] = record.pop("_size_key", None)
+
         # ---- 7: the record into BOTH sidecars, LAST -------------------------
         record["sidecar_writes"] = {}
         if model_out and model_out.get("sidecar_path"):
@@ -1770,6 +1927,18 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         model_out["annotation_sidecar_path"] = anno_out.get("sidecar_path")
     model_out["registration"] = record
     model_out["registration_success"] = record["success"]
+    # S1: what the NEXT run seeds from, carried into run_meta's views[] entry
+    # (run_meta.view_outcomes). The measurement is the final attempt's.
+    from .co_size_seed import compact as _co_compact, measure as _co_measure
+    co_record = record.get("co_sizing") or {}
+    model_out["co_sizing"] = _co_compact(
+        co_record, co_record.get("size_key"),
+        _co_measure(model_out.get("frame"), (anno_out or {}).get("frame")
+                    if isinstance(anno_out, dict) else None),
+        None if record["success"] else (
+            (anno_out or {}).get("failure_reason") if isinstance(anno_out, dict) else None)
+        or model_out.get("failure_reason")
+        or ";".join(f.get("fault") for f in record.get("faults") or []) or "failed")
     if "capture_pass_plan" in record:
         model_out["capture_passes"] = list(passes)
         model_out["skipped_pass"] = record["capture_pass_plan"]["skipped_pass"]

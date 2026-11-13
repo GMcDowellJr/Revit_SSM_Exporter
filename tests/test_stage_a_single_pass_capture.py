@@ -32,6 +32,28 @@ from tests import test_probe_anno_pass_run_variant as world
 DECLARED = ("capture_passes", "capture_pass_decision", "skipped_pass", "single_pass_frame")
 
 
+def _without_model_restore(side):
+    """R1 (2026-11-11): the model sidecar's restore bookkeeping, asserted
+    then taken out -- S0 predates it. The model members' override restore is
+    left to the attempt's rollback in every registered capture."""
+    assert side["model_restore"]["state"] == "deferred_to_group_rollback", side.get(
+        "model_restore")
+    assert side["model_restore"]["deferred"] == ["element_overrides"]
+    return _drop(side, "model_restore")
+
+
+def _without_co_sizing(side):
+    """S1 (2026-11-13): ``registration_marks.co_sizing`` is written on every
+    capture with its seed; S0 recorded None for a view that was not
+    co-sized. Asserted, then put back to S0's None."""
+    side = copy.deepcopy(side)
+    co = side["registration_marks"]["co_sizing"]
+    assert co["attempts"] == 1 and co["final_request"] == "model_request", co
+    assert co["seed"]["state"] in ("no_previous", "not_applicable"), co["seed"]
+    side["registration_marks"]["co_sizing"] = None
+    return side
+
+
 def _drop(d, *keys):
     d = copy.deepcopy(d)
     for k in keys:
@@ -127,6 +149,9 @@ def test_gate1_a_two_pass_view_is_S0_plus_capture_passes(tmp_path):
         assert side["capture_passes"] == ["model", "annotation"]
         assert "skipped_pass" not in side and "single_pass_frame" not in side
         assert side["capture_pass_decision"] == "both_have_members"
+        if which == "model":
+            side = _without_model_restore(side)
+        side = _without_co_sizing(side)
         assert _drop(side, "capture_passes", "capture_pass_decision") == base[which], which
 
 
@@ -192,8 +217,8 @@ def test_gate2_the_annotation_sidecar_is_S0s_but_for_the_skipped_pass(tmp_path):
     # The skipped model pass: no suppression ran, no detail line was hidden.
     assert side["registration_marks"]["model_suppression"] is None
     assert "detail_lines" not in side["registration_marks"]["restore"]
-    assert _without_skipped_pass(_drop(side, *DECLARED)) == _without_skipped_pass(
-        base["annotation"])
+    assert _without_skipped_pass(_drop(_without_co_sizing(side), *DECLARED)) == \
+        _without_skipped_pass(base["annotation"])
     # The ticks themselves, positively: the same twelve as S0's.
     assert side["registration_marks"]["marks"] == base["annotation"]["registration_marks"]["marks"]
     assert len(side["registration_marks"]["marks"]) == 12
@@ -229,6 +254,7 @@ def test_a_view_with_no_annotation_runs_the_model_pass_alone(tmp_path):
     assert side["skipped_pass"]["annotation_count"] == 0
     assert "single_pass_frame" not in side
     assert side["registration_marks"]["model_suppression"] is None
+    side = _without_co_sizing(_without_model_restore(side))
     assert _without_skipped_pass(_without_ticks(_drop(side, *DECLARED))) == \
         _without_skipped_pass(_without_ticks(fx.s0("model_only")["model"]))
 
