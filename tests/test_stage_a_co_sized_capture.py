@@ -118,7 +118,11 @@ def test_control_a_view_that_fits_is_captured_once_at_its_own_size(tmp_path, mon
         ("model", R, MODEL_H), ("annotation", R, MODEL_H)]
     model = _file(out["sidecar_path"])
     assert model["frame"]["pixel_size"] == R and "co_sized_fit_px" not in model["frame"]
-    assert model["registration_marks"]["co_sizing"] is None
+    # S1: the record is written on every capture; a view that fits says so.
+    co = model["registration_marks"]["co_sizing"]
+    assert co["state"] == "not_needed" and co["attempts"] == 1
+    assert co["final_request"] == "model_request"
+    assert co["seed"]["state"] == "no_previous"
     assert model["registration_marks"]["timings_ms"]["co_sizing_first_attempt"] == 0.0
     assert out["success"] is True
 

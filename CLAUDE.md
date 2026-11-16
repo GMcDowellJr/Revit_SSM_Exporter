@@ -234,6 +234,25 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   `color_id_buffer_anno_extent_variant` and `color_id_buffer_co_size`
   (getattr, absent from Config) serve
   `tests/dynamo/probe_stage_a_lattice_overrun.py`.
+- **The first attempt is seeded from the previous run** (S1, 2026-11-13,
+  `vop_interwoven/co_size_seed.py`, `docs/DESIGN_CO_SIZE_SEED.md`;
+  `color_id_buffer_co_size_seed`, default on). `capture_run.run_capture`
+  reads the previous finalized run of the same document (same or earlier
+  as-of date, latest clock) once, and sets it on the config as the private
+  attribute `_stage_a_co_size_seeds`. A view that ended co-sized there, with
+  an identical size key, makes attempt 1 at last run's `fit_px`. It is
+  CONFIRMED only when both exports measure exactly what that attempt
+  measured. Otherwise it is REFUTED: one more attempt (`refuted_request`),
+  never a third. That retry can land up to 2 px below the unseeded fit.
+  `registration_marks.co_sizing` is now written on every capture, with
+  `seed`, `size_key` and `final_request`. The compact record the next run
+  reads is in each `run_meta.views[]` entry as `co_sizing`, and the run-level
+  lookup is in run_meta `co_size_seed`.
+- **The model pass leaves its model members' override restore to the
+  attempt's rollback** (R1, 2026-11-11, `restore_under_rollback`). The
+  view-level restores still run in the pass, because the annotation pass
+  reads them. Model sidecars record `model_restore`. Every other caller of
+  the model pass restores in the pass as before.
 - **A pass whose membership is empty is not run** (2026-10-22,
   `vop_interwoven/capture_passes.py`, the one predicate). The registered
   capture reads the membership split first; a pass whose count READS 0 is
