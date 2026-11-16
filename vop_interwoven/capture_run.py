@@ -146,9 +146,14 @@ def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=N
             plan["audit_view_ids"] = sorted(plan["audit_view_ids"] + [forced])
             plan["audit_forced"] = forced
             capture_ids = [v for v in view_ids if int(v) == forced]
+        seeds = _co_size_seeds(doc, cfg, output_dir, identity)
         out = _run_capture(doc, capture_ids, cfg, output_dir, batch_size=batch_size,
                            date_override=date_override,
                            export_view_raster=export_view_raster, identity=identity)
+        if seeds is not None:
+            from vop_interwoven.batch_capture import stamp_run_meta
+            from vop_interwoven.co_size_seed import run_summary
+            stamp_run_meta(out[1], "co_size_seed", run_summary(seeds))
         if settings is not None:
             _record_skip(doc, cfg, out[1], plan, base, fingerprints)
     if record_fingerprints or skipping:

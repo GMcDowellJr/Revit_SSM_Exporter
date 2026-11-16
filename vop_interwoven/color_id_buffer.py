@@ -3750,7 +3750,8 @@ def _reattach_after_failure(doc, handle, diag=None, view_id=None,
 
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None,
                                 elem_cache=None, geometry_out=None,
-                                reserve_tick_colour=False):
+                                reserve_tick_colour=False,
+                                restore_under_rollback=None):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
 
     Args:
@@ -3770,6 +3771,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             tuples and is not a data product. Left empty when no frame could
             be resolved -- an empty dict is "this capture had no geometry",
             which is exactly what the annotation pass must refuse to run on.
+        restore_under_rollback: None (every caller but one) restores the view
+            step by step, as always. The registered capture passes the int ids
+            of the view's MODEL members when it owns a TransactionGroup that is
+            rolled back after this pass, and nothing between this pass and that
+            rollback reads those members' overrides except to OVERWRITE them
+            (the annotation pass's white suppression; a model-only capture
+            renders nothing after this pass). Their element-override restore
+            is then left to the rollback (R1, 2026-11-11): it is the bulk of
+            the restore and its commit. Every other restore step still runs --
+            the annotation pass reads hidden categories, the template, display
+            style and smooth edges (R0) -- and a painted element outside the
+            set is still reset here. Recorded as the sidecar's
+            ``model_restore``.
     """
     from Autodesk.Revit.DB import Transaction, Color, ElementId, BuiltInParameter
 
@@ -5125,6 +5139,18 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
         model_restore_failures = []
+        _deferred_override_ids = (
+            frozenset() if restore_under_rollback is None
+            else frozenset(int(i) for i in restore_under_rollback))
+        # Written on EVERY sidecar, so its absence never has to be read.
+        model_restore = {
+            "state": ("in_pass" if restore_under_rollback is None
+                      else "deferred_to_group_rollback"),
+            "deferred": (["element_overrides"] if restore_under_rollback is not None
+                         else []),
+            "restored_element_overrides": 0,
+            "deferred_element_overrides": 0,
+        }
 
         # Best-effort restore: every step below is independently guarded. Revit
         # transactions are all-or-nothing on RollBack, so a single failing step
@@ -5222,7 +5248,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # Always reset to a freshly-constructed blank OverrideGraphicSettings(),
         # matching the reference SUPPRESS/RESTORE script exactly — never reapply
         # an object captured earlier (see note above painted_ids).
+        #
+        # R1: an element the caller's rolled-back group will put back, and
+        # nothing reads before then except to overwrite (restore_under_rollback),
+        # is not reset here. SetElementOverrides replaces the whole override,
+        # so the white suppression that follows writes the same state over a
+        # palette colour as over a blank one.
         for eid in resolved_ids:
+            if eid.IntegerValue in _deferred_override_ids:
+                model_restore["deferred_element_overrides"] += 1
+                continue
+            model_restore["restored_element_overrides"] += 1
             def _restore_element_override(eid=eid):
                 from Autodesk.Revit.DB import OverrideGraphicSettings
                 view.SetElementOverrides(ElementId(int(eid.IntegerValue)), OverrideGraphicSettings())
@@ -5631,6 +5667,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                                  len(model_restore_failures), model_restore_failures)})
     state_out["capture_integrity"] = _capture_integrity(
         "model_pass", model_faults, len(model_restore_failures), paint_failures)
+    state_out["model_restore"] = model_restore
     state_out["failure_reason"] = failure_reason
     # Post-export read-backs, dimension checks and building the record.
     _lap("finish")

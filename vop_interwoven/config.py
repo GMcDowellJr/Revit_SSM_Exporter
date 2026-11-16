@@ -229,6 +229,10 @@ class Config:
         color_id_buffer_global_assignment_threshold=32767,
         color_id_buffer_fit_direction="horizontal",
         color_id_buffer_cap_axis_px=None,
+        # S1 (co_size_seed.py, 2026-11-13): seed a view's first attempt from
+        # the previous run's co-sized fit when its size key is unchanged,
+        # confirmed by measurement. False captures every view unseeded.
+        color_id_buffer_co_size_seed=True,
         # Stage A step 3: capture a SECOND, annotation-only color ID buffer
         # over frame B, registered against the model capture.
         #
@@ -524,6 +528,7 @@ class Config:
         self.color_id_buffer_cap_axis_px = (
             None if color_id_buffer_cap_axis_px is None else int(color_id_buffer_cap_axis_px)
         )
+        self.color_id_buffer_co_size_seed = bool(color_id_buffer_co_size_seed)
         if (self.color_id_buffer_cap_axis_px is not None
                 and self.color_id_buffer_cap_axis_px <= 0):
             raise ValueError("color_id_buffer_cap_axis_px must be positive or None")
@@ -766,6 +771,7 @@ class Config:
             "color_id_buffer_export_dpi": self.color_id_buffer_export_dpi,
             "color_id_buffer_fit_direction": self.color_id_buffer_fit_direction,
             "color_id_buffer_cap_axis_px": self.color_id_buffer_cap_axis_px,
+            "color_id_buffer_co_size_seed": self.color_id_buffer_co_size_seed,
             "color_id_buffer_annotation_pass": self.color_id_buffer_annotation_pass,
             "color_id_buffer_registered_capture": self.color_id_buffer_registered_capture,
             "color_id_buffer_anno_crop_mode": self.color_id_buffer_anno_crop_mode,
@@ -865,6 +871,7 @@ class Config:
                 "color_id_buffer_model_lines_visible", False),
             color_id_buffer_model_frame=d.get("color_id_buffer_model_frame", "frame_b"),
             color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
+            color_id_buffer_co_size_seed=d.get("color_id_buffer_co_size_seed", True),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),
             color_id_phase_swap_audit=d.get("color_id_phase_swap_audit", False),

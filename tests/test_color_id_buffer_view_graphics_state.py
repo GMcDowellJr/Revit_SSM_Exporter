@@ -611,6 +611,9 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # The reserved tick colour (2026-10-02): MARK_COLOUR and how many
         # palette colours were withheld as its look-alikes.
         "palette_reservation",
+        # R1 (2026-11-11): whether the model members' override restore ran
+        # in the pass or was left to the registered capture's rollback.
+        "model_restore",
     }
 
 
