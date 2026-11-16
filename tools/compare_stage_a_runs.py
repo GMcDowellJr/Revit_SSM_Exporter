@@ -38,11 +38,21 @@ neither on by default:
     ``restore_bookkeeping`` -- the model sidecar's ``model_restore`` record
     (R1: whether the model members' override restore ran in the pass or was
     left to the registered capture's rollback);
-    ``co_size_seed`` -- the ``co_sizing`` record and run_meta ``co_size_seed``
-    (S1: a seeded view captures in one attempt where the run before took two).
+    ``co_size_seed`` -- the ``co_sizing`` record, run_meta ``co_size_seed``
+    and the views' diagnostics (S1: a seeded view captures in one attempt
+    where the run before took two, and the first attempt's warnings go).
+  * ``--grid`` (with ``--pixels``) -- a TIFF whose decoded pixels differ
+    passes when the view's analysis grids agree by the grid rule
+    (``grid_same`` / ``grid_boundary``; Greg accepted it for gate 1,
+    2026-11-13). Both runs must be registered and gridded first.
+
+Element ids the capture itself DRAWS (ticks, frame-bound lines; read from
+each sidecar's ``registration_marks``) are relabelled by their recorded
+order before fields are compared (``minted_id``): they are rolled back, and
+their numbers depend only on how many elements the session minted before.
 
     python tools/compare_stage_a_runs.py <run_dir_a> <run_dir_b> [--verbose] [--json]
-        [--pixels] [--allow build --allow restore_bookkeeping ...]
+        [--pixels [--grid]] [--allow build --allow restore_bookkeeping ...]
 
 Exit: 0 no unexpected difference; 1 at least one; 2 a run directory could
 not be read (no run_meta, or no run id). Standard library only.
@@ -77,6 +87,8 @@ ALLOWED_JSON_RULES = (
     # The N slowest elements of tick placement (stage_a_registered_capture,
     # AVOID_SLOWEST_N): ranked BY TIME, so which ids are listed is timing too.
     ("timing", r"/mark_avoidance/slowest(\[\]|/|$)"),
+    # How many avoidance calls took longer than its threshold: a timing count.
+    ("timing", r"/mark_avoidance/calls_over_threshold$"),
     ("timing", r"(^|/)[A-Za-z0-9_]*(_ms|_sec|_s)$"),
     ("timing", r"(^|/)ms$"),
     ("timing", r"(^|/)(elapsed_sec|elapsed_ms|ElapsedSec)$"),
@@ -99,7 +111,10 @@ OPT_IN_RULES = {
     # A seeded view captures in ONE attempt where the run before took two:
     # its co_sizing record (attempts, first/seeded attempt, seed) and the
     # first attempt's own timing differ by design; its images must not.
-    "co_size_seed": ((r"(^|/)co_sizing(/|\[|$)", r"^/co_size_seed(/|$)"), ()),
+    # ... and the discarded first attempt's own diagnostics (its overrun
+    # warnings) are absent from a seeded run's views_diagnostics.
+    "co_size_seed": ((r"(^|/)co_sizing(/|\[|$)", r"^/co_size_seed(/|$)",
+                      r"^/views/[^/]+/diagnostics/(counts|events)(/|\[|$)"), ()),
 }
 TIFF_SUFFIXES = (".tif", ".tiff")
 
@@ -194,6 +209,11 @@ def snapshot(run_dir, mask_file_date=False):
         for name in files:
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
+            if derived_rule(_mask_file_date(rel, file_date)) is not None:
+                # Never compared (compare() lists it as SKIPPED): not read, so
+                # a gridded run's registered TIFFs and arrays cost nothing.
+                out[_mask_file_date(rel, file_date)] = None
+                continue
             with open(full, "rb") as handle:
                 data = handle.read()
             if name.endswith((".json", ".csv")):
@@ -217,8 +237,18 @@ def _rule_for(general_path, allow=()):
 def tiff_pixels_equal(a, b):
     """``(equal, reason)`` for two TIFFs' BYTES, decoded with Pillow: equal
     when size, mode and every pixel are. Raises ImportError without Pillow --
-    the caller refuses rather than guessing."""
+    the caller refuses rather than guessing. A run's own captures reach
+    ~94 megapixels (P_OVERALL - LEVEL 1, 2026-11-16), over Pillow's
+    decompression-bomb limit, so the limit is lifted for this read only."""
     from PIL import Image
+    limit, Image.MAX_IMAGE_PIXELS = Image.MAX_IMAGE_PIXELS, None
+    try:
+        return _decoded_equal(Image, a, b)
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit
+
+
+def _decoded_equal(Image, a, b):
     with Image.open(io.BytesIO(a)) as ia, Image.open(io.BytesIO(b)) as ib:
         if ia.size != ib.size:
             return False, "decoded size {0} != {1}".format(ia.size, ib.size)
@@ -229,9 +259,50 @@ def tiff_pixels_equal(a, b):
     return True, None
 
 
+def minted_ids(record):
+    """The element ids a registered capture DREW in a sidecar (the ticks, the
+    frame-bound lines), in their recorded order. They are rolled back with
+    the capture, so their numbers say only how many elements the session had
+    minted before: a run that skips attempts (S1's seeded views) shifts every
+    later view's ticks. None of them names anything across runs."""
+    marks = (record or {}).get("registration_marks") if isinstance(record, dict) else None
+    out = []
+    for key, sub in (("marks", None), ("frame_bounds", "created")):
+        items = (marks or {}).get(key)
+        if sub is not None:
+            items = (items or {}).get(sub) if isinstance(items, dict) else None
+        for item in items or []:
+            mid = item.get("id") if isinstance(item, dict) else None
+            if isinstance(mid, int) and not isinstance(mid, bool):
+                out.append(mid)
+    return out
+
+
+def _relabel(obj, labels):
+    """``obj`` with every minted id -- as a dict key or an int value -- put
+    as its label."""
+    if isinstance(obj, dict):
+        return dict((labels.get(k, k), _relabel(v, labels)) for k, v in obj.items())
+    if isinstance(obj, list):
+        return [_relabel(v, labels) for v in obj]
+    if isinstance(obj, int) and not isinstance(obj, bool) and str(obj) in labels:
+        return labels[str(obj)]
+    return obj
+
+
 def _json_fields(a, b, allow=()):
-    fa, fb = dict(_flat(json.loads(a.decode("utf-8")))), dict(_flat(json.loads(b.decode("utf-8"))))
+    ja, jb = json.loads(a.decode("utf-8")), json.loads(b.decode("utf-8"))
+    ma, mb = minted_ids(ja), minted_ids(jb)
+    relabelled = None
+    if ma != mb and len(ma) == len(mb):
+        ja = _relabel(ja, dict((str(i), "<minted {0}>".format(n)) for n, i in enumerate(ma)))
+        jb = _relabel(jb, dict((str(i), "<minted {0}>".format(n)) for n, i in enumerate(mb)))
+        relabelled = "{0} element id(s) drawn by the capture, relabelled by their " \
+                     "recorded order".format(len(ma))
+    fa, fb = dict(_flat(ja)), dict(_flat(jb))
     allowed, unexpected = {}, []
+    if relabelled:
+        allowed["minted_id"] = [relabelled]
     missing = object()
     for path in sorted(set(fa) | set(fb)):
         if fa.get(path, missing) == fb.get(path, missing):
@@ -275,12 +346,55 @@ def derived_rule(path):
     return None
 
 
-def compare(run_a, run_b, pixels=False, allow=()):
+_VIEW_ID_IN_TIFF = re.compile(r"_(\d+)(_anno)?\.tiff?$", re.IGNORECASE)
+
+
+def _grid_dir(run_dir):
+    for name in (output_layout.GRID_DIR[output_layout.V2],
+                 output_layout.GRID_DIR[output_layout.V1]):
+        path = os.path.join(str(run_dir), name)
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def grid_verdict(run_a, run_b, path, pixel_reason):
+    """``(allowed, unexpected)`` for a TIFF whose decoded pixels differ, by
+    the grid rule (docs/DESIGN_CHANGE_SKIP.md, "What counts as the capture
+    differs"; tools/validate_change_skip.compare_grid): the view's two
+    analysis grids agree, or differ only by boundary noise -> ALLOWED
+    (``grid_same`` / ``grid_boundary``). A grid that differs, is missing
+    (run tools/register_stage_a_annotation.py and tools/stage_a_grid.py on
+    both runs first) or cannot be compared stays UNEXPECTED, with why."""
+    from tools import validate_change_skip as vcs
+    m = _VIEW_ID_IN_TIFF.search(os.path.basename(path))
+    if m is None:
+        return {}, ["{0}; no view id in the file name for the grid rule".format(pixel_reason)]
+    grids = (_grid_dir(run_a), _grid_dir(run_b))
+    if None in grids:
+        return {}, ["{0}; no grid in run {1} (register and grid both runs for "
+                    "--grid)".format(pixel_reason, "A" if grids[0] is None else "B")]
+    differs, record = vcs.compare_grid(int(m.group(1)), grids[0], grids[1])
+    if differs is None:
+        return {}, ["{0}; grid rule undecided: {1}".format(pixel_reason, record.get("reason"))]
+    summary = ("grid rows +{0}/-{1}, cells differ {2}, one-sided max {3} px".format(
+        record["rows_added"], record["rows_removed"], record["cells_differ"],
+        record["one_sided_max_px"]))
+    if differs:
+        return {}, ["{0}; GRID DIFFERS: {1}".format(pixel_reason, summary)]
+    rule = "grid_boundary" if record.get("boundary_only") else "grid_same"
+    return {rule: ["{0}; {1}".format(pixel_reason, summary)]}, []
+
+
+def compare(run_a, run_b, pixels=False, allow=(), grid=False):
     """PURE over the files. ``{"identical": [...], "allowed": {path: {rule:
     [fields]}}, "unexpected": {path: [fields or reason]}, "skipped": {path:
     rule}, "document_open": {path: [fields]}}``. Only ``unexpected`` is a
-    difference in what was captured. ``pixels`` and ``allow``: the module
-    docstring's opt-ins; an unknown ``allow`` name raises ValueError."""
+    difference in what was captured. ``pixels``, ``allow`` and ``grid``: the
+    module docstring's opt-ins (``grid`` needs ``pixels``); an unknown
+    ``allow`` name raises ValueError."""
+    if grid and not pixels:
+        raise ValueError("--grid judges TIFFs whose decoded pixels differ: it needs --pixels")
     unknown = sorted(set(allow) - set(OPT_IN_RULES))
     if unknown:
         raise ValueError("unknown --allow rule(s) {0}; known: {1}".format(
@@ -335,6 +449,8 @@ def compare(run_a, run_b, pixels=False, allow=()):
             if equal:
                 allowed, unexpected = {"tiff_pixels_equal": [
                     "bytes differ; size, mode and every pixel equal"]}, []
+            elif grid:
+                allowed, unexpected = grid_verdict(run_a, run_b, path, why)
             else:
                 allowed, unexpected = {}, [why]
         else:
@@ -354,12 +470,16 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--pixels", action="store_true",
                         help="compare TIFFs whose bytes differ by decoded pixels")
+    parser.add_argument("--grid", action="store_true",
+                        help="judge TIFFs whose pixels differ by the analysis-grid rule "
+                             "(register and grid both runs first)")
     parser.add_argument("--allow", action="append", default=[],
                         choices=sorted(OPT_IN_RULES),
                         help="an opt-in allowance (repeatable)")
     args = parser.parse_args(argv)
     try:
-        report = compare(args.run_a, args.run_b, pixels=args.pixels, allow=args.allow)
+        report = compare(args.run_a, args.run_b, pixels=args.pixels, allow=args.allow,
+                         grid=args.grid)
     except ImportError as ex:
         print("comparison refused: --pixels needs Pillow ({0})".format(ex), file=sys.stderr)
         return 2

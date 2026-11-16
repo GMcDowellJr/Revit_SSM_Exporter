@@ -119,3 +119,119 @@ def test_control_without_a_tag_the_names_are_left_alone():
     assert cmp._mask_file_date("run_meta_R1.json", None) == "run_meta_R1.json"
     assert cmp._mask_file_date("run_meta_R1.json", "R1") == "run_meta_<D>.json"
     assert cmp._mask_file_date("color_id/x_R1.json", "R1") == "color_id/x_R1.json"
+
+
+# --- gate 4 (2026-11-16): what a seeded run legitimately changes -------------
+
+def _sidecar_pair(tmp_path, side_a, side_b, tag_b="R1"):
+    a = _tagged(tmp_path, "S_run1", "20261116T0944_S_run1")
+    b = _tagged(tmp_path, tag_b, "20261116T1329_S_run2")
+    (a / "color_id" / "V_7.json").write_text(json.dumps(side_a))
+    (b / "color_id" / "V_7.json").write_text(json.dumps(side_b))
+    return a, b
+
+
+def _ticks(first_id, anno=False):
+    ids = list(range(first_id, first_id + 3))
+    side = {"registration_marks": {"marks": [{"id": i, "span_uv": [0, 1]} for i in ids]},
+            "palette_reservation": {"mark_ids_painted": ids}}
+    if anno:
+        side["annotation_bbox_map"] = dict((str(i), {"category": "Lines"}) for i in ids)
+    return side
+
+
+def test_tick_ids_minted_by_the_capture_are_relabelled(tmp_path):
+    """Run 2 skipped five first attempts, so every later view's ticks were
+    minted with lower ids (S_run1 / S_run2, 2026-11-16)."""
+    a, b = _sidecar_pair(tmp_path, _ticks(23902685, anno=True), _ticks(23901000, anno=True))
+    report = cmp.compare(str(a), str(b))
+    assert "color_id/V_7.json" not in report["unexpected"]
+    assert "minted_id" in report["allowed"]["color_id/V_7.json"]
+
+
+def test_control_a_real_difference_beside_relabelled_ticks_is_unexpected(tmp_path):
+    side_b = _ticks(23901000, anno=True)
+    side_b["annotation_bbox_map"][str(23901001)]["category"] = "Text Notes"
+    a, b = _sidecar_pair(tmp_path, _ticks(23902685, anno=True), side_b)
+    report = cmp.compare(str(a), str(b))
+    assert report["unexpected"]["color_id/V_7.json"] == [
+        "/annotation_bbox_map/<minted 1>/category"]
+
+
+def test_control_the_same_ids_are_not_relabelled(tmp_path):
+    a, b = _sidecar_pair(tmp_path, _ticks(5), _ticks(5))
+    assert "color_id/V_7.json" in cmp.compare(str(a), str(b))["identical"]
+
+
+def test_avoidance_calls_over_threshold_is_timing(tmp_path):
+    side_a = {"registration_marks": {"mark_avoidance": {"calls_over_threshold": 3}}}
+    side_b = {"registration_marks": {"mark_avoidance": {"calls_over_threshold": 1}}}
+    a, b = _sidecar_pair(tmp_path, side_a, side_b)
+    report = cmp.compare(str(a), str(b))
+    assert report["allowed"]["color_id/V_7.json"] == {
+        "timing": ["/registration_marks/mark_avoidance/calls_over_threshold"]}
+
+
+def test_the_first_attempts_diagnostics_are_allowed_only_under_co_size_seed(tmp_path):
+    a = _tagged(tmp_path, "S_run1", "20261116T0944_S_run1")
+    b = _tagged(tmp_path, "S_run2", "20261116T1329_S_run2")
+    for run, events in ((a, [{"callsite": "export_dim_check"}]), (b, [])):
+        name = [p.name for p in run.iterdir() if p.name.startswith("run_meta_")][0]
+        (run / name.replace("run_meta_", "views_diagnostics_")).write_text(json.dumps(
+            {"views": {"7": {"diagnostics": {"events": events}}}}))
+    assert cmp.compare(str(a), str(b))["unexpected"]
+    assert cmp.compare(str(a), str(b), allow=("co_size_seed",))["unexpected"] == {}
+
+
+def _tiff_pair(tmp_path, grid=True):
+    a = _tagged(tmp_path, "S_run1", "20261116T0944_S_run1")
+    b = _tagged(tmp_path, "S_run2", "20261116T1329_S_run2")
+    for run, rgb in ((a, (10, 20, 30)), (b, (10, 20, 31))):
+        image = Image.new("RGB", (4, 4), (255, 255, 255))
+        image.putpixel((1, 1), rgb)
+        image.save(str(run / "color_id" / "Plan_19290402_anno.tiff"))
+        if grid:
+            (run / "grid").mkdir()
+    return a, b
+
+
+@pytest.mark.parametrize("differs,record,kind", [
+    (False, {"boundary_only": False}, "grid_same"),
+    (False, {"boundary_only": True}, "grid_boundary"),
+])
+def test_grid_rule_allows_pixels_whose_grids_agree(tmp_path, monkeypatch, differs, record,
+                                                   kind):
+    from tools import validate_change_skip as vcs
+    seen = []
+    full = dict(record, rows_added=0, rows_removed=2, cells_differ=1, one_sided_max_px=2)
+    monkeypatch.setattr(vcs, "compare_grid",
+                        lambda vid, ga, gb: seen.append(vid) or (differs, full))
+    a, b = _tiff_pair(tmp_path)
+    report = cmp.compare(str(a), str(b), pixels=True, grid=True)
+    assert report["unexpected"] == {} and seen == [19290402]
+    assert kind in report["allowed"]["color_id/Plan_19290402_anno.tiff"]
+
+
+def test_grid_rule_control_a_differing_grid_or_no_grid_is_unexpected(tmp_path, monkeypatch):
+    from tools import validate_change_skip as vcs
+    monkeypatch.setattr(vcs, "compare_grid", lambda vid, ga, gb: (True, {
+        "rows_added": 9, "rows_removed": 0, "cells_differ": 4, "one_sided_max_px": 40}))
+    a, b = _tiff_pair(tmp_path / "x")
+    (reason,) = cmp.compare(str(a), str(b), pixels=True, grid=True)["unexpected"][
+        "color_id/Plan_19290402_anno.tiff"]
+    assert "GRID DIFFERS" in reason
+    a, b = _tiff_pair(tmp_path / "y", grid=False)
+    (reason,) = cmp.compare(str(a), str(b), pixels=True, grid=True)["unexpected"][
+        "color_id/Plan_19290402_anno.tiff"]
+    assert "no grid in run A" in reason
+    with pytest.raises(ValueError):
+        cmp.compare(str(a), str(b), grid=True)
+
+
+def test_derived_files_are_not_read(tmp_path, monkeypatch):
+    a, b = _tiff_pair(tmp_path)
+    (a / "grid" / "x.grid.npz").write_bytes(b"A")
+    (b / "grid" / "x.grid.npz").write_bytes(b"B")
+    snap = cmp.snapshot(str(a))
+    assert snap["grid/x.grid.npz"] is None
+    assert cmp.compare(str(a), str(b))["skipped"]["grid/x.grid.npz"] == "grid"
