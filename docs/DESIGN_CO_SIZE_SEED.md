@@ -106,3 +106,24 @@ the request:
 A refuted seed therefore does not always reproduce the unseeded capture. It
 can be up to 2 px coarser on the fitted axis. It happens only when the size
 key matched but the drawing changed.
+
+## Analysis impact (decided by Greg, 2026-11-16)
+
+S1 is declared `Analysis-Impact: none`. The reasons:
+
+- **A confirmed seed is the unseeded capture.** It uses the same PixelSize,
+  ticks and lattice as the unseeded second attempt. Gate 4 (S_run1 / S_run2,
+  2026-11-16) found all 8 model TIFFs byte-identical, including the five
+  seeded views.
+- **A refuted seed can differ, but only in a narrow case.** It can land
+  1–2 px coarser on the fitted axis than the unseeded build would. That
+  happens only when the size key matched but the drawing changed, so the
+  view's capture differs from the previous run's anyway.
+- **That difference is treated as within the grid's boundary tolerance.**
+  This is INFERENCE, not measured: a lattice change of at most 2 px in
+  ~9,000 is assumed to stay inside the boundary tolerance the grid rule
+  already applies (`docs/DESIGN_CHANGE_SKIP.md`).
+
+Revisit this if a refuted seed is ever seen to move a grid row beyond
+`BOUNDARY_PX`. The `seed.outcome` field (`refuted_overrun` /
+`refuted_changed`) on each view says where to look.
