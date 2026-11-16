@@ -109,6 +109,9 @@ def test_run_capture_and_run_recapture_open_a_session(monkeypatch):
         return {}
     monkeypatch.setattr(capture_run, "_run_capture", _capture)
     monkeypatch.setattr(recapture, "_run_recapture", _recapture)
+    # The fake capture writes no run, so there is no run_meta to stamp
+    # view_ids_deduplicated into (tests/test_capture_run_dedupe.py owns it).
+    monkeypatch.setattr(capture_run, "_record_dedupe", lambda run_dir, record: None)
     capture_run.run_capture(None, [1], Config(), "out")
     recapture.run_recapture(None, {"runs": []}, Config())
     assert seen == ["run_capture", "run_recapture"]

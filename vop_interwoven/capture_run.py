@@ -119,6 +119,12 @@ def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=N
     (a full capture, for the next run's refresh count)."""
     from vop_interwoven import change_skip
     from vop_interwoven.run_meta import provenance_session, run_identity
+    # A view listed twice was captured twice, the second capture overwriting
+    # the first's files, and run_meta, views_core and the timing report then
+    # held two entries for one set of files (gate 4, S_run1/S_run2,
+    # 2026-11-16: 18363657 twice in IN[0]). Each view once, in first-listed
+    # order, and the run says what was removed.
+    view_ids, dedupe = dedupe_view_ids(view_ids)
     settings = change_skip.parse_settings(skip) if skip is not None else None
     skipping = bool(settings and settings["skip_unchanged"])
     fingerprints = None
@@ -147,7 +153,54 @@ def run_capture(doc, view_ids, cfg, output_dir, batch_size=None, date_override=N
             _record_skip(doc, cfg, out[1], plan, base, fingerprints)
     if record_fingerprints or skipping:
         _write_fingerprints_after_capture(out[1], fingerprints)
+    _record_dedupe(out[1], dedupe)
     return out
+
+
+DEDUPE_SCHEMA = "vop.view_ids_deduplicated.v1"
+
+
+def _view_key(view_id):
+    """The identity a view id is compared by: its integer value, else its
+    text (a view id that will not read as an int is still one view)."""
+    try:
+        return int(view_id)
+    except (TypeError, ValueError):
+        return str(view_id)
+
+
+def dedupe_view_ids(view_ids):
+    """PURE. ``(unique, record)``: ``view_ids`` with each view kept once, at
+    its first position, and the run_meta ``view_ids_deduplicated`` record --
+    always complete, so its absence never has to be read: ``requested`` and
+    ``unique`` counts and ``removed`` ``[{"view_id", "times_listed"}]``."""
+    unique, seen, times = [], set(), {}
+    for vid in view_ids or []:
+        key = _view_key(vid)
+        times[key] = times.get(key, 0) + 1
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(vid)
+    removed = [{"view_id": key, "times_listed": n}
+               for key, n in times.items() if n > 1]
+    record = {"schema": DEDUPE_SCHEMA, "requested": len(list(view_ids or [])),
+              "unique": len(unique), "removed": removed}
+    return unique, record
+
+
+def _record_dedupe(run_dir, record):
+    """run_meta ``view_ids_deduplicated``, on every run_capture run. The
+    captures are on disk by now, so a run_meta that cannot be read back to
+    stamp is a broken run record: raised, never printed and passed over."""
+    from vop_interwoven.batch_capture import stamp_run_meta
+    err = stamp_run_meta(run_dir, "view_ids_deduplicated", record)
+    if err is not None:
+        raise RuntimeError("run_meta view_ids_deduplicated could not be written to "
+                           "{0}: {1}".format(run_dir, err))
+    if record["removed"]:
+        print("[VOP] {0} view id(s) listed more than once were captured once: {1}".format(
+            len(record["removed"]), [r["view_id"] for r in record["removed"]]))
 
 
 def _plan_skip(doc, cfg, output_dir, identity, fingerprints, settings):
