@@ -2993,9 +2993,48 @@ def _fit_direction(name):
         "got {0!r}".format(name))
 
 
+# Export-floor diagnosis (docs/notes/export_floor_20261118T1002.md): how many
+# ExportImage calls this PROCESS has made per (run key, view id), and the last
+# one's view and end time. Telemetry only -- read by nothing that decides
+# what is captured. A dict and a list, not globals rebound: IronPython 2 has
+# no nonlocal, and the module lives as long as the Dynamo session does, so
+# the run key is what separates one run from the next.
+_EXPORT_IMAGE_LEDGER = {"counts": {}, "last": None, "seq": 0}
+
+# The parts of one ExportImage attempt, timed as sub-keys of the pass's
+# ``<pass>_export`` (tests/test_export_timing_subkeys.py). Contiguous within
+# the attempt: their sum is the attempt's own duration, and the attempts plus
+# nothing else are the export.
+EXPORT_SUBKEYS = ("export_image", "list_stage", "move", "read_dims", "cleanup")
+
+
+def _export_image_ledger_entry(run_key, view_id):
+    """Count one ExportImage for ``(run_key, view_id)`` and return what this
+    process saw before it: ``(ordinal, previous)``. ``ordinal`` is 1 for the
+    first ExportImage of this view under this run key; ``previous`` is the
+    ``{"view_id", "end"}`` of the process's last ExportImage, or None."""
+    key = (None if run_key is None else str(run_key), view_id)
+    counts = _EXPORT_IMAGE_LEDGER["counts"]
+    counts[key] = counts.get(key, 0) + 1
+    _EXPORT_IMAGE_LEDGER["seq"] += 1
+    return counts[key], _EXPORT_IMAGE_LEDGER["last"]
+
+
 def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
-                     view_id=None, fit_direction="horizontal"):
+                     view_id=None, fit_direction="horizontal", timing_out=None,
+                     run_key=None):
     """Run exactly one ExportImage and move its TIFF to ``output_path``.
+
+    ``timing_out``: a dict this attempt's telemetry is written into, or None.
+    Its ``*_ms`` keys are the parts in ``EXPORT_SUBKEYS``, CONTIGUOUS from the
+    call to ExportImage to the end of the staging cleanup (``read_dims`` is
+    the caller's). Besides those: ``file_bytes`` (the staged TIFF's size),
+    ``listed_to_moved_ms`` (from the listing that found the TIFF to the move
+    returning: an on-access scan of the new file would stall here or in
+    ``read_dims``), ``export_image_ordinal`` (1 = the first ExportImage this
+    process made for this view under ``run_key``), ``process_export_seq``,
+    and the previous ExportImage's view id and the gap since it ended.
+    Filled in a ``finally``, so a failed attempt keeps the parts it reached.
 
     Returns the PixelSize Revit actually accepted (see
     ``_set_pixel_size_with_backoff``), which may be lower than requested.
@@ -3038,15 +3077,38 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
     opts.HLRandWFViewsFileType = tiff_type
     opts.ShadowViewsFileType = tiff_type
 
+    tel = timing_out if timing_out is not None else {}
+    ordinal, previous = _export_image_ledger_entry(run_key, view_id)
+    tel["export_image_ordinal"] = ordinal
+    tel["first_export_image_for_view"] = ordinal == 1
+    tel["process_export_seq"] = _EXPORT_IMAGE_LEDGER["seq"]
+    tel["previous_export_view_id"] = None if previous is None else previous["view_id"]
+    tel["file_bytes"] = None
+    tel["listed_to_moved_ms"] = None
     stage_dir = tempfile.mkdtemp(prefix="vop_")
+    # One clock, lapped: each part closes where the next begins.
+    lap = [time.time()]
+
+    def _part(name):
+        now = time.time()
+        tel[name + "_ms"] = round((now - lap[0]) * 1000.0, 3)
+        lap[0] = now
+        return now
+
     try:
         # A short name; "_anno" kept for the annotation pass so the pass is
         # still readable from the export request (and in Revit's own name).
         anno = os.path.basename(str(output_path)).lower().endswith("_anno.tiff")
         opts.FilePath = os.path.join(stage_dir, "t_anno" if anno else "t")
-        doc.ExportImage(opts)
+        tel["gap_since_previous_export_ms"] = (
+            None if previous is None else round((lap[0] - previous["end"]) * 1000.0, 3))
+        try:
+            doc.ExportImage(opts)
+        finally:
+            _part("export_image")
         candidates = sorted(f for f in os.listdir(stage_dir)
                             if f.lower().endswith((".tif", ".tiff")))
+        listed_at = _part("list_stage")
         if not candidates:
             # Revit's own name, "<FilePath> - <view type> - <view name>.tif",
             # is unknown when nothing was written; this is its lower bound.
@@ -3056,9 +3118,16 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
                 "is at least {1} characters with the view name, the Windows limit "
                 "is 260); Stage A refuses to mislabel a non-TIFF raster as .tiff".format(
                     stage_dir, len(opts.FilePath) + len(" -  - ") + len(name) + len(".tif")))
+        staged = os.path.join(stage_dir, candidates[0])
+        try:
+            tel["file_bytes"] = int(os.path.getsize(staged))
+        except OSError as ex:
+            # Telemetry: the move below is what decides the export, not this.
+            tel["file_bytes_error"] = "{0}: {1}".format(type(ex).__name__, ex)
         if os.path.exists(output_path):
             os.remove(output_path)
-        shutil.move(os.path.join(stage_dir, candidates[0]), output_path)
+        shutil.move(staged, output_path)
+        tel["listed_to_moved_ms"] = round((_part("move") - listed_at) * 1000.0, 3)
     finally:
         try:
             shutil.rmtree(stage_dir)
@@ -3071,13 +3140,23 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
                           message="staging directory not removed: {0}".format(stage_dir),
                           view_id=view_id, extra={"exc": "{0}: {1}".format(
                               type(ex).__name__, ex)})
+        # cleanup is the lap from the last part reached to here, so a failed
+        # attempt's unreached parts stay absent rather than read as zero.
+        _part("cleanup")
+        _EXPORT_IMAGE_LEDGER["last"] = {"view_id": view_id, "end": lap[0]}
     return actual_pixel_size
 
 
 def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
                  fit_direction="horizontal", max_axis_px=MAX_STAGE_A_AXIS_PX,
-                 grid_axis_px=None, max_mismatch_retries=MAX_MISMATCH_RETRIES):
+                 grid_axis_px=None, max_mismatch_retries=MAX_MISMATCH_RETRIES,
+                 timing_out=None, run_key=None):
     """Export the view, then MEASURE the file and refuse to trust the request.
+
+    ``timing_out``: a list each attempt's telemetry dict is appended to (see
+    ``_export_one_tiff``; this adds ``read_dims_ms``), or None. Telemetry
+    only: nothing here reads it back. ``run_key`` scopes the first-export
+    ledger to one run.
 
     Everything upstream of this function -- the DPI math, the two-axis cap,
     even Revit's own PixelSize backoff -- is a prediction about the image
@@ -3133,18 +3212,24 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
     attempts = []
 
     while True:
+        tel = {"requested_px": int(candidate)}
+        if timing_out is not None:
+            timing_out.append(tel)
         actual_pixel_size = _export_one_tiff(
             doc, view, out_dir, output_path, candidate, diag=diag,
             view_id=view_id, fit_direction=fit_direction,
+            timing_out=tel, run_key=run_key,
         )
 
         actual_w = None
         actual_h = None
         dim_read_error = None
+        _t_dims = time.time()
         try:
             actual_w, actual_h = read_image_dimensions(output_path)
         except Exception as ex:
             dim_read_error = "{0}: {1}".format(type(ex).__name__, ex)
+        tel["read_dims_ms"] = round((time.time() - _t_dims) * 1000.0, 3)
 
         if dim_read_error is not None:
             # Not a pass. The exported file may be within the limit or far
@@ -3243,6 +3328,27 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
             return output_path, actual_pixel_size, report
 
         candidate = next_candidate
+
+
+def export_subkeys_ms(attempts):
+    """PURE. ``{"export.<part>": ms}`` summed over an export's attempts (the
+    list ``_export_tiff`` fills through ``timing_out``), for the pass's
+    ``substeps_ms``: nested in ``<pass>_export``, never in the partition. A
+    part no attempt reached is absent, not zero."""
+    out = {}
+    for tel in attempts or ():
+        for part in EXPORT_SUBKEYS:
+            ms = tel.get(part + "_ms")
+            if ms is not None:
+                key = "export." + part
+                out[key] = round(out.get(key, 0.0) + float(ms), 3)
+    return out
+
+
+def export_telemetry_record(attempts):
+    """PURE. The per-attempt export telemetry as written to the registered
+    capture's ``export_telemetry`` (sidecar), JSON-safe copies."""
+    return [dict(tel) for tel in (attempts or ())]
 
 
 def compute_model_crop(model_clip_bounds, bounds_xy):
@@ -5125,17 +5231,21 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # The export starts exactly where the last lap ended, and the lap clock
     # restarts where it ends: export_ms is its own figure, never a step's.
     _export_t0 = _lap_at[0]
+    export_attempts = []
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
             fit_direction=fit_direction, max_axis_px=MAX_STAGE_A_AXIS_PX,
-            grid_axis_px=backoff_floor_px,
+            grid_axis_px=backoff_floor_px, timing_out=export_attempts,
+            run_key=getattr(cfg, "_stage_a_run_dir", None),
         )
     finally:
         # P2: the export alone (every dimension-check attempt), for the
         # registered capture's timings_ms. In memory only.
         _lap_at[0] = time.time()
         export_ms = round((_lap_at[0] - _export_t0) * 1000.0, 3)
+        # Export-floor diagnosis: the export's parts, nested in export_ms.
+        substeps_ms.update(export_subkeys_ms(export_attempts))
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
         model_restore_failures = []
@@ -5691,7 +5801,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # steps_ms: the contiguous per-step laps above (model_<step>).
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
                     "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms,
-                    "steps_ms": dict(steps_ms), "substeps_ms": dict(substeps_ms)},
+                    "steps_ms": dict(steps_ms), "substeps_ms": dict(substeps_ms),
+                    "export_attempts": export_telemetry_record(export_attempts)},
         "metadata": state_out,
     }
 
@@ -6775,11 +6886,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "reason": "the restore transaction did not run",
     }
     _export_t0 = time.time()
+    export_attempts = []
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
             fit_direction=fit_direction, max_axis_px=MAX_STAGE_A_AXIS_PX,
             grid_axis_px=int(geom.get("min_axis_px") or _PIXEL_SIZE_BACKOFF_FLOOR),
+            timing_out=export_attempts,
+            run_key=getattr(cfg, "_stage_a_run_dir", None),
         )
     finally:
         # P2: the export alone, for the registered capture's timings_ms.
@@ -7270,6 +7384,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
             # P2, read by the registered capture into its timings_ms.
             "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms,
+            # Export-floor diagnosis: the export's parts, nested in export_ms
+            # (annotation_export.<part>), and each attempt's telemetry.
+            "substeps_ms": export_subkeys_ms(export_attempts),
+            "export_attempts": export_telemetry_record(export_attempts),
         },
         "metadata": state_out,
     }

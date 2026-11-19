@@ -31,7 +31,10 @@ FIXTURES = ("drafting", "model", "model_only")
 # is a property of the capture, so neither can be compared across two runs.
 _VOLATILE_KEY = re.compile(r"(^|_)(ms|elapsed_ms|timings_ms|timings|process_memory|"
                            r"rollback_ms|tiff_path|model_pass_tiff_path|path)$")
-_VOLATILE_EXACT = {"slowest", "elapsed_ms", "read_ms", "cost_ms", "timings_ms"}
+# export_telemetry: one entry per ExportImage, all of it wall-clock or
+# process-order telemetry (docs/notes/export_floor_20261118T1002.md).
+_VOLATILE_EXACT = {"slowest", "elapsed_ms", "read_ms", "cost_ms", "timings_ms",
+                   "export_telemetry"}
 
 
 def normalise(value):

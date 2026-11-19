@@ -972,6 +972,11 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # which happen after it is built.
         "timings_ms": dict(record.get("timings_ms") or {}),
         "timing_partition": list(TIMING_PARTITION),
+        # Export-floor diagnosis (docs/notes/export_floor_20261118T1002.md):
+        # one entry per ExportImage, both passes, every capture attempt.
+        # Telemetry only; its *_ms parts are summed into timings_ms as
+        # <pass>_export.<part>.
+        "export_telemetry": list(record.get("export_telemetry") or []),
         # C2: memory_telemetry.process_memory_sample() at the pipeline's view
         # start (None when the caller took none), the capture's start, and its
         # end (after the read-backs, before these sidecar writes).
@@ -1033,6 +1038,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                        message="{0}: {1}".format(fault, message),
                        view_id=view_id, exc=exc)
 
+    # Which capture attempt (co-sizing) a pass's telemetry belongs to. A
+    # list, not nonlocal: IronPython 2.
+    capture_attempt_no = [1]
+
     def _pass_timings(name, out):
         # The pass's export and its own sidecar write, measured inside the
         # pass (nested in model_pass / annotation_pass, not additional).
@@ -1049,6 +1058,15 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # (model_graphics_state.category_overrides, model_expand.resolve_all).
         for sub, ms in sorted((timings.get("substeps_ms") or {}).items()):
             record["timings_ms"]["{0}_{1}".format(name, sub)] = ms
+        # Export-floor diagnosis: each ExportImage attempt's telemetry (first
+        # export of the view or not, file size, listing-to-move), kept for
+        # EVERY capture attempt -- a co-sized second attempt appends, it does
+        # not replace, because which export paid the floor is the question.
+        for tel in timings.get("export_attempts") or ():
+            entry = dict(tel)
+            entry["pass"] = name
+            entry["capture_attempt"] = capture_attempt_no[0]
+            record.setdefault("export_telemetry", []).append(entry)
 
     primary, record["primary_view"] = primary_view(doc, view, diag=diag, view_id=view_id)
     if primary is not None:
@@ -1203,6 +1221,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             attempt_cfg._stage_a_co_sized_fit_px = seed["fit_px"]
         last_co_state = None
         for attempt in (1, 2):
+            capture_attempt_no[0] = attempt
             faults_before = len(record["faults"])
             _t_attempt = time.time()
             attempt_group = TransactionGroup(doc, "VOP Stage A registered capture attempt "
