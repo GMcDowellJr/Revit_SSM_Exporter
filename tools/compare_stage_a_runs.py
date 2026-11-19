@@ -89,6 +89,10 @@ ALLOWED_JSON_RULES = (
     ("timing", r"/mark_avoidance/slowest(\[\]|/|$)"),
     # How many avoidance calls took longer than its threshold: a timing count.
     ("timing", r"/mark_avoidance/calls_over_threshold$"),
+    # One entry per ExportImage (docs/notes/export_floor_20261118T1002.md):
+    # wall-clock parts, the process's export order and the staged file's size,
+    # all telemetry -- an ordinal depends on what the session exported before.
+    ("timing", r"(^|/)export_telemetry(/|\[|$)"),
     ("timing", r"(^|/)[A-Za-z0-9_]*(_ms|_sec|_s)$"),
     ("timing", r"(^|/)ms$"),
     ("timing", r"(^|/)(elapsed_sec|elapsed_ms|ElapsedSec)$"),

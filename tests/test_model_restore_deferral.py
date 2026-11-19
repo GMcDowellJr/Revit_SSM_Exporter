@@ -136,7 +136,7 @@ def test_the_sidecars_differ_only_in_the_restore_bookkeeping(tmp_path, monkeypat
     monkeypatch.undo()
     out_off, _v2, _off, _h2 = _capture(tmp_path / "off", monkeypatch, deferral=False)
     volatile = ("timings", "timings_ms", "captured_at", "process_memory", "paths",
-                "tiff_path", "sidecar_path", "json_path")
+                "tiff_path", "sidecar_path", "json_path", "export_telemetry")
 
     def _scrub(value):
         if isinstance(value, dict):

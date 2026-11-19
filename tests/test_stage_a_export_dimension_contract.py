@@ -183,7 +183,10 @@ class _FakeExporter:
         self.requests = []
 
     def __call__(self, doc, view, out_dir, output_path, pixel_size, diag=None,
-                 view_id=None, fit_direction="horizontal"):
+                 view_id=None, fit_direction="horizontal", timing_out=None,
+                 run_key=None):
+        # timing_out / run_key: _export_one_tiff's telemetry arguments
+        # (tests/test_export_timing_subkeys.py); a stand-in has none to fill.
         self.requests.append(int(pixel_size))
         w, h = self.produce(int(pixel_size))
         if self.corrupt:
@@ -231,7 +234,10 @@ class _DownshiftingExporter(_FakeExporter):
     export ran, as _set_pixel_size_with_backoff does on an ArgumentException."""
 
     def __call__(self, doc, view, out_dir, output_path, pixel_size, diag=None,
-                 view_id=None, fit_direction="horizontal"):
+                 view_id=None, fit_direction="horizontal", timing_out=None,
+                 run_key=None):
+        # timing_out / run_key: _export_one_tiff's telemetry arguments
+        # (tests/test_export_timing_subkeys.py); a stand-in has none to fill.
         accepted = int(pixel_size) // 2
         self.requests.append(int(pixel_size))
         w, h = self.produce(accepted)
